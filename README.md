@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/agent-horde"><img src="https://img.shields.io/npm/v/agent-horde" alt="npm version"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/eliyastein/agent-horde" alt="MIT license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node 20 or newer">
   <a href="https://pi.dev/packages"><img src="https://img.shields.io/badge/pi-package-6f42c1" alt="pi package"></a>
   <a href="https://github.com/eliyastein/agent-horde/issues"><img src="https://img.shields.io/github/issues/eliyastein/agent-horde" alt="open issues"></a>
