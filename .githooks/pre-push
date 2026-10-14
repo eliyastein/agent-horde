@@ -1,0 +1,23 @@
+#!/bin/bash
+# Refuse to push commits whose identity, message, or diff would expose the maintainer's machine username.
+set -euo pipefail
+allowed_email="16121304+eliyastein@users.noreply.github.com"
+private="chin""aski"
+zero="0000000000000000000000000000000000000000"
+status=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [[ "$local_sha" == "$zero" ]] && continue
+  if [[ "$remote_sha" == "$zero" ]]; then range="$local_sha"; else range="$remote_sha..$local_sha"; fi
+  while read -r sha ae ce; do
+    if [[ "$ae" != "$allowed_email" || "$ce" != "$allowed_email" ]]; then
+      echo "pre-push: $sha has author <$ae> committer <$ce>; expected <$allowed_email>" >&2
+      status=1
+    fi
+    if git show --format=%B -p "$sha" | grep -q -i -- "$private"; then
+      echo "pre-push: $sha mentions the private username in its message or diff" >&2
+      status=1
+    fi
+  done < <(git rev-list --format='%H %ae %ce' --no-commit-header "$range")
+done
+if [[ "$status" -ne 0 ]]; then echo "pre-push: refusing; rewrite the commits above (git commit --amend --reset-author, or git filter-repo)" >&2; fi
+exit "$status"

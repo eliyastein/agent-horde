@@ -1,0 +1,216 @@
+import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { envNumber, errorMessage } from "../format.js";
+import { postBoard } from "../ledger/board.js";
+import { reconcileOwnedIdeas } from "../ledger/ideas.js";
+import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/run-signals.js";
+import { resetMemberState, spawnMember } from "../member.js";
+import type { MemberState } from "../member.js";
+import { hardStopMembers } from "./controls.js";
+import { recordLifecycle } from "./lifecycle.js";
+import type { HordeRun, HordeState } from "./types.js";
+import { refreshRun, safeNotify } from "./ui.js";
+
+/** A running member with no ledger write for this long is reset; 0 disables. */
+const STALL_MS = envNumber("PI_HORDE_STALL_MS", 1_800_000);
+
+/** Fresh-context resets allowed per member before its exit is left alone. */
+const RESET_CAP = envNumber("PI_HORDE_RESET_CAP", 2);
+
+/** Member exits that a fresh session may recover from; a user stop is never one. */
+const RESETTABLE_CAUSES = new Set(["model_error", "no_output", "exit_nonzero"]);
+
+/** What spawning and supervising a run's members needs beyond the run itself. */
+export interface RunLaunch {
+  state: HordeState;
+  run: HordeRun;
+  ctx: ExtensionCommandContext;
+  /** Per-member role instruction, indexed by member index - 1. */
+  roles: string[];
+}
+
+/** Start one member process; resolves when it exits. */
+export async function spawnOne(
+  launch: RunLaunch,
+  member: MemberState,
+  onFirstOutput?: () => void,
+  onProgress?: () => void,
+): Promise<void> {
+  const { run, ctx } = launch;
+  const controller = new AbortController();
+  run.controllers.set(member.name, controller);
+  const onMasterAbort = (): void => controller.abort();
+  run.controller.signal.addEventListener("abort", onMasterAbort);
+  member.attempt ??= randomUUID();
+  const role = launch.roles[member.index - 1];
+  await recordLifecycle(run, "member-spawn", {
+    member: member.name, attempt: member.attempt, role: role || undefined,
+    resets: member.resets ?? 0, repairs: member.repairs ?? 0,
+  });
+  await spawnMember({
+    member,
+    run,
+    cwd: ctx.cwd,
+    model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+    thinkingLevel: ctx.thinkingLevel,
+    approve: ctx.isProjectTrusted(),
+    signal: controller.signal,
+    role: launch.roles[member.index - 1],
+    onChange: () => { onProgress?.(); refreshRun(run); },
+    onSpawn: (proc) => run.procs.set(member.name, proc),
+    onExit: () => {
+      run.controller.signal.removeEventListener("abort", onMasterAbort);
+      run.controllers.delete(member.name);
+      run.procs.delete(member.name);
+    },
+    onFirstOutput,
+  });
+  await recordLifecycle(run, "member-exit", {
+    member: member.name, attempt: member.attempt, status: member.status, endCause: member.endCause,
+    exitCode: member.exitCode, turns: member.turns, toolCalls: member.toolCalls,
+    tokens: member.usage.input + member.usage.output, partial: member.partial === true,
+  });
+}
+
+/**
+ * Why a member's exit should be answered with a fresh session, or undefined to
+ * let it stay down. A user stop, a solve, a failed canary, or a pending clean
+ * stop all mean the run is ending; the cap keeps a broken provider from being
+ * retried forever.
+ */
+function resetReasonForExit(launch: RunLaunch, member: MemberState): string | undefined {
+  const { state, run } = launch;
+  if (state.disposed || run.stopped || run.userStop || run.solved || run.canary !== "ok") {
+    return undefined;
+  }
+  if (cleanStopRequestedFor(run.hordeDir, run.id, member.name)) return undefined;
+  const reason =
+    member.resetPending ??
+    (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined);
+  if (!reason) return undefined;
+  if ((member.resets ?? 0) >= RESET_CAP) {
+    fs.appendFileSync(
+      path.join(run.runDir, `${member.name}.log`),
+      `[horde] reset cap reached (${reason})\n`,
+    );
+    return undefined;
+  }
+  return reason;
+}
+
+/** Release the member's ideas and tell the board a fresh session replaces it. */
+async function releaseForReset(
+  run: HordeRun,
+  member: MemberState,
+  reason: string,
+): Promise<{ released: number[]; closed: number[] }> {
+  let released: number[] = [];
+  let closed: number[] = [];
+  try {
+    const result = await reconcileOwnedIdeas(run.hordeDir, run.id, [member.name]);
+    released = result.released;
+    closed = result.closed.map((item) => item.id);
+    const releasedText = released.map((id) => `#${id}`).join(", ") || "none";
+    const closedText =
+      result.closed.map((item) => `#${item.id} (F${item.findingId})`).join(", ") || "none";
+    await postBoard(
+      run.hordeDir,
+      "parent",
+      `reset ${member.name} (${reason}): released ${releasedText}; closed ${closedText}. ` +
+        `A fresh session of ${member.name} starts now; earlier claims by ${member.name} ` +
+        "are void.",
+    );
+  } catch (error) {
+    safeNotify(
+      run,
+      `horde ${run.id}: reset of ${member.name} could not reconcile ideas (${errorMessage(error)})`,
+      "error",
+    );
+  }
+  return { released, closed };
+}
+
+/**
+ * Replace a dead or stalled member with a fresh-context session of the same
+ * name. Runs only after the old process has closed, so the ledger reconcile
+ * never races a live writer.
+ */
+async function performReset(run: HordeRun, member: MemberState, reason: string): Promise<void> {
+  member.resets = (member.resets ?? 0) + 1;
+  fs.appendFileSync(
+    path.join(run.runDir, `${member.name}.log`),
+    `[horde] reset ${member.resets}: ${reason}\n`,
+  );
+  const { released, closed } = await releaseForReset(run, member, reason);
+  run.resets.push({
+    member: member.name,
+    reason,
+    at: Date.now(),
+    released,
+    closed,
+    turns: member.turns,
+    toolCalls: member.toolCalls,
+    tokens: member.usage.input + member.usage.output,
+  });
+  await recordLifecycle(run, "member-reset", { member: member.name, reason, released, closed, resets: member.resets });
+  member.resetNote =
+    `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
+    "its ideas were released. Read BOARD.md and FINDINGS.md before claiming.";
+  clearHeartbeat(run.runDir, member.name);
+  resetMemberState(member);
+  safeNotify(run, `horde ${run.id}: reset ${member.name} (${reason})`, "warning");
+  refreshRun(run);
+}
+
+/**
+ * Resolves only when the member is down for good, so the fan-out's
+ * Promise.all cannot finalize the run while a replacement is running.
+ */
+export async function superviseMember(
+  launch: RunLaunch,
+  member: MemberState,
+  first: Promise<void>,
+): Promise<void> {
+  const { state, run } = launch;
+  let exited = first;
+  for (;;) {
+    await exited;
+    const reason = resetReasonForExit(launch, member);
+    if (!reason || state.disposed) return;
+    await performReset(run, member, reason);
+    if (run.stopped || state.disposed) {
+      // A stop landed during the reset: leave the member down, not "starting".
+      member.status = "stopped";
+      member.endCause = "killed";
+      member.endedAt = Date.now();
+      return;
+    }
+    exited = spawnOne(launch, member);
+  }
+}
+
+/**
+ * A running member that has not written a ledger for STALL_MS is drifting or
+ * hung. Mark it and kill it; the supervise loop turns the kill into a reset.
+ */
+function checkStalls(run: HordeRun): void {
+  if (run.stopped || run.solved) return;
+  const now = Date.now();
+  for (const member of run.members) {
+    if (member.status !== "running" || member.paused || member.resetPending) continue;
+    if ((member.resets ?? 0) >= RESET_CAP) continue;
+    const last = readHeartbeat(run.runDir, member.name) ?? member.startedAt;
+    if (now - last <= STALL_MS) continue;
+    const minutes = Math.round((now - last) / 60_000);
+    member.resetPending = `stalled: no ledger write for ${minutes}m`;
+    hardStopMembers(run, [member.name]);
+  }
+}
+
+export function startStallWatch(run: HordeRun): void {
+  if (STALL_MS <= 0) return;
+  run.stallTimer = setInterval(() => checkStalls(run), Math.min(30_000, Math.max(250, STALL_MS / 4)));
+  run.stallTimer.unref?.();
+}

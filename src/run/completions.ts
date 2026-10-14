@@ -1,0 +1,90 @@
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { HordeRun } from "./types.js";
+
+const CONTROL_SUBCOMMANDS: Array<{
+  value: string;
+  description: string;
+  takesTarget: boolean;
+}> = [
+  { value: "status", description: "show per-member status", takesTarget: true },
+  { value: "stop-hard", description: "terminate members now (SIGTERM, then SIGKILL)", takesTarget: true },
+  { value: "stop-clean", description: "let members wrap up and reconcile ideas; add 'postmortem' for a run review", takesTarget: true },
+  { value: "pause", description: "suspend members (SIGSTOP)", takesTarget: true },
+  { value: "resume", description: "resume suspended members (SIGCONT)", takesTarget: true },
+  { value: "plan", description: "partition members across workstreams: plan <count> <a; b; ...>", takesTarget: false },
+  { value: "help", description: "show usage", takesTarget: false },
+];
+
+const DASHBOARD_COMPLETION = {
+  value: "--dashboard ",
+  description: "serve a read-only localhost dashboard (port 7433, or --dashboard=<port>)",
+};
+
+const NO_VERIFIER_COMPLETION = {
+  value: "--no-verifier ",
+  description: "do not assign the verifier role to the last member of a 3+ member run",
+};
+
+const LAUNCH_FLAG_COMPLETIONS = [DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION];
+
+/** Argument completions that are not member targets. */
+const EXTRA_COMPLETIONS: Record<string, Array<{ value: string; description: string }>> = {
+  "stop-clean": [
+    { value: "postmortem ", description: "also run a post-mortem review of the run" },
+    { value: "--grace=60", description: "seconds before hard stop (default 90); edit the number" },
+  ],
+  plan: [DASHBOARD_COMPLETION],
+};
+
+export function controlCompletions(prefix: string, active: HordeRun | undefined): AutocompleteItem[] | null {
+  const space = prefix.search(/\s/);
+  if (space === -1 && prefix.startsWith("-")) {
+    const items = LAUNCH_FLAG_COMPLETIONS.filter((flag) => flag.value.startsWith(prefix)).map(
+      (flag) => ({ ...flag, label: flag.value.trim() }),
+    );
+    return items.length > 0 ? items : null;
+  }
+  if (space === -1) {
+    const items = CONTROL_SUBCOMMANDS.filter((sub) =>
+      sub.value.startsWith(prefix.toLowerCase()),
+    ).map((sub) => ({
+      value: sub.value === "help" ? "help" : `${sub.value} `,
+      label: sub.value,
+      description: sub.description,
+    }));
+    return items.length > 0 ? items : null;
+  }
+  const head = prefix.slice(0, space).toLowerCase();
+  const sub = CONTROL_SUBCOMMANDS.find((candidate) => candidate.value === head);
+  if (!sub) return null;
+  const rest = prefix.slice(space + 1);
+  const match = /^([\s\S]*?)([^\s,]*)$/.exec(rest);
+  const base = match?.[1] ?? "";
+  const token = match?.[2] ?? "";
+  const names = active && sub.takesTarget ? active.members.map((m) => m.name) : [];
+  const targetItems: AutocompleteItem[] = (sub.takesTarget ? ["all", ...names] : [])
+    .filter((name) => name.startsWith(token))
+    .map((name) => ({
+      value: `${head} ${base}${name}`,
+      label: name,
+      description:
+        name === "all"
+          ? active
+            ? `all ${active.count} members`
+            : "all members"
+          : active?.members.find((m) => m.name === name)?.status,
+    }));
+  const extraItems: AutocompleteItem[] = (EXTRA_COMPLETIONS[head] ?? [])
+    .filter((extra) => {
+      const literal = extra.value.trim();
+      const flag = literal.split("=")[0] ?? literal;
+      return !base.includes(flag) && literal.startsWith(token);
+    })
+    .map((extra) => ({
+      value: `${head} ${base}${extra.value}`,
+      label: extra.value.trim(),
+      description: extra.description,
+    }));
+  const items = [...extraItems, ...targetItems];
+  return items.length > 0 ? items : null;
+}

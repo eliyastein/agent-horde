@@ -1,0 +1,61 @@
+{
+  "name": "agent-horde",
+  "version": "0.1.0",
+  "description": "Run a horde of pi agents on one task: shared ledgers, peer review, an auditable event log, and a live dashboard",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eliyastein/agent-horde.git"
+  },
+  "homepage": "https://github.com/eliyastein/agent-horde#readme",
+  "bugs": {
+    "url": "https://github.com/eliyastein/agent-horde/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "agents",
+    "multi-agent",
+    "code-review",
+    "security-research"
+  ],
+  "files": [
+    "src",
+    "docs",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "image": "https://github.com/eliyastein/agent-horde/raw/refs/heads/main/docs/images/graph.png"
+  },
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "lint": "oxlint .",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "prepublishOnly": "npm run check"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@types/node": "26.6.5",
+    "oxlint": "1.88.0",
+    "typescript": "7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

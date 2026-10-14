@@ -1,0 +1,331 @@
+# agent-horde reference
+
+Spawn up to 12 pi sub-agents on the same prompt, each in its own process and context, coordinating
+through markdown ledgers in `.horde/` at the project root. Use it when several independent attempts
+at one problem beat a single linear one: research, audits, design exploration, R&D.
+
+## Usage
+
+```
+/agent-horde [--dashboard[=<port>]] [--no-verifier] <count> <prompt>
+/agent-horde plan [--dashboard] <count> <layer; layer; ...>
+/agent-horde status [target]
+/agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
+/agent-horde stop-clean [postmortem] [target] [--grace <s>]
+/agent-horde pause | resume [target]                 SIGSTOP / SIGCONT, Unix only
+/agent-horde help
+```
+
+`target` is `all` (default), `member-N`, `N`, or a comma or space separated list. Subcommands and
+member targets tab-complete.
+
+The command returns immediately. A widget above the editor shows each member's status, current
+tool, elapsed time, turns, and resets. Members inherit the parent session's model and thinking
+level and all run concurrently, so pick the count with the provider's throughput in mind. When
+the run ends, a report is injected into the parent conversation and the parent is asked to
+synthesize it.
+
+### Run lifecycle
+
+1. **Canary.** member-1 starts alone; the rest fan out once it produces output. A canary that dies
+   or stays silent for `PI_HORDE_CANARY_MS` is retried once, then the run stops with a recorded
+   cause instead of burning the whole fan-out on a dead provider.
+2. **Discovery.** Members work the ledgers through the `horde` tool. Every 30s the parent assigns
+   artifact revisions that have been stable for a minute to the running non-owner with the fewest
+   open review requests. A member with no ledger write for `PI_HORDE_STALL_MS`, or one that exits
+   with `model_error`, `no_output`, or `exit_nonzero`, is reset: its ideas return to the pool and
+   a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times.
+3. **Repair.** After discovery ends normally, finished members get fresh, targeted sessions to
+   answer open blockers, review requests, and responses, within the `PI_HORDE_REPAIR_*` budgets.
+   A user stop skips this phase.
+4. **Finalize.** Acceptance is frozen (`ACCEPTANCE.*`, `snapshot/`), resource cleanup commands
+   run, `SUMMARY.md` and `REPORT.md` are written, then a synthesis member writes `DELIVERABLE.md`
+   and a read-only reviewer writes `POSTMORTEM.md`. The widget shows `synthesizing` until both
+   finish.
+
+### Stopping
+
+`stop-hard` kills now and leaves claimed ideas as they were. `stop-clean` writes a `.stop-clean`
+sentinel, posts a wrap-up notice to BOARD.md, and gives members 90s (`--grace`) before escalating
+to a hard stop. During wind-down the tool refuses `idea`, `claim`, `assert`, and `resource` but
+still accepts reads, `post`, `done`, `drop`, `rule-out`, and `finding`. The deadline grants one
+`PI_HORDE_ACTIVE_GRACE_MS` extension to a member that produced output in the last 15s, and one
+`PI_HORDE_SOLVED_STOP_MS` window when a solve landed and nobody has validated it. At finalize,
+unfinished ideas return to the open pool.
+
+A clean stop still produces the deliverable; add `postmortem` to also run the reviewer. Runs
+that end on their own (all members finished, solved, canary or provider failure) get both.
+`PI_HORDE_MAX_MINUTES` forces a clean stop at a wall-clock deadline, reported as
+`stopped at deadline`.
+
+Members and helper agents are children of the pi session. Quitting or reloading pi sends every
+live child SIGTERM, and each child polls `PI_HORDE_PARENT_PID` every two seconds and exits on its
+own when the parent is gone, even after a SIGKILL or OOM kill.
+
+## Dashboard
+
+`--dashboard` serves a read-only, server-rendered view on `http://127.0.0.1:7433/`
+(`--dashboard=<port>` or `PI_HORDE_DASHBOARD_PORT`). It binds localhost only, answers GET and
+HEAD, never writes to `.horde/`, and stays up after the run until the session ends. A busy port
+refuses the run before any run directory is created. Live pages reload every three seconds
+(`?refresh=0` disables); expandable entries are URL-backed, so they stay open across refreshes.
+Every page has a JSON twin under `/api/<same path>`.
+
+| page | shows |
+|------|-------|
+| `/` | every run: active marker, start, count, model, outcome, prompt, files present |
+| `/runs/<id>` | prompt, outcome, canary, clean-stop countdown, plan layers, members table, run files |
+| `/runs/<id>/members/<m>` | live activity, last and final text, log tail (`?tail=<n>`), transcript link |
+| `/runs/<id>/members/<m>/log` | the member log; `tail=0` is the whole file (1 MiB cap) |
+| `/runs/<id>/members/<m>/transcript[/<i>]` | the session transcript paged by `from=<i>\|last&n=<k>`, or one entry with its raw JSON |
+| `/runs/<id>/sessions[/<file>[/<i>]]` | session files not mapped to a member (runs older than per-member session dirs) |
+| `/runs/<id>/files/<NAME>` | any run document; 404 until written |
+| `/runs/<id>/collaboration` | messages, review scope, artifact acceptance, resources, event audit |
+| `/runs/<id>/graph` | the run as a swimlane: one lane per member plus the parent, phase bands, every event a link to its ledger entry (`?w=<px>`, `?from=<s>&to=<s>`) |
+| `/runs/<id>/graph.mmd` | the same run as a Mermaid flowchart with absolute dashboard links (text/plain) |
+| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them |
+
+Only the active run has live member state. Historical runs are rebuilt from `member-N.log` and
+the session files, so they show end cause, turns, and usage but no activity.
+
+## Files
+
+```
+.horde/
+  IDEAS.md BOARD.md FINDINGS.md FACTS.md CLAIMS.md RESOURCES.md CONCERNS.md
+                        persistent ledgers shared across runs; ids (#, F#, T#, C#, R#) keep counting up
+  .lock                 cross-process write lock
+  .gitignore            "runs/"
+  resource-history.jsonl  previous resource metadata, written before an authorized edit
+  runs/<run-id>/
+    TASK.md SYSTEM.md PLAN.md       prompt and config; the member protocol prompt; the plan partition
+    MANIFEST.json                   code and prompt hashes, model, run configuration
+    member-N.log                    member stderr plus spawn, exit cause, turns, final message
+    sessions/member-N/              pi session files (resume with `pi --session <file>`)
+    postmortem-sessions/ deliverable-sessions/   helper agent sessions
+    .hb-member-N                    heartbeat touched by the member's last ledger write
+    events.jsonl                    ordered, durable collaboration events, mutation audit, parent lifecycle
+    artifacts/ revisions/           published files and their content-addressed copies
+    answers/                        archived solved proposal, confirmation, and contest signals
+    snapshot/ ACCEPTANCE.json ACCEPTANCE.md COLLABORATION.md   frozen ledgers and acceptance state
+    SUMMARY.md REPORT.md            per-member status and usage; the reconciled run report
+    ANSWER.md DELIVERABLE.md POSTMORTEM.md   solved answer; synthesis output; reviewer critique
+    GRAPH.md                        Mermaid graph of the run, written last at finalize
+```
+
+Each run appends a `## Run <id>` heading to BOARD.md and FINDINGS.md that cites `TASK.md` by
+sha256. `runs/` is gitignored inside `.horde/`; add `.horde/` to the project `.gitignore` to keep
+the ledgers out of git too.
+
+## The `horde` tool
+
+Every member gets the same system prompt (`SYSTEM.md`) plus a line naming it. Members read the
+ledgers with `read` and write only through `horde`, serialized by `.horde/.lock`. Every mutation
+records intent and outcome events in `events.jsonl`; collaboration actions store their full
+submission there, use sequential ids, fsync before returning, and treat a repeated `requestId`
+from the same actor as an idempotent retry. The parent appends its own lifecycle under actor
+`parent`: `run-start`, `phase-start`/`phase-end` (discovery, repair, deliverable, post-mortem),
+`member-spawn`/`member-exit`/`member-reset`, `stop-clean`/`stop-hard`, `solved-proposed`/
+`solved-contested`/`solved-validated`, `acceptance`, and `run-end`.
+
+| action | effect |
+|--------|--------|
+| `list`, `findings`, `facts`, `claims`, `resources`, `concerns` | print a ledger |
+| `post` | append a message to BOARD.md |
+| `idea` | add an open checklist item; a near-duplicate returns the existing id |
+| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id |
+| `finding` | file under a claimed `idea` with a `concern` and `support`; `importance` and `confidence` are optional; `deltaOf: F#` adds distinct evidence, `supersedes: F#` corrects |
+| `verify` | record your own reproduction of F#id with the support level you reached |
+| `fact` | record a checkable fact; `deltaOf: T#` extends one |
+| `assert`, `confirm`, `contest`, `retract`, `supersede` | create or move claim C#id |
+| `resource` | claim a shared dataset, harness, corpus, or sandbox by name, with an optional `cleanup` command |
+| `solved`, `confirm-solved`, `contest-solved` | propose, validate, or refute the goal answer |
+| `message`, `inbox`, `ack`, `respond`, `resolve`, `defer` | targeted threads: question, blocker, review-request, challenge, handoff, decision |
+| `attach` | add supporting, contradicting, or extending evidence to a target |
+| `review` | record a revision-pinned check with explicit `checked` and `unchecked` scope, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call |
+| `artifact` | publish a file under `artifacts/` with `artifactKind`, `criteria`, and revision-pinned `dependsOn` |
+| `resource-state` | publish building, ready, broken, or retired state with a lease, ports, and health evidence |
+| `inspect`, `collaboration` | one record in full (`F#`, `I#`, `R#`, `A#`, `E#`, `V#`, `Q#`, `answer`), or a paged index |
+
+### Rules the tool enforces
+
+- **Dedup.** `idea`, `finding`, `fact`, and `resource` match hard identifiers (bug ids, paths,
+  symbols, hosts, hashes, URLs) first, then token overlap. A duplicate returns the existing id
+  and records the second reporter as a corroborator. Done and ruled-out ideas match too. Dedup
+  and clustering never cross concern boundaries.
+- **Concerns.** Every finding names a `concern` slug from `CONCERNS.md`. A new slug needs
+  `concernDef`; a look-alike of an existing slug (reordered words, added or dropped words, or a
+  near-identical definition) is refused unless `concernNew: true`. Deltas and corrections
+  inherit their parent's slug.
+- **Ownership.** A member cannot claim an idea another member holds, finish an idea it has not
+  claimed, post a plan before claiming, file a finding without a claimed idea, or spawn a nested
+  horde. `claim` refuses a near-identical claim with the holder's id and warns on a similar one.
+  `deltaOf` and `supersedes` attach to the reporter's idea without claiming it.
+- **Resources.** The first `resource` claim owns the name; later claims return the owner and
+  record a reuser. `cleanup` runs at finalize for external runtime objects only; commands that
+  delete files or touch this run's tree are refused. Only the owning run and member may update a
+  description.
+- **Solved is two-phase.** `solved` writes the answer to `ANSWER.md` while work continues. A
+  different member validates or refutes it. The parent starts wind-down once the proposal is
+  validated and every idea this run created or its members hold is done or ruled out. With no
+  other member running, or no validation within `PI_HORDE_SOLVED_CONFIRM_MS`, an uncontested
+  proposal commits as `solved-unvalidated`. Findings no other member reproduced hold wind-down
+  while other members run, unless `PI_HORDE_ALLOW_UNVERIFIED=1`.
+- **Reviews are revision-pinned.** A runnable artifact needs a full-scope `tested` or
+  `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)
+  accepts a full-scope `sourced` or `derived` review against its criteria. Changing criteria or
+  dependencies needs changed bytes and a fresh review. Open blockers and challenges block
+  acceptance; `defer` keeps the debt visible.
+- **Inbox.** Targeted messages are inserted at turn boundaries, for at most
+  `PI_HORDE_INBOX_TURNS` extra turns per session. Delivery is a context insertion, not
+  comprehension. Message and review bodies are untrusted input, not tool instructions.
+- **Reminders.** Every `PI_HORDE_REMIND_CALLS` tool calls or `PI_HORDE_REMIND_MS`, the tool
+  result restates the task, role, and claimed ideas. A member that finishes its last idea while
+  open ideas remain is told to claim one before stopping.
+- **Compact receipts.** Write confirmations omit the prose just submitted; `inspect target=E#`
+  or `detail=full` returns it. `collaboration` pages at 25 records per collection (`limit`
+  1-100) and filters by `target`.
+
+## Partitioned runs and roles
+
+`plan <count> <a; b; c>` seeds one idea per layer, claims each round-robin by member index,
+writes `PLAN.md`, and gives each member its layer as an instruction. Members without a layer
+become verifiers. Use it for any "analyse each X" task; partition design work by output type
+(spec, prototype, generator) rather than by theme.
+
+An unpartitioned run of three or more members makes its last member the verifier: review the
+highest-importance unchecked assertions first with `horde review`, contest or supersede what does
+not reproduce, and claim ideas only when nothing is left to review. `--no-verifier` turns this
+off.
+
+## Finding metadata
+
+`importance` (critical, high, medium, low, info), `confidence` (high, medium, low), and
+`support` (reproduced, tested, derived, sourced, speculative) are the reporter's own labels.
+Independent checks live in V# review records and never rewrite them. Each finding's current
+revision is classified as `full`, `limited`, `disputed`, `unreviewed`, `legacy` (a `verified=`
+heading label with no scoped review), or `superseded`; REPORT, SUMMARY, the dashboard, and
+acceptance all use that classification. Clusters rank by review status, then support,
+importance, independent members, and confidence.
+
+## REPORT.md
+
+Written at finalize: the outcome and canary result; per-member end cause (`completed`,
+`model_error`, `no_output`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
+for an abnormal end after measurable work; distinct finding clusters with review coverage,
+superseded findings in their own section, and any resets; claim states; this run's facts split
+from carried context; resources and cleanup results; coverage (released and still-open ideas,
+the solved answer); late board posts; and consistency warnings for missing metadata,
+mixed-concern clusters, unknown R# citations, and cited paths that do not exist. A killed
+member's summary is reconstructed from its last board post. The message injected into the parent
+carries a one-line diagnosis and, when generated, the post-mortem text.
+
+## Configuration
+
+| variable | default | effect |
+|----------|---------|--------|
+| `PI_HORDE_DASHBOARD_PORT` | 7433 | dashboard port when `--dashboard` names none |
+| `PI_HORDE_MAX_MINUTES` | off | clean stop at a wall-clock deadline |
+| `PI_HORDE_CANARY_MS` | 60000 | time for member-1 to produce output before a retry |
+| `PI_HORDE_STALL_MS` | 1800000 | reset a member with no ledger write for this long; `0` disables |
+| `PI_HORDE_RESET_CAP` | 2 | resets per member |
+| `PI_HORDE_ACTIVE_GRACE_MS` | 15000 | one clean-stop extension for a member still producing output |
+| `PI_HORDE_SOLVED_CONFIRM_MS` | 120000 | wait for a second member to validate a solve |
+| `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
+| `PI_HORDE_ALLOW_UNVERIFIED` | unset | `1` accepts a validated answer with unverified findings |
+| `PI_HORDE_REPAIR_ROUNDS` | 4 | post-discovery repair rounds (max 6; `0` disables) |
+| `PI_HORDE_REPAIR_MS` | 120000 | total repair time |
+| `PI_HORDE_REPAIR_TOKENS` | 50000 | total repair tokens |
+| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_DELIVERABLE` | on | `off` skips the synthesis member |
+| `PI_HORDE_POSTMORTEM` | on | `off` skips the automatic post-mortem |
+| `PI_HORDE_POSTMORTEM_MS` | 300000 | post-mortem reviewer timeout |
+| `PI_HORDE_CLEANUP` | on | `off` skips resource teardown |
+| `PI_HORDE_REMIND_CALLS` | 8 | member: tool calls between goal reminders; `0` disables |
+| `PI_HORDE_REMIND_MS` | 600000 | member: time between goal reminders; `0` disables |
+| `PI_HORDE_INBOX_TURNS` | 12 | member: extra turns a session may take to read targeted messages |
+
+The parent sets `PI_HORDE_MEMBER`, `PI_HORDE_DIR`, `PI_HORDE_RUN`, `PI_HORDE_NAME`,
+`PI_HORDE_ROLE`, `PI_HORDE_ATTEMPT`, and `PI_HORDE_PARENT_PID` on each child itself.
+
+## Code map
+
+`index.ts` only wires things up: a member process registers the `horde` tool; the parent
+registers the `/agent-horde` command, the report renderer, and the shutdown hook.
+
+```
+index.ts              entry point: member tool or parent command, by PI_HORDE_MEMBER
+args.ts               /agent-horde argument parsing and usage text
+format.ts             shared text, time, token, and error formatting
+member.ts             member process spawn, event log parsing, child tracking
+prompt.ts             member system prompt, TASK.md, SUMMARY.md, REPORT.md, status text
+reminder.ts           periodic goal reminder appended to member tool results
+session-log.ts        member session transcript reader for the dashboard
+watchdog.ts           child exits when its parent pid is gone
+widget.ts             TUI widget above the editor
+citations.ts          R#/F#/T# and file-path citation checks for findings and generated artifacts
+dashboard.ts          localhost HTTP server; dashboard-data.ts loads pages, dashboard-html.ts renders
+collaboration-report.ts  acceptance checks, frozen snapshots, collaboration metrics
+run-graph.ts          events.jsonl projected into lanes, phases, nodes, and edges with dashboard links
+run-graph-svg.ts      the swimlane SVG and its legend; run-graph-mermaid.ts the Mermaid export and GRAPH.md
+
+ledger/               one module per .horde/ document, all writes under the .horde lock
+  files.ts            paths, init, atomic writes, shared entry formatting
+  lock.ts             cross-process .horde lock
+  text-match.ts       duplicate and overlap detection
+  ideas.ts board.ts findings.ts facts.ts claims.ts resources.ts concerns.ts
+                      IDEAS.md, BOARD.md, FINDINGS.md, FACTS.md, CLAIMS.md, RESOURCES.md, CONCERNS.md
+  clusters.ts         finding clusters and ranking for the report
+  events.ts           locked durable events, retry ids, torn-tail recovery
+  collaboration.ts    event-derived messages, evidence, revisions, reviews, and contracts
+  run-signals.ts      per-run files: clean-stop sentinel, heartbeats, SOLVED signals, ANSWER.md
+
+tool/                 the member-side `horde` tool
+  params.ts           tool parameter schema
+  actions.ts          one handler per ledger action, dispatched by runHordeAction
+  hints.ts            solved, verification, and idle nudges appended to results
+  register.ts         tool registration, heartbeat, goal reminders
+  collaboration-actions.ts  targeted messages, evidence, review, and revision transitions
+  collaboration-target.ts   owner and revision lookup, retained artifact copies
+  collaboration-view.ts     paged collaboration summaries and compact write receipts
+  inbox.ts            turn-boundary delivery and persisted receipts
+  resource-contract.ts      resource generations, readiness, leases, and port coordination
+
+run/                  the parent-side run lifecycle, sharing one HordeState
+  types.ts            HordeRun, HordeState, ReportDetails
+  command.ts          /agent-horde dispatch and session shutdown
+  setup.ts            run directory, TASK.md, roles, plan seeding
+  launch.ts           dashboard, deadline, canary preflight, fan-out
+  supervise.ts        member spawn, reset on exit, stall detection
+  schedule.ts         artifact review assignment and superseded-dependency handoffs
+  repair.ts           bounded post-discovery reviews, owner repair, and recheck attempts
+  solved.ts           two-phase SOLVED poll
+  controls.ts         stop-hard, pause and resume, clean stop and its deadline
+  finalize.ts         reconcile, cleanups, SUMMARY.md and REPORT.md, report message, GRAPH.md
+  lifecycle.ts        parent lifecycle events in events.jsonl
+  synthesis.ts        deliverable and post-mortem helper agents
+  diagnosis.ts        one-line run diagnosis
+  ui.ts               widget mount, status line, report renderer, notifications
+  completions.ts      command argument completions
+```
+
+## Tests
+
+From the repository root, after `npm install`:
+
+```
+npm test        # node tests/run.mjs
+npm run lint    # oxlint: undefined identifiers, import cycles, ≤100 lines per function, ≤5 params
+```
+
+The runner executes every `tests/*-test.mjs` and `*-regression.mjs` in its own process; each
+file also runs directly. Tests load the TypeScript sources through jiti from the installed pi
+package, found via `node_modules`, `npm root -g`, the managed install under `~/.pi/agent/install`,
+or `PI_PACKAGE_DIR`. jiti does not type-check, so `horde-imports-test` verifies that every
+relative import names a real export. The dashboard tests build a synthetic `.horde` fixture at
+run time, so nothing machine-specific is checked in.
+
+The suite establishes protocol behavior, not model quality. To evaluate the latter, compare fixed
+tasks with repair disabled, repair enabled, and a single-agent baseline under the same model,
+budget, and tool access, and use the `MANIFEST.json` and `ACCEPTANCE.json` hashes to identify
+what was scored.

@@ -1,0 +1,18 @@
+#!/bin/bash
+# Refuse a commit that would carry the maintainer's machine username or a non-public identity.
+set -euo pipefail
+allowed_email="16121304+eliyastein@users.noreply.github.com"
+# Assembled so this file does not itself contain the string it rejects.
+private="chin""aski"
+for ident in "$(git var GIT_AUTHOR_IDENT)" "$(git var GIT_COMMITTER_IDENT)"; do
+  if [[ "$ident" != *"<$allowed_email>"* ]]; then
+    echo "pre-commit: identity '$ident' is not the public one; this repo expects <$allowed_email>" >&2
+    echo "pre-commit: run: git config user.name eliyastein; git config user.email $allowed_email" >&2
+    exit 1
+  fi
+done
+if hits=$(git diff --cached -U0 | grep -n -i -- "$private"); then
+  echo "pre-commit: staged changes mention the private username:" >&2
+  echo "$hits" | head -20 >&2
+  exit 1
+fi
