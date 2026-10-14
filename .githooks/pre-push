@@ -1,23 +1,26 @@
 #!/bin/bash
-# Refuse to push commits whose identity, message, or diff would expose the maintainer's machine username.
+# Refuse to push commits whose identity, message, or diff would expose a home-directory path or
+# the maintainer's private pattern from git config (hooks.privatePattern), never stored here.
 set -euo pipefail
 allowed_email="16121304+eliyastein@users.noreply.github.com"
-private="chin""aski"
+# GitHub signs the merge and squash commits it creates with its own committer identity.
+github_committer="noreply@github.com"
+home_path='(/Us''ers|/ho''me)/[A-Za-z0-9._-]+'
+private=$(git config --get hooks.privatePattern || true)
 zero="0000000000000000000000000000000000000000"
 status=0
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [[ "$local_sha" == "$zero" ]] && continue
-  if [[ "$remote_sha" == "$zero" ]]; then range="$local_sha"; else range="$remote_sha..$local_sha"; fi
+  # A new branch or a rewritten remote tip: scan what the remotes do not already have.
+  if [[ "$remote_sha" == "$zero" ]] || ! git cat-file -e "$remote_sha" 2>/dev/null; then range=("$local_sha" --not --remotes); else range=("$remote_sha..$local_sha"); fi
   while read -r sha ae ce; do
-    if [[ "$ae" != "$allowed_email" || "$ce" != "$allowed_email" ]]; then
-      echo "pre-push: $sha has author <$ae> committer <$ce>; expected <$allowed_email>" >&2
-      status=1
+    if [[ "$ae" != "$allowed_email" || ( "$ce" != "$allowed_email" && "$ce" != "$github_committer" ) ]]; then
+      echo "pre-push: $sha has author <$ae> committer <$ce>; expected <$allowed_email>" >&2; status=1
     fi
-    if git show --format=%B -p "$sha" | grep -q -i -- "$private"; then
-      echo "pre-push: $sha mentions the private username in its message or diff" >&2
-      status=1
-    fi
-  done < <(git rev-list --format='%H %ae %ce' --no-commit-header "$range")
+    body=$(git show --format=%B -p "$sha")
+    if grep -q -E -- "$home_path" <<<"$body"; then echo "pre-push: $sha contains a home-directory path" >&2; status=1; fi
+    if [[ -n "$private" ]] && grep -q -i -E -- "$private" <<<"$body"; then echo "pre-push: $sha matches the private pattern" >&2; status=1; fi
+  done < <(git rev-list --format='%H %ae %ce' --no-commit-header "${range[@]}")
 done
-if [[ "$status" -ne 0 ]]; then echo "pre-push: refusing; rewrite the commits above (git commit --amend --reset-author, or git filter-repo)" >&2; fi
+[[ "$status" -ne 0 ]] && echo "pre-push: refusing; rewrite the commits above (git commit --amend --reset-author, or git filter-repo)" >&2
 exit "$status"
