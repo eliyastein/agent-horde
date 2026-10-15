@@ -4,6 +4,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-14
+
 ### Fixed
 
 - The run graph's time axis is linear only until the last member exits; the deliverable and
