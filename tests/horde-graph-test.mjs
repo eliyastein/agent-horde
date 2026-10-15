@@ -266,9 +266,17 @@ console.log("horde-graph-test ok");
   const live = graphs.buildRunGraph({ runId, events: tailEvents.slice(0, 4), members: [{ name: "member-1", status: "running" }], now: T0 + 600_000 });
   assert.equal(live.membersEnd, live.end);
   assert.equal(svg.graphTimeScale(live, { width: 1000, from: 0, to: 0 }).cut, undefined);
-  // A tail shorter than the threshold stays linear.
-  const short = graphs.buildRunGraph({ runId, events: [...tailEvents.slice(0, 7), ev(8, "parent", "run-end", 66, {})], members: done });
+  // A short tail with no parent phase after the members stays linear.
+  const short = graphs.buildRunGraph({ runId, events: [...tailEvents.slice(0, 6), ev(7, "parent", "run-end", 66, {})], members: done });
   assert.equal(svg.graphTimeScale(short, { width: 1000, from: 0, to: 0 }).cut, undefined);
+  // Live and synthesizing: members done, post-mortem just started, so the main axis freezes at once.
+  const synthesizing = graphs.buildRunGraph({
+    runId, events: [...tailEvents.slice(0, 6), ev(7, "parent", "phase-start", 65, { phase: "post-mortem" })],
+    members: [{ name: "member-1", status: "stopped" }], now: T0 + 70_000,
+  });
+  const liveScale = svg.graphTimeScale(synthesizing, { width: 1000, from: 0, to: 0 });
+  assert.equal(liveScale.cut, T0 + 60_000, "the cut applies as soon as a phase starts after the members");
+  assert.equal(Math.round(liveScale.x(T0 + 60_000) - liveScale.x(T0)), 850, "the members' span keeps 85% while the tail grows");
   // A window that ends before the cut is linear too.
   assert.equal(svg.graphTimeScale(tail, { width: 1000, from: 0, to: 45_000 }).cut, undefined);
 }

@@ -84,12 +84,16 @@ function unit(value: number): number {
 /**
  * Real time until the last member exits. The synthesis that follows can outlast discovery, so it
  * gets a fixed share of the width instead of squeezing the members' work into the left margin.
+ * The cut applies as soon as a parent phase starts after the members are done, so a live run's
+ * main axis freezes the moment synthesis begins; without such a phase only a long tail triggers it.
  */
 export function graphTimeScale(graph: RunGraph, window: GraphWindow): TimeScale {
   const { t0, t1 } = windowOf(graph, window);
   const plotW = window.width;
   const cut = graph.membersEnd;
-  if (cut <= t0 || cut >= t1 || (t1 - cut) / (t1 - t0) <= TAIL_FRACTION) {
+  const phaseAfterMembers = graph.phases.some((phase) => phase.from >= cut && phase.from < t1);
+  const longTail = (t1 - cut) / (t1 - t0) > TAIL_FRACTION;
+  if (cut <= t0 || cut >= t1 || (!phaseAfterMembers && !longTail)) {
     return { t0, t1, x: (t) => LABEL_W + unit((t - t0) / (t1 - t0)) * plotW };
   }
   const mainW = plotW * (1 - TAIL_FRACTION);
