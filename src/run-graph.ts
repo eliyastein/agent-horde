@@ -54,6 +54,8 @@ export interface RunGraph {
   runId: string;
   start: number;
   end: number;
+  /** When the last member activity happened; equals `end` while members still run. */
+  membersEnd: number;
   lanes: GraphLane[];
   phases: GraphPhase[];
   nodes: GraphNode[];
@@ -553,6 +555,16 @@ function phasesOf(draft: Draft, nodes: GraphNode[], start: number, end: number):
   return phases;
 }
 
+const TERMINAL_STATUSES = new Set(["done", "failed", "stopped"]);
+
+/** The last member-lane event once every member has exited; the whole span while any still runs. */
+function membersEndOf(nodes: GraphNode[], members: GraphMember[], live: boolean, start: number, end: number): number {
+  const running = live && members.some((m) => m.status !== undefined && !TERMINAL_STATUSES.has(m.status));
+  if (running) return end;
+  const times = nodes.filter((n) => n.lane !== "parent" && !n.placeholder).map((n) => n.at);
+  return Math.min(end, Math.max(start, ...times));
+}
+
 /** Project a run's events (plus what the parent knows about its members) into lanes, phases, nodes, and edges. */
 export function buildRunGraph(input: RunGraphInput): RunGraph {
   const events = input.events.filter((event) => event.outcome !== "intent");
@@ -570,6 +582,7 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
     runId: input.runId,
     start,
     end,
+    membersEnd: membersEndOf(nodes, members, input.now !== undefined, start, end),
     lanes: lanesOf(draft, nodes, members),
     phases: phasesOf(draft, nodes, start, end),
     nodes,
