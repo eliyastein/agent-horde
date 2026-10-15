@@ -21,6 +21,9 @@ const HEADER_H = 36;
 const AXIS_H = 18;
 const TICK_STEPS_MS = [5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000, 3_600_000, 7_200_000];
 const MAX_TICKS = 14;
+/** Share of the plot for everything after the last member exits, when that tail would otherwise dominate. */
+const TAIL_FRACTION = 0.15;
+const TAIL_AXIS_H = 30;
 
 const TONE_COLORS: Record<EdgeTone, string> = {
   structure: "#000", collaboration: "#1f5fbf", verification: "#1a7f37", negative: "#c62828", lifecycle: "#888",
@@ -57,11 +60,43 @@ interface LaneBand {
 interface Layout {
   width: number;
   height: number;
+  axisH: number;
   t0: number;
   t1: number;
+  cut?: number | undefined;
   bands: LaneBand[];
   placed: Map<string, Placed>;
   x: (t: number) => number;
+}
+
+export interface TimeScale {
+  t0: number;
+  t1: number;
+  /** Where the axis switches from real time to the compressed tail; absent when the axis is linear. */
+  cut?: number | undefined;
+  x: (t: number) => number;
+}
+
+function unit(value: number): number {
+  return Math.min(Math.max(0, value), 1);
+}
+
+/**
+ * Real time until the last member exits. The synthesis that follows can outlast discovery, so it
+ * gets a fixed share of the width instead of squeezing the members' work into the left margin.
+ */
+export function graphTimeScale(graph: RunGraph, window: GraphWindow): TimeScale {
+  const { t0, t1 } = windowOf(graph, window);
+  const plotW = window.width;
+  const cut = graph.membersEnd;
+  if (cut <= t0 || cut >= t1 || (t1 - cut) / (t1 - t0) <= TAIL_FRACTION) {
+    return { t0, t1, x: (t) => LABEL_W + unit((t - t0) / (t1 - t0)) * plotW };
+  }
+  const mainW = plotW * (1 - TAIL_FRACTION);
+  const tailW = plotW - mainW;
+  const x = (t: number): number =>
+    t <= cut ? LABEL_W + unit((t - t0) / (cut - t0)) * mainW : LABEL_W + mainW + unit((t - cut) / (t1 - cut)) * tailW;
+  return { t0, t1, cut, x };
 }
 
 function nodeWidth(node: GraphNode): number {
@@ -91,9 +126,8 @@ function packLane(nodes: GraphNode[], x: (t: number) => number, top: number): { 
 }
 
 function layoutGraph(graph: RunGraph, window: GraphWindow): Layout {
-  const { t0, t1 } = windowOf(graph, window);
+  const { t0, t1, cut, x } = graphTimeScale(graph, window);
   const plotW = window.width;
-  const x = (t: number): number => LABEL_W + Math.min(Math.max(0, (t - t0) / (t1 - t0)), 1) * plotW;
   const visible = graph.nodes.filter((node) => node.at >= t0 && node.at <= t1).sort((a, b) => a.at - b.at);
   const placed = new Map<string, Placed>();
   const bands: LaneBand[] = [];
@@ -106,7 +140,8 @@ function layoutGraph(graph: RunGraph, window: GraphWindow): Layout {
     bands.push({ lane, y, h });
     y += h;
   }
-  return { width: LABEL_W + plotW + PAD, height: y + AXIS_H, t0, t1, bands, placed, x };
+  const axisH = cut === undefined ? AXIS_H : TAIL_AXIS_H;
+  return { width: LABEL_W + plotW + PAD, height: y + axisH, axisH, t0, t1, cut, bands, placed, x };
 }
 
 function renderDefs(): string {
@@ -118,7 +153,7 @@ function renderDefs(): string {
 }
 
 function renderPhases(graph: RunGraph, layout: Layout): string {
-  const bottom = layout.height - AXIS_H;
+  const bottom = layout.height - layout.axisH;
   return graph.phases
     .map((phase, index) => {
       const from = Math.max(phase.from, layout.t0);
@@ -146,17 +181,36 @@ function renderLanes(layout: Layout): string {
     .join("");
 }
 
+function tick(graph: RunGraph, layout: Layout, t: number, cls: string): string {
+  const x = layout.x(t);
+  const y = layout.height - layout.axisH;
+  const anchor = t >= layout.t1 ? ` text-anchor="end" x="${px(x - 2)}"` : ` x="${px(x + 2)}"`;
+  return (
+    `<line class="tick" x1="${px(x)}" y1="${HEADER_H}" x2="${px(x)}" y2="${px(y)}"/>` +
+    `<text${anchor} y="${px(y + 12)}" class="${cls}">+${e(formatElapsed(t - graph.start))}</text>`
+  );
+}
+
+/** Regular ticks up to the cut; past it only phase boundaries and the end, since the scale differs. */
 function renderAxis(graph: RunGraph, layout: Layout): string {
-  const span = layout.t1 - layout.t0;
+  const mainEnd = layout.cut ?? layout.t1;
+  const span = mainEnd - layout.t0;
   const step = TICK_STEPS_MS.find((candidate) => span / candidate <= MAX_TICKS) ?? TICK_STEPS_MS[TICK_STEPS_MS.length - 1]!;
   const firstTick = graph.start + Math.ceil((layout.t0 - graph.start) / step) * step;
   const parts: string[] = [];
-  const y = layout.height - AXIS_H;
-  for (let t = firstTick; t <= layout.t1; t += step) {
-    const x = layout.x(t);
-    parts.push(`<line class="tick" x1="${px(x)}" y1="${HEADER_H}" x2="${px(x)}" y2="${px(y)}"/>`);
-    parts.push(`<text x="${px(x + 2)}" y="${px(y + 12)}" class="tick-label">+${e(formatElapsed(t - graph.start))}</text>`);
-  }
+  for (let t = firstTick; t <= mainEnd; t += step) parts.push(tick(graph, layout, t, "tick-label"));
+  if (layout.cut === undefined) return parts.join("");
+  const bottom = layout.height - layout.axisH;
+  const cx = layout.x(layout.cut);
+  parts.push(`<line class="cut" x1="${px(cx)}" y1="${HEADER_H - 16}" x2="${px(cx)}" y2="${px(bottom)}"/>`);
+  const note = `members done +${formatElapsed(layout.cut - graph.start)}; the rest is compressed`;
+  parts.push(`<text x="${px(cx - 3)}" y="${px(bottom + 24)}" text-anchor="end" class="tick-label tail">${e(note)}</text>`);
+  // One tick per distinct second: phase boundaries and the end often sit milliseconds apart.
+  const { cut, t1 } = layout;
+  const tailTicks = new Map<string, number>();
+  const candidates = graph.phases.flatMap((phase) => [phase.from, phase.to]).filter((t) => t > cut && t < t1);
+  for (const t of [...candidates, layout.t1]) tailTicks.set(formatElapsed(t - graph.start), t);
+  for (const t of [...tailTicks.values()].sort((a, b) => a - b)) parts.push(tick(graph, layout, t, "tick-label tail"));
   return parts.join("");
 }
 
@@ -216,6 +270,7 @@ export const GRAPH_CSS =
   ".graph{overflow:auto;border:1px solid #000;margin:4px 0;background:#fff}" +
   "svg text{fill:#000}svg .phase{fill:#000;opacity:.04}svg .phase-alt{opacity:.09}svg .phase-label{font-weight:bold}" +
   "svg .lane-line{stroke:#bbb}svg .tick{stroke:#e5e5e5}svg .tick-label{fill:#555}" +
+  "svg .cut{stroke:#999;stroke-width:1.5;stroke-dasharray:4 3}svg .tail{font-style:italic}" +
   "svg .n{stroke:#000;stroke-width:1}svg .n-prior{stroke-dasharray:3 2}" +
   "svg .m{stroke:#333;stroke-width:1}svg .m-rejected{stroke:#c62828;stroke-width:2}svg .m-noop{stroke-dasharray:2 1}" +
   "svg a:hover .n,svg a:hover .m{stroke-width:2.5}svg a:hover text{text-decoration:underline}" +

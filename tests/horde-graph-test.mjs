@@ -231,3 +231,45 @@ assert.ok(navOf(get("/findings?run=all").body).includes(`href="/runs/${runId}/gr
 assert.ok(!navOf(dashboard.routeRequest({ hordeDir: files.initHordeDir(fs.mkdtempSync(path.resolve(".tmp/horde-graph-empty-"))), getActive: () => undefined }, "GET", new URL("http://127.0.0.1:7433/ideas"), "127.0.0.1:7433").body).includes("/graph"), "no runs, no run links");
 
 console.log("horde-graph-test ok");
+
+// ---- Time scale: real time until the last member exits, then a compressed tail -----------------
+{
+  const T0 = Date.parse("2026-10-13T12:00:00Z");
+  const ev = (seq, actor, action, offsetS, payload = {}) => ({
+    schema: 1, seq, eventId: `E${seq}`, at: new Date(T0 + offsetS * 1000).toISOString(), runId, actor,
+    attempt: actor === "parent" ? "lifecycle" : "a1", requestId: `r${seq}`, action, outcome: "applied", parents: [], payload,
+  });
+  const tailEvents = [
+    ev(1, "parent", "run-start", 0, { count: 1 }),
+    ev(2, "parent", "phase-start", 0, { phase: "discovery" }),
+    ev(3, "parent", "member-spawn", 1, { member: "member-1" }),
+    ev(4, "member-1", "idea", 30, { input: { action: "idea", text: "look" }, result: { id: 1, text: "Added idea #1: look" } }),
+    ev(5, "parent", "member-exit", 60, { member: "member-1", status: "done" }),
+    ev(6, "parent", "phase-end", 60, { phase: "discovery" }),
+    ev(7, "parent", "phase-start", 65, { phase: "deliverable" }),
+    ev(8, "parent", "phase-end", 600, { phase: "deliverable" }),
+    ev(9, "parent", "run-end", 601, { outcome: "completed" }),
+  ];
+  const done = [{ name: "member-1", status: "done" }];
+  const tail = graphs.buildRunGraph({ runId, events: tailEvents, members: done });
+  assert.equal(tail.membersEnd, T0 + 60_000, "members end at the last member-lane event");
+  const scale = svg.graphTimeScale(tail, { width: 1000, from: 0, to: 0 });
+  assert.equal(scale.cut, tail.membersEnd);
+  const at = (t) => Math.round(scale.x(t) - scale.x(tail.start));
+  assert.equal(at(tail.membersEnd), 850, "the members' minute takes 85% of the plot");
+  assert.equal(at(T0 + 30_000), 425, "real time is linear before the cut");
+  assert.equal(at(tail.end), 1000, "the nine-minute tail takes the remaining 15%");
+  const picture = svg.renderRunGraphSvg(tail, { width: 1000, from: 0, to: 0 });
+  assert.ok(picture.includes('class="cut"') && picture.includes("members done +01:00"), "the break is drawn and labelled");
+  assert.ok(picture.includes("deliverable +01:05 to +10:00"), "tail phases still render");
+  // Members still running: no compression, the axis runs to now.
+  const live = graphs.buildRunGraph({ runId, events: tailEvents.slice(0, 4), members: [{ name: "member-1", status: "running" }], now: T0 + 600_000 });
+  assert.equal(live.membersEnd, live.end);
+  assert.equal(svg.graphTimeScale(live, { width: 1000, from: 0, to: 0 }).cut, undefined);
+  // A tail shorter than the threshold stays linear.
+  const short = graphs.buildRunGraph({ runId, events: [...tailEvents.slice(0, 7), ev(8, "parent", "run-end", 66, {})], members: done });
+  assert.equal(svg.graphTimeScale(short, { width: 1000, from: 0, to: 0 }).cut, undefined);
+  // A window that ends before the cut is linear too.
+  assert.equal(svg.graphTimeScale(tail, { width: 1000, from: 0, to: 45_000 }).cut, undefined);
+}
+console.log("horde-graph-test tail ok");
