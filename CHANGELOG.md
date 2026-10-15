@@ -4,11 +4,13 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
 - The run graph's time axis is linear only until the last member exits; the deliverable and
-  post-mortem phases that follow share a compressed tail with a marked break, so a long synthesis
-  no longer squeezes the members' work into the left margin.
+  post-mortem phases that follow share a compressed tail behind a marked break, so a long
+  synthesis no longer squeezes the members' work into the left margin.
+- On a live run the graph's main axis freezes as soon as synthesis starts, instead of stretching
+  with the clock until the tail passed a size threshold.
 
 ## [0.1.0] - 2026-10-14
 
