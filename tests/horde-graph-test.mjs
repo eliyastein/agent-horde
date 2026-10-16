@@ -281,3 +281,47 @@ console.log("horde-graph-test ok");
   assert.equal(svg.graphTimeScale(tail, { width: 1000, from: 0, to: 45_000 }).cut, undefined);
 }
 console.log("horde-graph-test tail ok");
+
+// ---- End-of-axis layout: boxes stay inside the drawing and phase labels never overlap ----------
+{
+  const T0 = Date.parse("2026-01-01T00:00:00Z");
+  const ev = (seq, actor, action, offsetS, payload = {}) => ({
+    schema: 1, seq, eventId: `E${seq}`, at: new Date(T0 + offsetS * 1000).toISOString(), runId, actor,
+    attempt: actor === "parent" ? "lifecycle" : "a1", requestId: `r${seq}`, action, outcome: "applied", parents: [], payload,
+  });
+  const review = (seq, s) => ev(seq, "member-1", "review", s, { review: { id: `V${seq}`, actor: "member-1", target: "I1", revision: "r", verdict: "partially-supports", support: "derived", checked: "x", unchecked: "y", text: "t", evidence: [] } });
+  const idea = ev(2, "member-1", "idea", 10, { input: { action: "idea", text: "first" }, result: { id: 1, text: "Added idea #1: first" } });
+  const contentBounds = (picture) => {
+    const width = Number(/<svg[^>]*\swidth="([\d.]+)"/.exec(picture)[1]);
+    const boxes = [...picture.matchAll(/<rect class="n [^"]*" x="([\d.]+)" y="[\d.]+" width="([\d.]+)"/g)].map((m) => ({ x: +m[1], w: +m[2] }));
+    const dots = [...picture.matchAll(/<circle class="m [^"]*" cx="([\d.]+)"/g)].map((m) => +m[1] + 3.5);
+    return { width, right: Math.max(...boxes.map((b) => b.x + b.w), ...dots), boxes };
+  };
+  // A wide review box whose time is the axis end: live (now) and finished.
+  const atEnd = [ev(1, "parent", "run-start", 0, { count: 1 }), idea, review(3, 600)];
+  for (const graph of [
+    graphs.buildRunGraph({ runId, events: atEnd, members: [{ name: "member-1", status: "running" }], now: T0 + 600_000 }),
+    graphs.buildRunGraph({ runId, events: atEnd, members: [{ name: "member-1", status: "done" }] }),
+  ]) {
+    const { width, right, boxes } = contentBounds(svg.renderRunGraphSvg(graph, { width: 1200, from: 0, to: 0 }));
+    assert.ok(right <= width, `content ends at ${right} inside a ${width}px drawing`);
+    const last = boxes.sort((a, b) => b.x - a.x)[0];
+    assert.ok(last.x + last.w >= width - 10, "the end-of-axis box is pulled left only as far as needed");
+  }
+  // Two narrow phases next to the cut: labels shrink to the id or vanish rather than overlap.
+  const phased = [
+    ev(1, "parent", "run-start", 0, { count: 1 }), idea,
+    ev(3, "parent", "phase-start", 0, { phase: "discovery" }), ev(4, "parent", "phase-end", 540, { phase: "discovery" }),
+    ev(5, "parent", "phase-start", 540, { phase: "repair" }), review(6, 560), ev(7, "parent", "phase-end", 560, { phase: "repair" }),
+    ev(8, "parent", "phase-start", 565, { phase: "deliverable" }), ev(9, "parent", "phase-end", 600, { phase: "deliverable" }),
+    ev(10, "parent", "run-end", 600, {}),
+  ];
+  const picture = svg.renderRunGraphSvg(graphs.buildRunGraph({ runId, events: phased, members: [{ name: "member-1", status: "done" }] }), { width: 1000, from: 0, to: 0 });
+  assert.ok(picture.includes('<text x="') && picture.includes('class="phase-label">discovery +00:00 to +09:00</text>'), "a wide band keeps its full label");
+  assert.ok(picture.includes('class="phase-label">deliverable</text>'), "a band too narrow for the range keeps the id");
+  assert.ok(!picture.includes('class="phase-label">repair'), "a band too narrow for its id draws no text");
+  assert.ok(picture.includes("<title>repair +09:00 to +09:20</title>") && picture.includes("<title>deliverable +09:25 to +10:00</title>"), "every band keeps the full range in its tooltip");
+  const labels = [...picture.matchAll(/<text x="([\d.]+)" y="[\d.]+" class="phase-label">([^<]*)<\/text>/g)].map((m) => ({ x: +m[1], text: m[2] })).sort((a, b) => a.x - b.x);
+  for (let i = 1; i < labels.length; i++) assert.ok(labels[i - 1].x + labels[i - 1].text.length * 6.6 <= labels[i].x, `labels '${labels[i - 1].text}' and '${labels[i].text}' do not overlap`);
+}
+console.log("horde-graph-test end-of-axis ok");

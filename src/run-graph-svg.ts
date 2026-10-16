@@ -114,13 +114,16 @@ function windowOf(graph: RunGraph, window: GraphWindow): { t0: number; t1: numbe
   return { t0, t1: requested > t0 ? requested : t0 + 1_000 };
 }
 
-/** Rows within a lane: a node takes the first row whose last occupant ends before it starts. */
-function packLane(nodes: GraphNode[], x: (t: number) => number, top: number): { placed: Placed[]; rows: number } {
+/**
+ * Rows within a lane: a node takes the first row whose last occupant ends before it starts. A box
+ * anchored near the end of the axis is pulled left so its right edge stays inside the plot.
+ */
+function packLane(nodes: GraphNode[], x: (t: number) => number, top: number, plotEnd: number): { placed: Placed[]; rows: number } {
   const rowEnds: number[] = [];
   const placed: Placed[] = [];
   for (const node of nodes) {
     const w = nodeWidth(node);
-    const left = node.marker ? x(node.at) - DOT_R : x(node.at);
+    const left = node.marker ? x(node.at) - DOT_R : Math.min(x(node.at), plotEnd - w);
     let row = rowEnds.findIndex((end) => end + GAP <= left);
     if (row === -1) row = rowEnds.length;
     rowEnds[row] = left + w;
@@ -138,7 +141,7 @@ function layoutGraph(graph: RunGraph, window: GraphWindow): Layout {
   let y = HEADER_H;
   for (const lane of graph.lanes) {
     const own = visible.filter((node) => node.lane === lane.id);
-    const packed = packLane(own, x, y);
+    const packed = packLane(own, x, y, LABEL_W + plotW);
     for (const item of packed.placed) placed.set(item.node.id, item);
     const h = PAD * 2 + packed.rows * ROW_H;
     bands.push({ lane, y, h });
@@ -156,6 +159,14 @@ function renderDefs(): string {
   return `<defs>${markers.join("")}</defs>`;
 }
 
+/** The full label if the band is wide enough, else the bare id, else nothing; the band's title keeps the full text. */
+function phaseText(id: string, label: string, bandW: number): string | undefined {
+  const fits = (text: string): boolean => text.length * CHAR_W + 6 <= bandW;
+  if (fits(label)) return label;
+  if (fits(id)) return id;
+  return undefined;
+}
+
 function renderPhases(graph: RunGraph, layout: Layout): string {
   const bottom = layout.height - layout.axisH;
   return graph.phases
@@ -166,9 +177,10 @@ function renderPhases(graph: RunGraph, layout: Layout): string {
       const x0 = layout.x(from);
       const w = Math.max(1, layout.x(to) - x0);
       const label = `${phase.id} +${formatElapsed(phase.from - graph.start)} to +${formatElapsed(phase.to - graph.start)}`;
+      const text = phaseText(phase.id, label, w);
       return (
-        `<rect class="phase${index % 2 ? " phase-alt" : ""}" x="${px(x0)}" y="${HEADER_H - 16}" width="${px(w)}" height="${px(bottom - HEADER_H + 16)}"/>` +
-        `<text x="${px(x0 + 3)}" y="${HEADER_H - 5}" class="phase-label"><title>${e(label)}</title>${e(label)}</text>`
+        `<rect class="phase${index % 2 ? " phase-alt" : ""}" x="${px(x0)}" y="${HEADER_H - 16}" width="${px(w)}" height="${px(bottom - HEADER_H + 16)}"><title>${e(label)}</title></rect>` +
+        (text === undefined ? "" : `<text x="${px(x0 + 3)}" y="${HEADER_H - 5}" class="phase-label">${e(text)}</text>`)
       );
     })
     .join("");
