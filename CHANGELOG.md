@@ -4,6 +4,13 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Fixed
+
+- Run graph: a box whose time maps to the end of the axis is pulled left so it stays inside the
+  drawing instead of being clipped, and a phase label shrinks to the phase id, or to the band's
+  tooltip alone, when the band is too narrow, so adjacent short phases no longer print over each
+  other (#4).
+
 ## [0.1.1] - 2026-10-14
 
 ### Fixed
