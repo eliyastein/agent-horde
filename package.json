@@ -1,6 +1,6 @@
 {
   "name": "agent-horde",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run a horde of pi agents on one task: shared ledgers, peer review, an auditable event log, and a live dashboard",
   "license": "MIT",
   "type": "module",
