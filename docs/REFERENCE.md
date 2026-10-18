@@ -236,7 +236,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_REPAIR_ROUNDS` | 4 | post-discovery repair rounds (max 6; `0` disables) |
 | `PI_HORDE_REPAIR_MS` | 120000 | total repair time |
 | `PI_HORDE_REPAIR_TOKENS` | 50000 | total repair tokens |
-| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | token floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_REPAIR_MIN_MS` | 60000 | time floor per attempt; the clock is split only among attempts the token budget can fund |
 | `PI_HORDE_DELIVERABLE` | on | `off` skips the synthesis member |
 | `PI_HORDE_POSTMORTEM` | on | `off` skips the automatic post-mortem |
 | `PI_HORDE_POSTMORTEM_MS` | 300000 | post-mortem reviewer timeout |
