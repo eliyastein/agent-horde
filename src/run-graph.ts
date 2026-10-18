@@ -242,10 +242,11 @@ function creates(letter: string, kind: GraphNodeKind, repeat: string, links: (dr
       return;
     }
     const nodeId = `${letter}${id}`;
-    if (addEntity(draft, event, { id: nodeId, kind, label: nodeId, title: ownTitle(input, result) })) {
+    if (event.outcome === "applied" && addEntity(draft, event, { id: nodeId, kind, label: nodeId, title: ownTitle(input, result) })) {
       links(draft, nodeId, input);
       return;
     }
+    ensureTarget(draft, nodeId);
     addEdge(draft, addMarker(draft, event, `${event.action} (${repeat})`, describe(input, result)), nodeId, repeat, "structure");
   };
 }
@@ -283,7 +284,7 @@ function solvedHandler(label: string, tone: EdgeTone): Handler {
       draft.lastSolved = marker;
       return;
     }
-    if (draft.lastSolved) draft.edges.push({ from: marker, to: draft.lastSolved, label, tone });
+    if (draft.lastSolved) draft.edges.push({ from: marker, to: draft.lastSolved, label: event.outcome === "noop" ? `${label} (redundant)` : label, tone });
   };
 }
 
@@ -493,8 +494,13 @@ function addRefused(draft: Draft, event: HordeEvent): void {
   addEdge(draft, marker, refusedTarget(event.action, input), event.action, "negative");
 }
 
+/** A no-op that still names a result (a duplicate idea, a redundant confirmation) is a repeat, not a refusal. */
+function isRepeat(event: HordeEvent): boolean {
+  return event.outcome === "noop" && record(event.payload.result).noop === true;
+}
+
 function addEvent(draft: Draft, event: HordeEvent): void {
-  if (event.outcome !== "applied") {
+  if (event.outcome !== "applied" && !isRepeat(event)) {
     addRefused(draft, event);
     return;
   }

@@ -14,6 +14,8 @@ import { listClaims, markClaimsUnverified } from "../ledger/claims.js";
 import type { ClaimEntry } from "../ledger/claims.js";
 import { collaborationState } from "../ledger/collaboration.js";
 import { readEvents } from "../ledger/events.js";
+import type { HordeEvent } from "../ledger/events.js";
+import { absorbedIdeaCreations, ideaCreationCount, solvedConfirmations } from "../ledger/event-metrics.js";
 import { clusterFindings } from "../ledger/clusters.js";
 import { listFacts } from "../ledger/facts.js";
 import type { FactEntry } from "../ledger/facts.js";
@@ -335,14 +337,23 @@ function writeRunReports(
     latePosts,
   });
   const memberPosts = lastBoardPostsByMember(run.hordeDir, run.id);
+  const outcome = runOutcome(run);
+  let events: HordeEvent[] = [];
+  try {
+    events = readEvents(run.hordeDir, run.id);
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not read events for the report (${errorMessage(error)})`, "error");
+  }
   writeRunFile(
     run,
     "SUMMARY.md",
-    summaryMarkdown({ ...run, findings, ideas: ledgers.ideas, memberPosts, scopedReviews: reviewState.reviews, reviewMessages: reviewState.messages }, now),
+    summaryMarkdown({ ...run, outcome, findings, ideas: ledgers.ideas, memberPosts, scopedReviews: reviewState.reviews, reviewMessages: reviewState.messages }, now),
   );
   const reportInput: RunReport = {
     ...run,
-    outcome: runOutcome(run),
+    outcome,
+    solvedConfirmations: solvedConfirmations(events),
+    ideaCreations: { created: ideaCreationCount(events), absorbed: absorbedIdeaCreations(events) },
     scopedReviews: reviewState.reviews,
     reviewMessages: reviewState.messages,
     canary: run.canary,

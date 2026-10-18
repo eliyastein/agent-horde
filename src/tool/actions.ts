@@ -30,6 +30,8 @@ const WORK_PLAN_POST =
 interface ActionResult {
   text: string;
   id?: number;
+  /** True when the call changed nothing: a duplicate idea, or a confirmation after the credited one. */
+  noop?: boolean;
 }
 
 interface ActionContext {
@@ -264,6 +266,7 @@ async function ideaAction({ hordeDir, member, params }: ActionContext): Promise<
     return {
       text: `Idea ${state}. Build on it instead of adding a duplicate`,
       id: duplicateOf.id,
+      noop: true,
     };
   }
   return { text: `Added idea #${idea.id}: ${idea.text}`, id: idea.id };
@@ -338,11 +341,9 @@ async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
 async function confirmSolvedAction(ctx: ActionContext): Promise<ActionResult> {
   const answer = await confirmSolved(ctx.hordeDir, requireRun(ctx), ctx.member, ctx.params.text, ctx.params.revision);
   if (!answer.ok) throw new Error(`horde: ${answer.reason}`);
+  if (answer.reason !== "validated") return { text: `The SOLVED proposal was already validated by ${answer.by}.`, noop: true };
   return {
-    text:
-      answer.reason === "validated"
-        ? "Validated the SOLVED proposal. Finish your claimed work; the parent will wind down once any coverage requirement is satisfied."
-        : `The SOLVED proposal was already validated by ${answer.by}.`,
+    text: "Validated the SOLVED proposal. Finish your claimed work; the parent will wind down once any coverage requirement is satisfied.",
   };
 }
 
@@ -418,10 +419,11 @@ export async function runHordeAction(
   const audit = Boolean(runId && !reads.includes(params.action));
   const intent = audit ? await recordEvent({ ...ctx, requestId: ctx.requestId ? `${ctx.requestId}:intent` : undefined }, params.action, { outcome: "intent", payload: { input: params } }) : undefined;
   try {
-    const result = cleanStop && NEW_WORK_ACTIONS.has(params.action)
-      ? { text: CLEAN_STOP_NOTICE }
-      : await handler({ hordeDir, member, params, runId, cleanStop });
-    if (audit) await recordEvent(ctx, params.action, { outcome: cleanStop && NEW_WORK_ACTIONS.has(params.action) ? "noop" : "applied", payload: { input: params, result }, parents: intent ? [intent.eventId] : [] });
+    const refused = cleanStop && NEW_WORK_ACTIONS.has(params.action);
+    const result = refused ? { text: CLEAN_STOP_NOTICE } : await handler({ hordeDir, member, params, runId, cleanStop });
+    // A refusal and a no-op both record `noop`; the no-op keeps `result.noop` so the graph and the
+    // report can tell an absorbed duplicate from refused work.
+    if (audit) await recordEvent(ctx, params.action, { outcome: refused || result.noop ? "noop" : "applied", payload: { input: params, result }, parents: intent ? [intent.eventId] : [] });
     return result;
   } catch (error) {
     if (audit) await recordEvent(ctx, params.action, { outcome: "rejected", payload: { input: params, error: String(error) }, parents: intent ? [intent.eventId] : [] });

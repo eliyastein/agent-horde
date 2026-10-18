@@ -602,6 +602,11 @@ function artifactDiagnosis(input: RunReportInput): string[] {
     lines.push(
       `- solved: ${input.solved.member} proposed the goal answered (${how}): ${oneLine(input.solved.text, 200)}`,
     );
+    if (input.solvedConfirmations) {
+      const { credited, redundant } = input.solvedConfirmations;
+      const names = (members: string[]): string => (members.length ? ` (${members.join(", ")})` : "");
+      lines.push(`- confirm-solved: ${credited.length} credited${names(credited)}, ${redundant.length} redundant${names(redundant)}`);
+    }
     lines.push("- answer: ANSWER.md (full answer text in this run directory)");
   } else if (input.solvedContested) {
     lines.push("- solved: contested; no validated answer survived the run");
@@ -702,6 +707,12 @@ function ledgerDiagnosis(input: RunReportInput, supersededBy: Map<number, number
         .map(([oldId, byId]) => `F${oldId} by F${byId}`)
         .join(", ")}`,
     );
+  }
+  if (input.ideaCreations) {
+    const { created, absorbed } = input.ideaCreations;
+    const total = absorbed.reduce((n, entry) => n + entry.count, 0);
+    const detail = absorbed.length ? ` (${absorbed.map((entry) => `#${entry.id} x${entry.count}`).join(", ")})` : "";
+    lines.push(`- ideas: ${created} created, ${total} duplicate creation(s) absorbed${detail}`);
   }
   return lines;
 }
