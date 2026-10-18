@@ -63,6 +63,8 @@ export interface HordeRun extends MemberRunInfo {
   solved?: SolvedSignal | undefined;
   /** Peer confirmation of the current proposal, independent of final acceptance. */
   solvedValidatedBy?: string | undefined;
+  /** True once the parent wound the run down on the validated proposal. */
+  solvedCommitted?: boolean | undefined;
   /** True when the last SOLVED proposal was contested and no validated answer replaced it. */
   solvedContested?: boolean | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */

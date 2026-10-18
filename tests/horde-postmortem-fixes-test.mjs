@@ -192,9 +192,10 @@ if (process.argv.includes("--mode")) {
   const summary = prompt.summaryMarkdown({
     id: "R1", prompt: "p", count: 1,
     members: [{ name: "member-2", index: 2, status: "stopped", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() }],
-    startedAt: Date.now() - 1000, stopped: true, stopLabel: "goal reported solved", solved: ledger.readSolved(runD),
+    startedAt: Date.now() - 1000, stopped: true, stopLabel: "stopped during solved wind-down", solved: ledger.readSolved(runD),
+    solvedValidatedBy: "member-3", solvedCommitted: true,
   });
-  assert.match(summary, /Run ended after member-2 reported the goal solved/);
+  assert.match(summary, /member-2 proposed the goal solved at \d\d:\d\d:\d\d, validated by member-3; the run wound down on it\. Run stopped during solved wind-down\./);
   assert.ok(!/stopped by the user/.test(summary), "a solved run is not reported as user-stopped");
   // The full solved text is kept, not truncated at 300 chars.
   const runD2 = path.join(hordeD, "runs", "R2");
