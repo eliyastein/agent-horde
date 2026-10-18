@@ -11,6 +11,9 @@ import type { ResourceEntry } from "./ledger/resources.js";
 import type { SolvedSignal } from "./ledger/run-signals.js";
 import type { MemberReset, MemberState } from "./member.js";
 
+/** A resource with the non-owner members whose findings, evidence, reviews or leases cite it. */
+export type ReportResource = ResourceEntry & { citedBy?: string[] | undefined };
+
 export interface RunSummaryInput {
   id: string;
   prompt: string;
@@ -525,14 +528,16 @@ export interface RunReportInput extends RunSummaryInput {
   facts: FactEntry[];
   /** Merged deliverable markdown when one was generated; REPORT.md points at it. */
   deliverable?: string | undefined;
-  /** Shared resources claimed during the run. */
-  resources?: ResourceEntry[] | undefined;
+  /** Shared resources claimed during the run, with the non-owners whose records cite each one. */
+  resources?: ReportResource[] | undefined;
+  /** Members credited with validating the proposal, and those whose confirmation came after it. */
+  solvedConfirmations?: { credited: string[]; redundant: string[] } | undefined;
+  /** Idea creations this run made, and the ones dedup folded into an existing idea. */
+  ideaCreations?: { created: number; absorbed: Array<{ id: number; count: number }> } | undefined;
   /** Set when a member reported the goal answered. */
   solved?: SolvedSignal | undefined;
   /** True when a SOLVED proposal was contested and no validated answer replaced it. */
   solvedContested?: boolean | undefined;
-  /** The other member that validated the solved proposal, if any. */
-  solvedValidatedBy?: string | undefined;
   /** Resource teardown results from finalize. */
   cleanups?: Array<{ name: string; command: string; status: CleanupStatus; detail: string }> | undefined;
   /** Member board posts that landed after the last finding. */
@@ -583,8 +588,10 @@ function artifactDiagnosis(input: RunReportInput): string[] {
     lines.push("- deliverable: DELIVERABLE.md (merged task deliverable in this run directory)");
   }
   if (input.resources && input.resources.length > 0) {
-    const reused = input.resources.reduce((n, resource) => n + resource.reusers.length, 0);
-    lines.push(`- resources: ${input.resources.length} claimed, ${reused} reuse(s)`);
+    const reclaims = input.resources.reduce((n, resource) => n + resource.reusers.length, 0);
+    const citing = new Set(input.resources.flatMap((resource) => resource.citedBy ?? []));
+    const reused = input.resources.filter((resource) => resource.reusers.length > 0 || (resource.citedBy ?? []).length > 0).length;
+    lines.push(`- resources: ${input.resources.length} claimed, ${reused} reused (${reclaims} explicit reclaim(s), ${citing.size} citing member(s))`);
   }
   if (input.solved) {
     const how = input.solvedValidatedBy
@@ -804,10 +811,14 @@ function runArtifactSections(input: RunReportInput): string[] {
   if (input.resources && input.resources.length > 0) {
     lines.push("", "## Resources", "");
     for (const resource of input.resources) {
+      const reuse = [
+        resource.reusers.length > 0 ? `reused by ${resource.reusers.join(", ")}` : "",
+        (resource.citedBy ?? []).length > 0 ? `cited by ${(resource.citedBy ?? []).join(", ")}` : "",
+      ].filter(Boolean).join("; ");
       lines.push(
         `- R${resource.id} ${resource.name} @${resource.owner}` +
           `${resource.note ? `: ${resource.note}` : ""}` +
-          `${resource.reusers.length > 0 ? ` (reused by ${resource.reusers.join(", ")})` : ""}`,
+          `${reuse ? ` (${reuse})` : ""}`,
       );
     }
   }

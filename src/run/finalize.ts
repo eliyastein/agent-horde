@@ -5,6 +5,7 @@ import {
   ledgerCitationWarnings,
   reportConsistencyWarnings,
   resourceCitations,
+  resourceCitingMembers,
 } from "../citations.js";
 import { errorMessage, oneLine } from "../format.js";
 import { freezeAcceptance } from "../collaboration-report.js";
@@ -22,14 +23,14 @@ import type { FindingEntry } from "../ledger/findings.js";
 import { countIdeas, parseIdeas, reconcileOwnedIdeas } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
 import { listResources, pendingCleanups, readRunResources } from "../ledger/resources.js";
-import type { PendingCleanup, ResourceEntry } from "../ledger/resources.js";
+import type { PendingCleanup } from "../ledger/resources.js";
 import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
 import { childEnv, execPi } from "../member.js";
 import { reportText, runReportMarkdown, summaryMarkdown } from "../prompt.js";
 import { buildRunGraph } from "../run-graph.js";
 import { runGraphMarkdown } from "../run-graph-mermaid.js";
-import type { CleanupStatus, RunReportInput } from "../prompt.js";
+import type { CleanupStatus, ReportResource, RunReportInput } from "../prompt.js";
 import { buildDiagnosis } from "./diagnosis.js";
 import { recordLifecycle, recordPhase } from "./lifecycle.js";
 import { runDeliverable, runPostmortem } from "./synthesis.js";
@@ -46,8 +47,8 @@ interface RunLedgers {
   findings: FindingEntry[];
   claims: ClaimEntry[];
   facts: FactEntry[];
-  /** Resources this run claimed or reused. */
-  resources: ResourceEntry[];
+  /** Resources this run claimed or reused, with the non-owners whose records cite each one. */
+  resources: ReportResource[];
 }
 
 type CleanupResult = NonNullable<RunReportInput["cleanups"]>[number];
@@ -212,7 +213,9 @@ function readRunLedgers(run: HordeRun): RunLedgers {
     ledgers.claims = listClaims(run.hordeDir);
     ledgers.facts = listFacts(run.hordeDir);
     const touched = new Set(readRunResources(run.runDir));
-    ledgers.resources = listResources(run.hordeDir).filter((resource) => touched.has(resource.id));
+    const resources = listResources(run.hordeDir).filter((resource) => touched.has(resource.id));
+    const citing = resourceCitingMembers(resources, ledgers.findings, collaborationState(run.hordeDir, run.id));
+    ledgers.resources = resources.map((resource) => ({ ...resource, citedBy: citing.get(resource.id) ?? [] }));
   } catch {
     // FINDINGS/CLAIMS/FACTS.md was removed mid-run.
   }

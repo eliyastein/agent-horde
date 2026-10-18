@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { clusterFindings } from "./ledger/clusters.js";
 import { collaborationState } from "./ledger/collaboration.js";
+import type { CollaborationState } from "./ledger/collaboration.js";
 import { findingReviewState } from "./ledger/findings.js";
 import type { FindingEntry } from "./ledger/findings.js";
 import { listResources, readRunResources } from "./ledger/resources.js";
@@ -215,6 +216,19 @@ export function ledgerCitationWarnings(
   return [...new Set(warnings)];
 }
 
+/** The acceptance vocabulary for a finding nobody reviewed at its current revision. */
+const UNREVIEWED_LABEL = /unverified|unreviewed|no (?:independent|current-revision) review|not (?:independently )?reviewed/i;
+
+/**
+ * True when the text cites F<id> and no citing paragraph carries the unreviewed label. One label
+ * at the top of a document cannot cover every later citation; a label next to any citation can.
+ */
+function citedWithoutLabel(text: string, id: number): boolean {
+  const cite = new RegExp(`\\bF${id}\\b`);
+  const citing = text.split(/\n\s*\n/).filter((paragraph) => cite.test(paragraph));
+  return citing.length > 0 && !citing.some((paragraph) => UNREVIEWED_LABEL.test(paragraph));
+}
+
 export function generatedArtifactWarnings(
   run: HordeRun,
   label: string,
@@ -238,14 +252,40 @@ export function generatedArtifactWarnings(
     const cited = checks.filter((f) => f.check.status === status && new RegExp(`\\bF${f.id}\\b`).test(text));
     if (cited.length) warnings.push(`${label} cites ${status === "limited" ? "scope-limited reviews" : "disputed findings"} (${cited.map((f) => `F${f.id}`).join(", ")}); consult the exact checked/unchecked scope and unresolved challenges in COLLABORATION.md`);
   }
-  const citedUnverified = unverified.filter((finding) =>
-    new RegExp(`\\bF${finding.id}\\b`).test(text),
-  );
-  if (citedUnverified.length > 0 && !/unverified/i.test(text)) {
+  const unlabeled = unverified.filter((finding) => citedWithoutLabel(text, finding.id));
+  if (unlabeled.length > 0) {
     warnings.push(
-      `${label} cites unverified findings (${citedUnverified.map((finding) => `F${finding.id}`).join(", ")}) ` +
-        "without labeling them unverified",
+      `${label} cites findings with no independent review (${unlabeled.map((finding) => `F${finding.id}`).join(", ")}) ` +
+        "without saying so in the citing paragraph",
     );
   }
   return [...new Set(warnings)];
+}
+
+/**
+ * Non-owner members whose findings, evidence, reviews or leases name a resource. A member that
+ * works in a shared lab rarely re-runs `horde resource`, so explicit reclaims alone undercount reuse.
+ */
+export function resourceCitingMembers(
+  resources: ResourceEntry[],
+  findings: FindingEntry[],
+  state: Pick<CollaborationState, "evidence" | "reviews" | "resources">,
+): Map<number, string[]> {
+  const texts: Array<{ member: string; text: string }> = [
+    ...findings.map((finding) => ({ member: finding.author, text: finding.body })),
+    ...state.evidence.map((record) => ({ member: record.actor, text: record.text })),
+    ...state.reviews.map((review) => ({ member: review.actor, text: `${review.checked} ${review.text}` })),
+  ];
+  const out = new Map<number, string[]>();
+  for (const resource of resources) {
+    const members = new Set<string>();
+    for (const { member, text } of texts) {
+      if (member !== resource.owner && resourceCitations(text).includes(resource.id)) members.add(member);
+    }
+    for (const contract of state.resources) {
+      if (contract.target === `R${resource.id}` && contract.owner !== resource.owner) members.add(contract.owner);
+    }
+    out.set(resource.id, [...members].sort());
+  }
+  return out;
 }
