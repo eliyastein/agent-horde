@@ -109,14 +109,21 @@ Start pi in the directory the horde should work on, then:
 
 Six members start on the prompt with the session's model and thinking level. The command returns
 at once; a widget above the editor shows each member's status, current tool, turns, and resets,
-and the dashboard is at `http://127.0.0.1:7433/`. When the work is partitionable, name the parts:
+and the dashboard is at `http://127.0.0.1:7433/`. In this form members divide the work
+themselves: each reads the board, claims an idea nobody else owns, and moves on when it is done or
+ruled out.
+
+When you already know how the work splits, use `plan` to fix the partition at launch:
 
 ```
 /agent-horde plan --dashboard 4 parser; type checker; code generator
 ```
 
-Each member takes one part. Members without a part become verifiers, and an unpartitioned run of
-three or more members makes its last member the verifier.
+Each layer becomes a seeded idea owned by one member, recorded in the run's `PLAN.md`, and that
+member works only its layer. Layers are assigned round-robin, so more layers than members gives
+some members two. Members without a layer become verifiers, and an unpartitioned run of three or
+more members makes its last member the verifier. `plan` suits "analyse each X" tasks; split design
+work by output type, such as spec, prototype, and generator, rather than by theme.
 
 | command | effect |
 |---|---|
