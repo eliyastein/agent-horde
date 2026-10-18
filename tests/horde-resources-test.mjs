@@ -123,7 +123,7 @@ const report = prompt.runReportMarkdown({
   facts: [],
   resources: ledger.listResources(hordeDir),
 });
-assert.match(report, /- resources: 2 claimed, 1 reuse\(s\)/);
+assert.match(report, /- resources: 2 claimed, 1 reused \(1 explicit reclaim\(s\), 0 citing member\(s\)\)/);
 assert.match(report, /## Resources/);
 assert.match(report, /- R1 php8\.2 lab @member-1: docker php:8\.2-cli, lab\.sh \(reused by member-2\)/);
 

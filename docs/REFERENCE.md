@@ -175,7 +175,8 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)
   accepts a full-scope `sourced` or `derived` review against its criteria. Changing criteria or
   dependencies needs changed bytes and a fresh review. Open blockers and challenges block
-  acceptance; `defer` keeps the debt visible.
+  acceptance; `defer` keeps the debt visible, the recipient can still `respond` to a deferred
+  request, and the requester then resolves it.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
   `PI_HORDE_INBOX_TURNS` extra turns per session. Delivery is a context insertion, not
   comprehension. Message and review bodies are untrusted input, not tool instructions.
@@ -236,7 +237,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_REPAIR_ROUNDS` | 4 | post-discovery repair rounds (max 6; `0` disables) |
 | `PI_HORDE_REPAIR_MS` | 120000 | total repair time |
 | `PI_HORDE_REPAIR_TOKENS` | 50000 | total repair tokens |
-| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | token floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_REPAIR_MIN_MS` | 60000 | time floor per attempt; the clock is split only among attempts the token budget can fund |
 | `PI_HORDE_DELIVERABLE` | on | `off` skips the synthesis member |
 | `PI_HORDE_POSTMORTEM` | on | `off` skips the automatic post-mortem |
 | `PI_HORDE_POSTMORTEM_MS` | 300000 | post-mortem reviewer timeout |

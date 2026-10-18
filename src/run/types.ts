@@ -32,6 +32,8 @@ export interface HordeRun extends MemberRunInfo {
   acceptance?: string;
   snapshotHash?: string;
   repairTokens?: number;
+  /** Members whose queued repair work was skipped because the budget could not fund an attempt. */
+  repairSkipped?: string[];
   /** True when a user command or session shutdown ended the run. */
   userStop?: boolean | undefined;
   /** Human-readable stop reason for the report, e.g. "stopped by user". */
@@ -61,6 +63,8 @@ export interface HordeRun extends MemberRunInfo {
   solved?: SolvedSignal | undefined;
   /** Peer confirmation of the current proposal, independent of final acceptance. */
   solvedValidatedBy?: string | undefined;
+  /** True once the parent wound the run down on the validated proposal. */
+  solvedCommitted?: boolean | undefined;
   /** True when the last SOLVED proposal was contested and no validated answer replaced it. */
   solvedContested?: boolean | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */

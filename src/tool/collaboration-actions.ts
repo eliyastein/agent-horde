@@ -28,6 +28,13 @@ function evidenceRefs(state: CollaborationState, refs: string[] = []): string[] 
   return refs;
 }
 
+/** Name the stale ref and both revisions, so a retry does not have to guess which evidence to replace. */
+function staleEvidence(state: CollaborationState, refs: string[], target: string, revision: string): string | undefined {
+  const stale = refs.map((id) => state.evidence.find((e) => e.id === id)).find((e) => e && (e.target !== target || e.revision !== revision));
+  if (!stale) return undefined;
+  return `${stale.id} is recorded against ${stale.target}@${stale.revision.slice(0, 12)}; the current target is ${target}@${revision.slice(0, 12)}`;
+}
+
 function newMessage(c: CollaborationCommand): EventDraft {
   const { ctx, state, params: p, seq } = c;
   const target = requireParam(p.target, "target", p.action);
@@ -49,10 +56,14 @@ function transition(c: CollaborationCommand): EventDraft {
   const { ctx, state, params: p } = c;
   const m = state.messages.find((entry) => entry.id === p.target);
   if (!m) throw new Error("horde: unknown message Q#");
-  if (m.state === "resolved" || (m.state === "deferred" && p.action !== "resolve")) throw new Error("horde: message is already closed; create a new request");
+  if (m.state === "resolved") throw new Error("horde: message is already closed; create a new request");
+  // A deferred request is disclosed debt, not a closed thread: the recipient may still answer it
+  // and the sender may still resolve it. Otherwise a blocking challenge deferred before any
+  // response could never be cleared by anyone.
+  if (m.state === "deferred" && p.action !== "resolve" && p.action !== "respond") throw new Error("horde: a deferred request takes a response from its recipient or a resolution from its sender");
   const closing = p.action === "resolve" || p.action === "defer";
   if (closing ? ctx.actor !== m.sender : ctx.actor !== m.to) throw new Error("horde: recipient acknowledges/responds; sender resolves/defers after review");
-  if (p.action === "respond" && !["acknowledged", "responded"].includes(m.state)) throw new Error("horde: acknowledge the request before responding");
+  if (p.action === "respond" && !["acknowledged", "responded", "deferred"].includes(m.state)) throw new Error("horde: acknowledge the request before responding");
   const text = requireText(p.text, p.action);
   const refs = evidenceRefs(state, p.refs);
   if (p.action === "resolve" && m.blocking) validateResolution(c, m, refs);
@@ -80,7 +91,10 @@ function validateResolution(c: CollaborationCommand, m: PeerMessage, refs: strin
   const target = responseSubject(c, m);
   const revision = targetInfo(c.ctx, c.state, target).revision;
   if ((c.params.revision ?? m.responseRevision) !== revision) throw new Error(`horde: response is stale; explicitly review and resolve ${target}@${revision}, or ask the owner to respond again`);
-  if (!refs.some((id) => c.state.evidence.some((e) => e.id === id && e.target === target && e.revision === revision))) throw new Error("horde: resolution evidence must address the current response target revision");
+  if (!refs.some((id) => c.state.evidence.some((e) => e.id === id && e.target === target && e.revision === revision))) {
+    const detail = staleEvidence(c.state, refs, target, revision) ?? `none of ${refs.join(", ")} targets ${target}@${revision.slice(0, 12)}`;
+    throw new Error(`horde: resolution evidence must address the current response target revision: ${detail}; attach evidence to that revision first`);
+  }
   if (target.startsWith("A") || target.startsWith("F")) {
     const review = c.state.reviews.findLast((r) => r.target === target && r.revision === revision && r.actor === c.ctx.actor);
     if (!review || review.verdict !== "supports" || (target.startsWith("A") && review.unchecked)) throw new Error("horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
@@ -132,7 +146,8 @@ function recordReview(c: CollaborationCommand): EventDraft {
   const refs = [...evidenceRefs(state, p.refs)];
   if (!refs.length && !p.evidenceText) throw new Error("horde: attach evidence before reviewing or supply evidenceText for an atomic evidence+review");
   if (!p.verdict || p.unchecked === undefined) throw new Error("horde: review needs verdict and unchecked (empty only for full coverage)");
-  if (refs.some((id) => !state.evidence.some((e) => e.id === id && e.target === target && e.revision === info.revision))) throw new Error("horde: review evidence must address this exact target revision");
+  const stale = staleEvidence(state, refs, target, info.revision);
+  if (stale) throw new Error(`horde: review evidence must address this exact target revision: ${stale}; attach fresh evidence to the current revision or pass evidenceText`);
   const text = requireText(p.text, "review");
   const checked = requireParam(p.checked, "checked", p.action);
   const evidenceRecord = p.evidenceText === undefined ? undefined : {
@@ -144,13 +159,14 @@ function recordReview(c: CollaborationCommand): EventDraft {
   return { payload: { ...(evidenceRecord ? { evidenceRecord } : {}), review: { id: `V${seq}`, actor: ctx.actor, target, revision: info.revision,
     verdict: p.verdict, support: p.support, checked, unchecked: p.unchecked,
     text, evidence: refs },
-    ...completeAssignedReview(c, target, text),
+    ...completeAssignedReview(c, target, `V${seq}`, text, refs),
     ...(["refutes", "partially-supports"].includes(p.verdict) ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
 }
 
-function completeAssignedReview(c: CollaborationCommand, target: string, text: string): Record<string, unknown> {
+/** The parent's assignment closes with the review id and its evidence, so the thread shows what decided it. */
+function completeAssignedReview(c: CollaborationCommand, target: string, reviewId: string, text: string, refs: string[]): Record<string, unknown> {
   const assignment = openMessages(c.state).find((m) => m.sender === "parent" && m.to === c.ctx.actor && m.kind === "review-request" && m.target === target);
-  return assignment ? { transition: { id: assignment.id, state: "resolved", text: `Review recorded: ${text}`, revision: c.params.revision } } : {};
+  return assignment ? { transition: { id: assignment.id, state: "resolved", text: `Review recorded: ${reviewId} ${text}`, revision: c.params.revision }, refs } : {};
 }
 
 function automaticChallenge(c: CollaborationCommand, target: string, info: { owner: string; revision: string }, text: string, refs: string[]): Record<string, unknown> {

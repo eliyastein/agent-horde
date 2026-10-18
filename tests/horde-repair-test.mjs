@@ -40,7 +40,7 @@ if (process.argv.includes("--mode")) {
   process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "repair complete" }], stopReason: "stop", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } }) + "\n");
 } else {
   const { initHordeDir } = await jiti.import("../src/ledger/files.ts");
-  const { drainRepairs, repairShare } = await jiti.import("../src/run/repair.ts");
+  const { drainRepairs, repairAllowance, repairShare, repairTimeShare } = await jiti.import("../src/run/repair.ts");
   const { readEvents } = await jiti.import("../src/ledger/events.ts");
   const { newMemberState } = await jiti.import("../src/member.ts");
   const { loadCollaborationReport } = await jiti.import("../src/collaboration-report.ts");
@@ -96,6 +96,7 @@ if (process.argv.includes("--mode")) {
       process.env.PI_HORDE_REPAIR_MS = scenario === "hang" ? "4000" : "20000";
       process.env.PI_HORDE_REPAIR_ROUNDS = scenario === "hang" ? "1" : "2";
       process.env.PI_HORDE_REPAIR_MIN_TOKENS = "1";
+      process.env.PI_HORDE_REPAIR_MIN_MS = "1";
       await drainRepairs({ ...launch, run: caseRun, roles: Array(6).fill("fixture") });
       const events = readEvents(hordeDir, caseId);
       const starts = events.filter((e) => e.action === "repair-start");
@@ -111,7 +112,7 @@ if (process.argv.includes("--mode")) {
       assert.ok(caseRun.repairTokens < 360, "budget excludes prior discovery usage; overshoot is at most one reported 60-token message");
     }
   } finally {
-    for (const key of ["PI_HORDE_FIXTURE_REPAIR", "PI_HORDE_REPAIR_TOKENS", "PI_HORDE_REPAIR_MS", "PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_MIN_TOKENS"]) {
+    for (const key of ["PI_HORDE_FIXTURE_REPAIR", "PI_HORDE_REPAIR_TOKENS", "PI_HORDE_REPAIR_MS", "PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_MIN_TOKENS", "PI_HORDE_REPAIR_MIN_MS"]) {
       if (savedEnv[key] === undefined) delete process.env[key]; else process.env[key] = savedEnv[key];
     }
   }
@@ -138,6 +139,54 @@ if (process.argv.includes("--mode")) {
   assert.deepEqual(skipped.payload.members.map((m) => m.member), ["member-2"]);
   assert.ok(collaborationState(hordeDir, poorId).messages.some((m) => skipped.payload.members[0].messages.includes(m.id) && m.target === poorArtifact.id));
   assert.equal(poorMembers[1].repairs, undefined);
+
+  // The clock is split among the attempts the token budget can fund, never below the time floor.
+  // With the defaults, 50k tokens at a 20k floor fund two attempts, so four queued members get
+  // 60 s each instead of 120 s / (4 + 2) = 20 s.
+  assert.equal(repairTimeShare(120_000, 4, 3, 2), 60_000);
+  assert.equal(repairTimeShare(120_000, 1, 3, 2), 60_000, "one pending member still shares with one reserved recheck");
+  assert.equal(repairTimeShare(120_000, 6, 1, 300), 17_142, "a generous token budget falls back to the member/round reservation");
+  assert.equal(repairAllowance(59_000, 119_000, 60_000), 60_000, "a share just under the floor is raised to it");
+  assert.equal(repairAllowance(20_000, 30_000, 60_000), undefined, "a clock that cannot pay one floor funds nothing");
+  const queued = async (runId, memberCount) => {
+    const dir = path.join(hordeDir, "runs", runId);
+    fs.mkdirSync(path.join(dir, "artifacts"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "TASK.md"), `Members: ${memberCount}\n`);
+    fs.writeFileSync(path.join(dir, "SYSTEM.md"), "fixture");
+    fs.writeFileSync(path.join(dir, "artifacts/probe.txt"), "fixed: positive and negative controls\n");
+    const subject = JSON.parse((await runCollaborationAction({ hordeDir, runId, actor: "member-1" }, { action: "artifact", artifactPath: "artifacts/probe.txt", criteria: "positive and negative controls" })).text).artifact;
+    for (let n = 2; n <= memberCount; n++) {
+      await runCollaborationAction({ hordeDir, runId, actor: "member-1" }, { action: "message", target: subject.id, to: `member-${n}`, kind: "question", text: `please look at ${subject.id}` });
+    }
+    const queuedMembers = Array.from({ length: memberCount }, (_, i) => Object.assign(newMemberState(i + 1), { status: "done", endCause: "completed" }));
+    return { ...run, id: runId, runDir: dir, members: queuedMembers, count: memberCount, verifier: `member-${memberCount}`, repairTokens: 0, repairSkipped: undefined, controller: new AbortController(), controllers: new Map(), procs: new Map() };
+  };
+  const budgetEnv = { ...process.env };
+  try {
+    process.env.PI_HORDE_REPAIR_ROUNDS = "1";
+    const fourRun = await queued("20261018-120001", 5);
+    await drainRepairs({ ...launch, run: fourRun, roles: Array(5).fill("fixture") });
+    const fourStarts = readEvents(hordeDir, fourRun.id).filter((e) => e.action === "repair-start");
+    assert.equal(fourStarts.length, 4, "every queued member was served");
+    assert.ok(fourStarts.every((e) => e.payload.allowance.ms >= 60_000), `no attempt below the time floor: ${fourStarts.map((e) => e.payload.allowance.ms).join(", ")}`);
+    assert.deepEqual(fourStarts[0].payload.floors, { tokens: 20_000, ms: 60_000 }, "the floors in force are recorded with the attempt");
+    assert.equal(fourRun.repairSkipped, undefined);
+
+    process.env.PI_HORDE_REPAIR_MS = "30000";
+    const shortRun = await queued("20261018-120002", 5);
+    await drainRepairs({ ...launch, run: shortRun, roles: Array(5).fill("fixture") });
+    const shortEvents = readEvents(hordeDir, shortRun.id);
+    assert.equal(shortEvents.filter((e) => e.action === "repair-start").length, 0, "a clock below the floor spawns no doomed attempt");
+    const shortSkip = shortEvents.find((e) => e.action === "repair-skipped");
+    assert.equal(shortSkip.payload.reason, "insufficient-time");
+    assert.equal(shortSkip.payload.floorMs, 60_000);
+    assert.deepEqual(shortSkip.payload.members.map((m) => m.member).sort(), ["member-2", "member-3", "member-4", "member-5"]);
+    assert.deepEqual(shortRun.repairSkipped.sort(), ["member-2", "member-3", "member-4", "member-5"], "the summary learns who went unserved");
+  } finally {
+    for (const key of ["PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_MS"]) {
+      if (budgetEnv[key] === undefined) delete process.env[key]; else process.env[key] = budgetEnv[key];
+    }
+  }
 
   // Hard stops never schedule repair sessions, even with work pending.
   await runCollaborationAction({ hordeDir, runId: id, actor: "member-2" }, { action: "message", target: artifact.id, kind: "challenge", text: "new unresolved issue" });

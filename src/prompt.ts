@@ -11,6 +11,9 @@ import type { ResourceEntry } from "./ledger/resources.js";
 import type { SolvedSignal } from "./ledger/run-signals.js";
 import type { MemberReset, MemberState } from "./member.js";
 
+/** A resource with the non-owner members whose findings, evidence, reviews or leases cite it. */
+export type ReportResource = ResourceEntry & { citedBy?: string[] | undefined };
+
 export interface RunSummaryInput {
   id: string;
   prompt: string;
@@ -23,8 +26,16 @@ export interface RunSummaryInput {
   userStop?: boolean | undefined;
   /** Human-readable stop reason, e.g. "stopped by user" or "stopped at deadline". */
   stopLabel?: string | undefined;
-  /** Set when a member reported the goal solved; the stop cause must agree with REPORT.md. */
+  /** Set when a member reported the goal solved; the end sentence states whether the run wound down on it. */
   solved?: SolvedSignal | undefined;
+  /** The other member that validated the proposal, if any. */
+  solvedValidatedBy?: string | undefined;
+  /** True when the parent wound the run down on the validated proposal. */
+  solvedCommitted?: boolean | undefined;
+  /** Members whose queued repair work was skipped for budget. */
+  repairSkipped?: string[] | undefined;
+  /** The REPORT.md outcome, so SUMMARY.md states the same end cause. */
+  outcome?: string | undefined;
   /** One-line run diagnosis shown in the report message. */
   diagnosis?: string | undefined;
   /** Post-mortem markdown appended to the report when one was generated. */
@@ -94,7 +105,8 @@ Collaboration loop:
   Requester: attach/review evidence on the current response target, then resolve target=Q# refs=[E#]
   revision=current-hash text=decision, or defer with a reason. Disclosed finding limitations remain debt.
   Do not repeat your existing check: inspect collaboration first and test a specific remaining gap.
-  A deferred blocking issue stays visible as acceptance debt. Never silently ignore a peer's failed test.
+  A deferred blocking issue stays visible as acceptance debt; its recipient can still respond to it and
+  the requester then resolves it. Never silently ignore a peer's failed test.
 - Publish runnable outputs with horde artifact artifactKind=runnable artifactPath=artifacts/file
   criteria=positive-and-negative-tests dependsOn=[F#]. Assessment documents use artifactKind=document
   and criteria covering citation accuracy, claim scope and disclosed limits. Full independent sourced/derived
@@ -351,14 +363,38 @@ function memberSummarySection(
   return lines;
 }
 
+/**
+ * How the run ended, from what the parent recorded rather than from the solved flag alone: a
+ * proposal can be validated and still not wind the run down when coverage or review debt holds
+ * it, and the repair phase can end the run on budget instead.
+ */
+export function runEndSentence(run: RunSummaryInput): string {
+  const parts: string[] = [];
+  if (run.solved) {
+    const at = run.solved.at ? ` at ${formatClock(new Date(run.solved.at))}` : "";
+    const validated = run.solvedValidatedBy ? `validated by ${run.solvedValidatedBy}` : "not validated by another member";
+    const wound = run.solvedCommitted ? "the run wound down on it" : "the run did not wind down on it";
+    parts.push(`${run.solved.member} proposed the goal solved${at}, ${validated}; ${wound}.`);
+  }
+  parts.push(run.stopped ? `Run ${run.stopLabel ?? "was stopped by the user"}.` : "Run ended when every member exited.");
+  const attempts = run.members.reduce((n, m) => n + (m.repairs ?? 0), 0);
+  const killed = run.members.filter((m) => m.repairStopReason === "tokens" || m.repairStopReason === "time");
+  const skipped = run.repairSkipped ?? [];
+  if (attempts > 0 || skipped.length > 0) {
+    const detail = [
+      killed.length ? `${killed.length} killed on budget (${killed.map((m) => `${m.name}: ${m.repairStopReason}`).join(", ")})` : "",
+      skipped.length ? `${skipped.length} skipped for budget (${skipped.join(", ")})` : "",
+    ].filter(Boolean).join(", ");
+    parts.push(`Repair: ${attempts} attempt(s)${detail ? `, ${detail}` : ""}.`);
+  }
+  if (run.outcome) parts.push(`Outcome: ${run.outcome}.`);
+  return parts.join(" ");
+}
+
 export function summaryMarkdown(run: RunSummaryInput, now: number = Date.now()): string {
   const counts = statusCounts(run.members);
   const usage = totalUsage(run.members);
-  const end = run.solved
-    ? ` Run ended after ${run.solved.member} reported the goal solved.`
-    : run.stopped
-      ? ` Run was stopped (${run.stopLabel ?? "by the user"}).`
-      : "";
+  const end = ` ${runEndSentence(run)}`;
   const lines = [
     `# Horde run ${run.id}`,
     "",
@@ -492,14 +528,16 @@ export interface RunReportInput extends RunSummaryInput {
   facts: FactEntry[];
   /** Merged deliverable markdown when one was generated; REPORT.md points at it. */
   deliverable?: string | undefined;
-  /** Shared resources claimed during the run. */
-  resources?: ResourceEntry[] | undefined;
+  /** Shared resources claimed during the run, with the non-owners whose records cite each one. */
+  resources?: ReportResource[] | undefined;
+  /** Members credited with validating the proposal, and those whose confirmation came after it. */
+  solvedConfirmations?: { credited: string[]; redundant: string[] } | undefined;
+  /** Idea creations this run made, and the ones dedup folded into an existing idea. */
+  ideaCreations?: { created: number; absorbed: Array<{ id: number; count: number }> } | undefined;
   /** Set when a member reported the goal answered. */
   solved?: SolvedSignal | undefined;
   /** True when a SOLVED proposal was contested and no validated answer replaced it. */
   solvedContested?: boolean | undefined;
-  /** The other member that validated the solved proposal, if any. */
-  solvedValidatedBy?: string | undefined;
   /** Resource teardown results from finalize. */
   cleanups?: Array<{ name: string; command: string; status: CleanupStatus; detail: string }> | undefined;
   /** Member board posts that landed after the last finding. */
@@ -550,8 +588,10 @@ function artifactDiagnosis(input: RunReportInput): string[] {
     lines.push("- deliverable: DELIVERABLE.md (merged task deliverable in this run directory)");
   }
   if (input.resources && input.resources.length > 0) {
-    const reused = input.resources.reduce((n, resource) => n + resource.reusers.length, 0);
-    lines.push(`- resources: ${input.resources.length} claimed, ${reused} reuse(s)`);
+    const reclaims = input.resources.reduce((n, resource) => n + resource.reusers.length, 0);
+    const citing = new Set(input.resources.flatMap((resource) => resource.citedBy ?? []));
+    const reused = input.resources.filter((resource) => resource.reusers.length > 0 || (resource.citedBy ?? []).length > 0).length;
+    lines.push(`- resources: ${input.resources.length} claimed, ${reused} reused (${reclaims} explicit reclaim(s), ${citing.size} citing member(s))`);
   }
   if (input.solved) {
     const how = input.solvedValidatedBy
@@ -562,6 +602,11 @@ function artifactDiagnosis(input: RunReportInput): string[] {
     lines.push(
       `- solved: ${input.solved.member} proposed the goal answered (${how}): ${oneLine(input.solved.text, 200)}`,
     );
+    if (input.solvedConfirmations) {
+      const { credited, redundant } = input.solvedConfirmations;
+      const names = (members: string[]): string => (members.length ? ` (${members.join(", ")})` : "");
+      lines.push(`- confirm-solved: ${credited.length} credited${names(credited)}, ${redundant.length} redundant${names(redundant)}`);
+    }
     lines.push("- answer: ANSWER.md (full answer text in this run directory)");
   } else if (input.solvedContested) {
     lines.push("- solved: contested; no validated answer survived the run");
@@ -662,6 +707,12 @@ function ledgerDiagnosis(input: RunReportInput, supersededBy: Map<number, number
         .map(([oldId, byId]) => `F${oldId} by F${byId}`)
         .join(", ")}`,
     );
+  }
+  if (input.ideaCreations) {
+    const { created, absorbed } = input.ideaCreations;
+    const total = absorbed.reduce((n, entry) => n + entry.count, 0);
+    const detail = absorbed.length ? ` (${absorbed.map((entry) => `#${entry.id} x${entry.count}`).join(", ")})` : "";
+    lines.push(`- ideas: ${created} created, ${total} duplicate creation(s) absorbed${detail}`);
   }
   return lines;
 }
@@ -771,10 +822,14 @@ function runArtifactSections(input: RunReportInput): string[] {
   if (input.resources && input.resources.length > 0) {
     lines.push("", "## Resources", "");
     for (const resource of input.resources) {
+      const reuse = [
+        resource.reusers.length > 0 ? `reused by ${resource.reusers.join(", ")}` : "",
+        (resource.citedBy ?? []).length > 0 ? `cited by ${(resource.citedBy ?? []).join(", ")}` : "",
+      ].filter(Boolean).join("; ");
       lines.push(
         `- R${resource.id} ${resource.name} @${resource.owner}` +
           `${resource.note ? `: ${resource.note}` : ""}` +
-          `${resource.reusers.length > 0 ? ` (reused by ${resource.reusers.join(", ")})` : ""}`,
+          `${reuse ? ` (${reuse})` : ""}`,
       );
     }
   }

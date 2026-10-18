@@ -32,6 +32,7 @@ function unresolvedCoverageIdeas(run: HordeRun): number[] {
 function adoptProposal(run: HordeRun, proposal: SolvedSignal): void {
   run.solved = proposal;
   run.solvedValidatedBy = undefined;
+  run.solvedCommitted = false;
   run.solvedContested = false;
   run.solvedVerificationNotice = undefined;
   void recordLifecycle(run, "solved-proposed", { member: proposal.member, text: oneLine(proposal.text, 200) });
@@ -58,6 +59,7 @@ function dropContested(run: HordeRun, contest: SolvedSignal): void {
   if (!run.stopped) clearCleanStop(run.runDir);
   run.solved = undefined;
   run.solvedValidatedBy = undefined;
+  run.solvedCommitted = false;
   run.solvedCoverageNotice = undefined;
   run.solvedVerificationNotice = undefined;
   run.solvedContested = true;
@@ -128,6 +130,7 @@ function commitSolved(
   validator: string | undefined,
 ): void {
   run.solvedValidatedBy = validator;
+  run.solvedCommitted = true;
   void recordLifecycle(run, "solved-validated", { validator });
   safeNotify(
     run,

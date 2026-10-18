@@ -5,6 +5,7 @@ import {
   ledgerCitationWarnings,
   reportConsistencyWarnings,
   resourceCitations,
+  resourceCitingMembers,
 } from "../citations.js";
 import { errorMessage, oneLine } from "../format.js";
 import { freezeAcceptance } from "../collaboration-report.js";
@@ -13,6 +14,8 @@ import { listClaims, markClaimsUnverified } from "../ledger/claims.js";
 import type { ClaimEntry } from "../ledger/claims.js";
 import { collaborationState } from "../ledger/collaboration.js";
 import { readEvents } from "../ledger/events.js";
+import type { HordeEvent } from "../ledger/events.js";
+import { absorbedIdeaCreations, ideaCreationCount, solvedConfirmations } from "../ledger/event-metrics.js";
 import { clusterFindings } from "../ledger/clusters.js";
 import { listFacts } from "../ledger/facts.js";
 import type { FactEntry } from "../ledger/facts.js";
@@ -22,14 +25,14 @@ import type { FindingEntry } from "../ledger/findings.js";
 import { countIdeas, parseIdeas, reconcileOwnedIdeas } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
 import { listResources, pendingCleanups, readRunResources } from "../ledger/resources.js";
-import type { PendingCleanup, ResourceEntry } from "../ledger/resources.js";
+import type { PendingCleanup } from "../ledger/resources.js";
 import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
 import { childEnv, execPi } from "../member.js";
 import { reportText, runReportMarkdown, summaryMarkdown } from "../prompt.js";
 import { buildRunGraph } from "../run-graph.js";
 import { runGraphMarkdown } from "../run-graph-mermaid.js";
-import type { CleanupStatus, RunReportInput } from "../prompt.js";
+import type { CleanupStatus, ReportResource, RunReportInput } from "../prompt.js";
 import { buildDiagnosis } from "./diagnosis.js";
 import { recordLifecycle, recordPhase } from "./lifecycle.js";
 import { runDeliverable, runPostmortem } from "./synthesis.js";
@@ -46,8 +49,8 @@ interface RunLedgers {
   findings: FindingEntry[];
   claims: ClaimEntry[];
   facts: FactEntry[];
-  /** Resources this run claimed or reused. */
-  resources: ResourceEntry[];
+  /** Resources this run claimed or reused, with the non-owners whose records cite each one. */
+  resources: ReportResource[];
 }
 
 type CleanupResult = NonNullable<RunReportInput["cleanups"]>[number];
@@ -128,15 +131,25 @@ interface SettledAnswer {
   status: string;
 }
 
+/** Findings the proposal names that a later finding corrected; labeled, not re-versioned. */
+export function supersededCitations(text: string, findings: FindingEntry[]): string[] {
+  return findings
+    .filter((finding) => finding.supersededBy !== undefined && new RegExp(`\\bF${finding.id}\\b`).test(text))
+    .map((finding) => `F${finding.id} (now F${finding.supersededBy})`);
+}
+
 /**
- * The proposal body is the member's verbatim text and can predate later challenges. When acceptance
- * fails, the status names the blockers still open at freeze and, once synthesis wrote it, points
- * the operator at DELIVERABLE.md as the reconciled output.
+ * The proposal body is the member's verbatim text and can predate later challenges and corrections.
+ * The status names the blockers still open at freeze and the findings a later finding superseded,
+ * and, once synthesis wrote it, points the operator at DELIVERABLE.md as the reconciled output.
  */
-function annotateAnswer(run: HordeRun, answer: SettledAnswer, acceptance: { hash: string; issues: string[] }): void {
+function annotateAnswer(run: HordeRun, answer: SettledAnswer, acceptance: { hash: string; issues: string[] }, findings: FindingEntry[]): void {
   const blockers = acceptance.issues.filter((issue) => /^Q\d+ .*: \w+ blocking /.test(issue)).map((issue) => issue.replace(/:/, ""));
-  const parts = [answer.status, "acceptance incomplete"];
+  const parts = [answer.status];
+  if (acceptance.issues.length) parts.push("acceptance incomplete");
   if (blockers.length) parts.push(`open blocking at freeze: ${blockers.join(", ")}`);
+  const superseded = supersededCitations(answer.proposal.text, findings);
+  if (superseded.length) parts.push(`cites superseded ${superseded.join(", ")}`);
   parts.push(`see ACCEPTANCE.md (snapshot ${acceptance.hash})`);
   if (run.deliverable) parts.push("reconciled operator output: DELIVERABLE.md; the proposal text below is verbatim and may be superseded there");
   try {
@@ -212,7 +225,9 @@ function readRunLedgers(run: HordeRun): RunLedgers {
     ledgers.claims = listClaims(run.hordeDir);
     ledgers.facts = listFacts(run.hordeDir);
     const touched = new Set(readRunResources(run.runDir));
-    ledgers.resources = listResources(run.hordeDir).filter((resource) => touched.has(resource.id));
+    const resources = listResources(run.hordeDir).filter((resource) => touched.has(resource.id));
+    const citing = resourceCitingMembers(resources, ledgers.findings, collaborationState(run.hordeDir, run.id));
+    ledgers.resources = resources.map((resource) => ({ ...resource, citedBy: citing.get(resource.id) ?? [] }));
   } catch {
     // FINDINGS/CLAIMS/FACTS.md was removed mid-run.
   }
@@ -322,14 +337,23 @@ function writeRunReports(
     latePosts,
   });
   const memberPosts = lastBoardPostsByMember(run.hordeDir, run.id);
+  const outcome = runOutcome(run);
+  let events: HordeEvent[] = [];
+  try {
+    events = readEvents(run.hordeDir, run.id);
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not read events for the report (${errorMessage(error)})`, "error");
+  }
   writeRunFile(
     run,
     "SUMMARY.md",
-    summaryMarkdown({ ...run, findings, ideas: ledgers.ideas, memberPosts, scopedReviews: reviewState.reviews, reviewMessages: reviewState.messages }, now),
+    summaryMarkdown({ ...run, outcome, findings, ideas: ledgers.ideas, memberPosts, scopedReviews: reviewState.reviews, reviewMessages: reviewState.messages }, now),
   );
   const reportInput: RunReport = {
     ...run,
-    outcome: runOutcome(run),
+    outcome,
+    solvedConfirmations: solvedConfirmations(events),
+    ideaCreations: { created: ideaCreationCount(events), absorbed: absorbedIdeaCreations(events) },
     scopedReviews: reviewState.reviews,
     reviewMessages: reviewState.messages,
     canary: run.canary,
@@ -525,15 +549,16 @@ export async function finalizeRun(state: HordeState, run: HordeRun): Promise<voi
     run.acceptance = acceptance.status;
     run.snapshotHash = acceptance.hash;
     await recordLifecycle(run, "acceptance", { status: acceptance.status, hash: acceptance.hash, issues: acceptance.issues.length });
-    const annotate = answer !== undefined && acceptance.issues.length > 0;
-    if (annotate) annotateAnswer(run, answer, acceptance);
+    const annotate = answer !== undefined &&
+      (acceptance.issues.length > 0 || supersededCitations(answer.proposal.text, ledgers.findings).length > 0);
+    if (annotate) annotateAnswer(run, answer, acceptance, ledgers.findings);
     // Workers and bounded repairs have exited; only now may their labs be torn down.
     const cleanups = await runCleanups(state, run);
     const reportInput = writeRunReports(run, ledgers, releasedIdeas, cleanups, now);
     // Free the slot before the (possibly slow) synthesis so a new run can start.
     if (state.active === run) state.active = undefined;
     await synthesize(state, run, ledgers, reportInput, now);
-    if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance);
+    if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, ledgers.findings);
     sendReport(state, run, ledgers, now);
     await recordLifecycle(run, "run-end", { outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel });
     writeRunGraph(run);

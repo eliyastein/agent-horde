@@ -3,6 +3,7 @@ import type { ClaimEntry } from "./ledger/claims.js";
 import type { FactEntry } from "./ledger/facts.js";
 import type { FindingEntry } from "./ledger/findings.js";
 import type { Idea } from "./ledger/ideas.js";
+import type { PeerMessage } from "./ledger/collaboration.js";
 import type {
   BoardVm,
   CollaborationVm,
@@ -122,12 +123,24 @@ function anchor(id: string): string {
   return `<span id="${e(id)}">${e(id)}</span>`;
 }
 
+function withEvidence(text: string, evidence: string[] | undefined): string {
+  return evidence?.length ? `${text} (evidence ${evidence.join(", ")})` : text;
+}
+
+/** The request, the recipient's response and the sender's resolution, each with its own evidence. */
+function messageThread(m: PeerMessage): string {
+  const lines = [m.text, `Response: ${m.response ? withEvidence(m.response, m.responseEvidence) : "pending"}`];
+  if (m.resolution !== undefined) lines.push(`${m.state === "deferred" ? "Deferred" : "Resolution"}: ${withEvidence(m.resolution, m.resolutionEvidence)}`);
+  lines.push(`Evidence: ${m.evidence.join(", ") || "none"}`);
+  return lines.join("\n");
+}
+
 export function renderCollaboration(vm: CollaborationVm, ctx: RenderContext): string {
   const { report } = vm;
   const { state } = report;
   const messages = table(["request", "owner", "state / age", "target", "question / response"], state.messages.map((m) => [
     anchor(m.id), e(`${m.sender} -> ${m.to}`), e(`${m.state}${m.blocking ? " BLOCKING" : ""} / ${formatElapsed(Date.now() - Date.parse(m.createdAt))}`),
-    e(`${m.target}@${m.revision}`), pre(`${m.text}\nResponse: ${m.response ?? "pending"}\nEvidence: ${m.evidence.join(", ")}`),
+    e(`${m.target}@${m.revision}`), pre(messageThread(m)),
   ]));
   const reviews = table(["review", "target revision", "verdict", "scope / evidence"], state.reviews.map((r) => [`${anchor(r.id)} @${e(r.actor)}`, e(`${r.target}@${r.revision}`), e(`${r.verdict} [${r.support}]`), pre(`Checked: ${r.checked}\nUnchecked: ${r.unchecked || "none declared"}\nEvidence: ${r.evidence.join(", ")}\n${r.text}`)]));
   const artifacts = table(["artifact", "hash / dependencies", "acceptance"], state.artifacts.map((a) => [`${anchor(a.id)} ${e(`${a.path} @${a.owner} (${a.kind ?? "runnable"})`)}`, pre(`${a.hash}\n${JSON.stringify(a.dependencies)}`), e(report.acceptedArtifacts.includes(a.id) ? "accepted" : "excluded / needs review")]));

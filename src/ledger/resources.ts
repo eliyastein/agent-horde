@@ -159,6 +159,27 @@ function cleanupCommandProblem(command: string, runId?: string): string | undefi
   return undefined;
 }
 
+/** The runtime object a cleanup removes, so two labs that share one container name collide. */
+function cleanupObject(command: string): string {
+  const normalized = command.trim().replace(/\s+/g, " ");
+  const container = /^(?:docker|podman)\s+(?:container\s+|image\s+)?(?:rm|rmi|stop|kill)\b(?:\s+-\S+)*\s+(\S+)/i.exec(normalized);
+  if (container) return `object:${container[1]}`;
+  const proc = /^pkill\b(?:\s+-\S+)*\s+(.+)$/i.exec(normalized);
+  if (proc) return `process:${proc[1]}`;
+  return `command:${normalized}`;
+}
+
+/** One teardown must not remove two labs: refuse a cleanup another resource of this run registered. */
+function cleanupCollision(resources: ResourceEntry[], touched: Set<number>, command: string, selfId?: number): ResourceEntry | undefined {
+  if (!command) return undefined;
+  const object = cleanupObject(command);
+  return resources.find((r) => r.id !== selfId && touched.has(r.id) && r.cleanup !== undefined && cleanupObject(r.cleanup) === object);
+}
+
+function collisionMessage(command: string, other: ResourceEntry): string {
+  return `horde: cleanup \`${command}\` is already registered by R${other.id} "${other.name}"; reuse R${other.id} or pick a distinct container name`;
+}
+
 // Filesystem paths cited in a resource note, used to detect overlapping scopes.
 // A URL, a bare filename, or a docker image ref (no slash, or a scheme) is ignored.
 function resourceNotePaths(note: string): string[] {
@@ -223,6 +244,11 @@ export async function claimResource(
     const touch = (resourceId: number): void => {
       if (runId) recordRunResource(hordeDir, runId, resourceId);
     };
+    const touched = new Set(runId ? readRunResources(path.join(hordeDir, "runs", runId)) : []);
+    const collide = (selfId?: number): void => {
+      const other = cleanupCollision(resources, touched, cleanupText, selfId);
+      if (other) throw new Error(collisionMessage(cleanupText, other));
+    };
     const normalized = resourceName.toLowerCase();
     let existing = resources.find((resource) => resource.name.toLowerCase() === normalized);
     if (!existing) existing = bestResourceMatch(resources, resourceName, noteText);
@@ -232,6 +258,7 @@ export async function claimResource(
       if (existing.owner === owner && existing.name.toLowerCase() === normalized &&
           (!runId || existing.ownerRunId === runId)) {
         if ((noteText && noteText !== existing.note) || (cleanupText && cleanupText !== existing.cleanup)) {
+          if (cleanupText && cleanupText !== existing.cleanup) collide(existing.id);
           const updated: ResourceEntry = {
             ...existing,
             note: noteText || existing.note,
@@ -248,6 +275,7 @@ export async function claimResource(
       }
       // A reuser may supply a missing teardown command, but cannot overwrite the owner's.
       const adoptCleanup = cleanupText && !existing.cleanup;
+      if (adoptCleanup) collide(existing.id);
       if (!existing.reusers.includes(owner) || adoptCleanup) {
         const updated: ResourceEntry = {
           ...existing,
@@ -272,6 +300,7 @@ export async function claimResource(
           `reuse R${overlap.id} and cite it, or claim a disjoint path`,
       );
     }
+    collide();
     const id = resources.reduce((max, resource) => Math.max(max, resource.id), 0) + 1;
     const resource: ResourceEntry = {
       id,
