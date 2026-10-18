@@ -4,6 +4,32 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Fixed
+
+- Repair: the time share has a floor (`PI_HORDE_REPAIR_MIN_MS`, 60 s) and is split only among the
+  attempts the token budget can fund, so attempts are no longer handed 20 s and killed; a share
+  below the floor records `repair-skipped` instead (#7).
+- A blocking challenge deferred before any response could never be resolved: `respond` now
+  reopens a deferred request, and deferred blocking requests reach the recipient's inbox and
+  repair queue (#7).
+- COLLABORATION.md and the dashboard show the resolution of a request with the evidence the
+  resolver attached, and a parent review request closed by a review names the V# (#7).
+- SUMMARY.md states whether a validated solve wound the run down, how discovery ended and the
+  repair outcome, and carries the REPORT.md outcome, instead of attributing every end to the
+  solve (#7).
+- The deliverable warning for citing an unreviewed finding accepts the acceptance vocabulary and
+  checks the citing paragraph, so "no independent review of the current revision" is no longer
+  flagged (#7).
+- REPORT.md counts resource reuse by citation in findings, evidence, reviews and leases, not only
+  by explicit reclaims (#7).
+- A resource whose cleanup names a container another resource of the run already registered is
+  refused, so one teardown cannot remove two labs (#7).
+- ANSWER.md is annotated when the proposal cites a finding that was superseded later (#7).
+- A confirm-solved after the credited one and an idea creation absorbed as a duplicate record a
+  `noop` event; REPORT.md counts both (#7).
+- The `text` parameter documents every action that requires it, and a review whose evidence is
+  pinned to another revision is told which ref and which revisions (#7).
+
 ## [0.1.2] - 2026-10-16
 
 ### Fixed
