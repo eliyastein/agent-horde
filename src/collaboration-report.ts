@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { artifactAccepted, blockingMessages, collaborationState, openMessages } from "./ledger/collaboration.js";
-import type { ArtifactRecord, CollaborationState } from "./ledger/collaboration.js";
+import type { ArtifactRecord, CollaborationState, PeerMessage } from "./ledger/collaboration.js";
 import { readEvents } from "./ledger/events.js";
 import { findingReviewState, findingRevision, listFindingsForRun } from "./ledger/findings.js";
 import { listIdeas } from "./ledger/ideas.js";
@@ -84,10 +84,27 @@ export function loadCollaborationReport(hordeDir: string, runId: string): Collab
     unresolved: openMessages(state).length, blocking: blockingMessages(state).length,
     resolvedChallenges: messages.filter((m) => m.kind === "challenge" && m.state === "resolved").length,
     deferredChallenges: messages.filter((m) => m.kind === "challenge" && m.state === "deferred").length,
+    openChallenges: messages.filter((m) => m.kind === "challenge" && m.state !== "resolved" && m.state !== "deferred").length,
     meanDeliveryMs: delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0,
     acceptedArtifacts: acceptedArtifacts.length,
     acceptedDocuments: acceptedDocuments.length, acceptedRunnableArtifacts: acceptedRunnableArtifacts.length,
   } };
+}
+
+function withEvidence(text: string, evidence: string[] | undefined): string {
+  return evidence?.length ? `${text} (evidence ${evidence.join(", ")})` : text;
+}
+
+/** The response and the resolution are different actors' decisions; each shows with its own evidence. */
+function messageMarkdown(m: PeerMessage): string {
+  const lines = [
+    `- ${m.id} ${m.sender} -> ${m.to} ${m.target}@${m.revision} [${m.state}] ${m.kind}${m.blocking ? " BLOCKING" : ""}`,
+    `  ${m.text}`,
+    `  Response: ${m.response ? withEvidence(m.response, m.responseEvidence) : "pending"}`,
+  ];
+  if (m.resolution !== undefined) lines.push(`  ${m.state === "deferred" ? "Deferred" : "Resolution"}: ${withEvidence(m.resolution, m.resolutionEvidence)}`);
+  lines.push(`  Evidence: ${m.evidence.join(", ") || "none"}; created ${m.createdAt}; updated ${m.updatedAt}`);
+  return lines.join("\n");
 }
 
 function collaborationMarkdown(report: CollaborationReport): string {
@@ -95,8 +112,7 @@ function collaborationMarkdown(report: CollaborationReport): string {
   return [
     `# Collaboration ${report.runId}`, `\nEvent high-water mark: ${report.sequence}. Delivery records context insertion, not comprehension.`,
     "\n## Acceptance issues", ...(report.issues.length ? report.issues.map((i) => `- ${i}`) : ["- No protocol-level issues recorded; task acceptance still requires coverage and review."]),
-    "\n## Questions, challenges and handoffs", ...state.messages.map((m) =>
-      `- ${m.id} ${m.sender} -> ${m.to} ${m.target}@${m.revision} [${m.state}] ${m.kind}${m.blocking ? " BLOCKING" : ""}\n  ${m.text}\n  Response: ${m.response ?? "pending"}\n  Evidence: ${m.evidence.join(", ") || "none"}; created ${m.createdAt}; updated ${m.updatedAt}`),
+    "\n## Questions, challenges and handoffs", ...state.messages.map(messageMarkdown),
     "\n## Artifact revisions", ...state.artifacts.map((a) => `- ${a.id} ${a.path}@${a.hash} owner=${a.owner} kind=${a.kind ?? "runnable"} snapshot=${a.snapshot} accepted=${report.acceptedArtifacts.includes(a.id)}\n  Criteria: ${a.criteria}\n  Dependencies: ${JSON.stringify(a.dependencies)}`),
     "\n## Reviews", ...state.reviews.map((r) => `- ${r.id} ${r.target}@${r.revision} @${r.actor} ${r.verdict} [${r.support}] evidence=${r.evidence.join(",")}\n  Checked: ${r.checked}\n  Unchecked: ${r.unchecked || "none declared"}\n  ${r.text}`),
     "\n## Evidence", ...state.evidence.map((e) => `- ${e.id} ${e.target}@${e.revision} @${e.actor} ${e.relation}${e.path ? ` ${e.path}@${e.hash}` : ""}\n  ${e.text}`),

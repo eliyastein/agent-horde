@@ -148,13 +148,14 @@ function recordReview(c: CollaborationCommand): EventDraft {
   return { payload: { ...(evidenceRecord ? { evidenceRecord } : {}), review: { id: `V${seq}`, actor: ctx.actor, target, revision: info.revision,
     verdict: p.verdict, support: p.support, checked, unchecked: p.unchecked,
     text, evidence: refs },
-    ...completeAssignedReview(c, target, text),
+    ...completeAssignedReview(c, target, `V${seq}`, text, refs),
     ...(["refutes", "partially-supports"].includes(p.verdict) ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
 }
 
-function completeAssignedReview(c: CollaborationCommand, target: string, text: string): Record<string, unknown> {
+/** The parent's assignment closes with the review id and its evidence, so the thread shows what decided it. */
+function completeAssignedReview(c: CollaborationCommand, target: string, reviewId: string, text: string, refs: string[]): Record<string, unknown> {
   const assignment = openMessages(c.state).find((m) => m.sender === "parent" && m.to === c.ctx.actor && m.kind === "review-request" && m.target === target);
-  return assignment ? { transition: { id: assignment.id, state: "resolved", text: `Review recorded: ${text}`, revision: c.params.revision } } : {};
+  return assignment ? { transition: { id: assignment.id, state: "resolved", text: `Review recorded: ${reviewId} ${text}`, revision: c.params.revision }, refs } : {};
 }
 
 function automaticChallenge(c: CollaborationCommand, target: string, info: { owner: string; revision: string }, text: string, refs: string[]): Record<string, unknown> {

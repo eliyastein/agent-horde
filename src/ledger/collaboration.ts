@@ -19,7 +19,11 @@ export interface PeerMessage {
   response?: string;
   responseRevision?: string;
   responseTarget?: string;
+  /** Evidence the recipient attached to its response. */
+  responseEvidence?: string[];
   resolution?: string;
+  /** Evidence the sender attached when resolving or deferring. */
+  resolutionEvidence?: string[];
   deliveries: Record<string, string>;
 }
 interface EvidenceRecord {
@@ -104,6 +108,7 @@ function applyTransition(state: CollaborationState, event: HordeEvent): void {
   const t = event.payload.transition as { id: string; state: MessageState; text?: string; revision?: string; responseTarget?: string; attempt?: string };
   const message = state.messages.find((m) => m.id === t.id);
   if (!message) return;
+  const refs = Array.isArray(event.payload.refs) ? (event.payload.refs as string[]) : [];
   if (t.state === "delivered") {
     message.deliveries[t.attempt ?? event.attempt] = event.at;
     if (message.state === "pending") message.state = "delivered";
@@ -113,7 +118,11 @@ function applyTransition(state: CollaborationState, event: HordeEvent): void {
       message.response = t.text;
       message.responseRevision = t.revision;
       message.responseTarget = t.responseTarget;
-    } else if (t.state === "resolved" || t.state === "deferred") message.resolution = t.text;
+      message.responseEvidence = refs;
+    } else if (t.state === "resolved" || t.state === "deferred") {
+      message.resolution = t.text;
+      message.resolutionEvidence = refs;
+    }
   }
   message.updatedAt = event.at;
 }
