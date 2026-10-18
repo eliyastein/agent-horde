@@ -129,15 +129,25 @@ interface SettledAnswer {
   status: string;
 }
 
+/** Findings the proposal names that a later finding corrected; labeled, not re-versioned. */
+export function supersededCitations(text: string, findings: FindingEntry[]): string[] {
+  return findings
+    .filter((finding) => finding.supersededBy !== undefined && new RegExp(`\\bF${finding.id}\\b`).test(text))
+    .map((finding) => `F${finding.id} (now F${finding.supersededBy})`);
+}
+
 /**
- * The proposal body is the member's verbatim text and can predate later challenges. When acceptance
- * fails, the status names the blockers still open at freeze and, once synthesis wrote it, points
- * the operator at DELIVERABLE.md as the reconciled output.
+ * The proposal body is the member's verbatim text and can predate later challenges and corrections.
+ * The status names the blockers still open at freeze and the findings a later finding superseded,
+ * and, once synthesis wrote it, points the operator at DELIVERABLE.md as the reconciled output.
  */
-function annotateAnswer(run: HordeRun, answer: SettledAnswer, acceptance: { hash: string; issues: string[] }): void {
+function annotateAnswer(run: HordeRun, answer: SettledAnswer, acceptance: { hash: string; issues: string[] }, findings: FindingEntry[]): void {
   const blockers = acceptance.issues.filter((issue) => /^Q\d+ .*: \w+ blocking /.test(issue)).map((issue) => issue.replace(/:/, ""));
-  const parts = [answer.status, "acceptance incomplete"];
+  const parts = [answer.status];
+  if (acceptance.issues.length) parts.push("acceptance incomplete");
   if (blockers.length) parts.push(`open blocking at freeze: ${blockers.join(", ")}`);
+  const superseded = supersededCitations(answer.proposal.text, findings);
+  if (superseded.length) parts.push(`cites superseded ${superseded.join(", ")}`);
   parts.push(`see ACCEPTANCE.md (snapshot ${acceptance.hash})`);
   if (run.deliverable) parts.push("reconciled operator output: DELIVERABLE.md; the proposal text below is verbatim and may be superseded there");
   try {
@@ -528,15 +538,16 @@ export async function finalizeRun(state: HordeState, run: HordeRun): Promise<voi
     run.acceptance = acceptance.status;
     run.snapshotHash = acceptance.hash;
     await recordLifecycle(run, "acceptance", { status: acceptance.status, hash: acceptance.hash, issues: acceptance.issues.length });
-    const annotate = answer !== undefined && acceptance.issues.length > 0;
-    if (annotate) annotateAnswer(run, answer, acceptance);
+    const annotate = answer !== undefined &&
+      (acceptance.issues.length > 0 || supersededCitations(answer.proposal.text, ledgers.findings).length > 0);
+    if (annotate) annotateAnswer(run, answer, acceptance, ledgers.findings);
     // Workers and bounded repairs have exited; only now may their labs be torn down.
     const cleanups = await runCleanups(state, run);
     const reportInput = writeRunReports(run, ledgers, releasedIdeas, cleanups, now);
     // Free the slot before the (possibly slow) synthesis so a new run can start.
     if (state.active === run) state.active = undefined;
     await synthesize(state, run, ledgers, reportInput, now);
-    if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance);
+    if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, ledgers.findings);
     sendReport(state, run, ledgers, now);
     await recordLifecycle(run, "run-end", { outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel });
     writeRunGraph(run);
