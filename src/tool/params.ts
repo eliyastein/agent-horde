@@ -68,7 +68,11 @@ export const HordeParams = Type.Object({
   generation: Type.Optional(Type.Integer({ minimum: 0, description: "Expected resource generation. Required after the first resource-state update." })),
   requestId: Type.Optional(Type.String({ description: "Stable retry key for collaboration mutations within this session attempt." })),
   text: Type.Optional(
-    Type.String({ description: "Message, idea text, finding text, resource name, or note for done/drop/rule-out" }),
+    Type.String({
+      description:
+        "Message, idea text, finding text, resource name, or note for done/drop/rule-out. Required for " +
+        "message, ack, respond, resolve, defer, attach (the observation) and review (the decision summary)",
+    }),
   ),
   note: Type.Optional(
     Type.String({ description: "For a resource: a short pointer (path, command, or fact id) others should reuse" }),

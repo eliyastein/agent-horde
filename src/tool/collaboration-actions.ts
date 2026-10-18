@@ -28,6 +28,13 @@ function evidenceRefs(state: CollaborationState, refs: string[] = []): string[] 
   return refs;
 }
 
+/** Name the stale ref and both revisions, so a retry does not have to guess which evidence to replace. */
+function staleEvidence(state: CollaborationState, refs: string[], target: string, revision: string): string | undefined {
+  const stale = refs.map((id) => state.evidence.find((e) => e.id === id)).find((e) => e && (e.target !== target || e.revision !== revision));
+  if (!stale) return undefined;
+  return `${stale.id} is recorded against ${stale.target}@${stale.revision.slice(0, 12)}; the current target is ${target}@${revision.slice(0, 12)}`;
+}
+
 function newMessage(c: CollaborationCommand): EventDraft {
   const { ctx, state, params: p, seq } = c;
   const target = requireParam(p.target, "target", p.action);
@@ -84,7 +91,10 @@ function validateResolution(c: CollaborationCommand, m: PeerMessage, refs: strin
   const target = responseSubject(c, m);
   const revision = targetInfo(c.ctx, c.state, target).revision;
   if ((c.params.revision ?? m.responseRevision) !== revision) throw new Error(`horde: response is stale; explicitly review and resolve ${target}@${revision}, or ask the owner to respond again`);
-  if (!refs.some((id) => c.state.evidence.some((e) => e.id === id && e.target === target && e.revision === revision))) throw new Error("horde: resolution evidence must address the current response target revision");
+  if (!refs.some((id) => c.state.evidence.some((e) => e.id === id && e.target === target && e.revision === revision))) {
+    const detail = staleEvidence(c.state, refs, target, revision) ?? `none of ${refs.join(", ")} targets ${target}@${revision.slice(0, 12)}`;
+    throw new Error(`horde: resolution evidence must address the current response target revision: ${detail}; attach evidence to that revision first`);
+  }
   if (target.startsWith("A") || target.startsWith("F")) {
     const review = c.state.reviews.findLast((r) => r.target === target && r.revision === revision && r.actor === c.ctx.actor);
     if (!review || review.verdict !== "supports" || (target.startsWith("A") && review.unchecked)) throw new Error("horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
@@ -136,7 +146,8 @@ function recordReview(c: CollaborationCommand): EventDraft {
   const refs = [...evidenceRefs(state, p.refs)];
   if (!refs.length && !p.evidenceText) throw new Error("horde: attach evidence before reviewing or supply evidenceText for an atomic evidence+review");
   if (!p.verdict || p.unchecked === undefined) throw new Error("horde: review needs verdict and unchecked (empty only for full coverage)");
-  if (refs.some((id) => !state.evidence.some((e) => e.id === id && e.target === target && e.revision === info.revision))) throw new Error("horde: review evidence must address this exact target revision");
+  const stale = staleEvidence(state, refs, target, info.revision);
+  if (stale) throw new Error(`horde: review evidence must address this exact target revision: ${stale}; attach fresh evidence to the current revision or pass evidenceText`);
   const text = requireText(p.text, "review");
   const checked = requireParam(p.checked, "checked", p.action);
   const evidenceRecord = p.evidenceText === undefined ? undefined : {
