@@ -49,10 +49,14 @@ function transition(c: CollaborationCommand): EventDraft {
   const { ctx, state, params: p } = c;
   const m = state.messages.find((entry) => entry.id === p.target);
   if (!m) throw new Error("horde: unknown message Q#");
-  if (m.state === "resolved" || (m.state === "deferred" && p.action !== "resolve")) throw new Error("horde: message is already closed; create a new request");
+  if (m.state === "resolved") throw new Error("horde: message is already closed; create a new request");
+  // A deferred request is disclosed debt, not a closed thread: the recipient may still answer it
+  // and the sender may still resolve it. Otherwise a blocking challenge deferred before any
+  // response could never be cleared by anyone.
+  if (m.state === "deferred" && p.action !== "resolve" && p.action !== "respond") throw new Error("horde: a deferred request takes a response from its recipient or a resolution from its sender");
   const closing = p.action === "resolve" || p.action === "defer";
   if (closing ? ctx.actor !== m.sender : ctx.actor !== m.to) throw new Error("horde: recipient acknowledges/responds; sender resolves/defers after review");
-  if (p.action === "respond" && !["acknowledged", "responded"].includes(m.state)) throw new Error("horde: acknowledge the request before responding");
+  if (p.action === "respond" && !["acknowledged", "responded", "deferred"].includes(m.state)) throw new Error("horde: acknowledge the request before responding");
   const text = requireText(p.text, p.action);
   const refs = evidenceRefs(state, p.refs);
   if (p.action === "resolve" && m.blocking) validateResolution(c, m, refs);

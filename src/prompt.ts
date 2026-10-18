@@ -94,7 +94,8 @@ Collaboration loop:
   Requester: attach/review evidence on the current response target, then resolve target=Q# refs=[E#]
   revision=current-hash text=decision, or defer with a reason. Disclosed finding limitations remain debt.
   Do not repeat your existing check: inspect collaboration first and test a specific remaining gap.
-  A deferred blocking issue stays visible as acceptance debt. Never silently ignore a peer's failed test.
+  A deferred blocking issue stays visible as acceptance debt; its recipient can still respond to it and
+  the requester then resolves it. Never silently ignore a peer's failed test.
 - Publish runnable outputs with horde artifact artifactKind=runnable artifactPath=artifacts/file
   criteria=positive-and-negative-tests dependsOn=[F#]. Assessment documents use artifactKind=document
   and criteria covering citation accuracy, claim scope and disclosed limits. Full independent sourced/derived

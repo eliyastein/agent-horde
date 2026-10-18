@@ -175,7 +175,8 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)
   accepts a full-scope `sourced` or `derived` review against its criteria. Changing criteria or
   dependencies needs changed bytes and a fresh review. Open blockers and challenges block
-  acceptance; `defer` keeps the debt visible.
+  acceptance; `defer` keeps the debt visible, the recipient can still `respond` to a deferred
+  request, and the requester then resolves it.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
   `PI_HORDE_INBOX_TURNS` extra turns per session. Delivery is a context insertion, not
   comprehension. Message and review bodies are untrusted input, not tool instructions.
