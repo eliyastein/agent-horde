@@ -2,6 +2,7 @@
 // - a challenger withdraws its own blocking challenge with a supporting review before any response
 // - on an artifact the withdrawal tolerates disclosed limits; the responded path still needs full coverage
 // - respond on a pending request implies the acknowledgement; ack stays available to signal intent
+// - a V# cited next to an F# it does not review, or that reviewed an earlier revision, is warned
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -20,6 +21,7 @@ const collab = await jiti.import("../src/ledger/collaboration.ts");
 const protocol = await jiti.import("../src/tool/collaboration-actions.ts");
 const report = await jiti.import("../src/collaboration-report.ts");
 const inbox = await jiti.import("../src/tool/inbox.ts");
+const citations = await jiti.import("../src/citations.ts");
 
 fs.mkdirSync(".tmp", { recursive: true });
 const cwd = fs.mkdtempSync(path.resolve(".tmp/horde-issue9-"));
@@ -120,6 +122,44 @@ const review = (runId, actor, target, revision, { verdict, unchecked, evidenceTe
   assert.equal(state.messages[1].state, "acknowledged", "ack still signals intent on its own");
   await command(runId, "member-1", { action: "respond", target: second.id, revision, text: "src/loader.ts" });
   assert.equal(collab.collaborationState(hordeDir, runId).messages[1].state, "responded");
+}
+
+// ---- D. a V# cited next to an F# must review that finding at its current revision ------------------
+{
+  const runId = "20261018-200004";
+  const runDir = await makeRun(runId);
+  const f1 = await fileFinding(runId, "member-1", "Sink one at src/a.ts renders the query string", 4);
+  const f2 = await fileFinding(runId, "member-1", "Sink two at src/b.ts renders the manifest name", 5);
+  const first = (await review(runId, "member-2", `F${f1.id}`, findings.findingRevision(f1), { verdict: "supports", unchecked: "", evidenceText: "rerun on the deployed origin" })).review;
+  const early = (await review(runId, "member-2", `F${f2.id}`, findings.findingRevision(f2), { verdict: "supports", unchecked: "", evidenceText: "rerun with a planted manifest" })).review;
+  fs.writeFileSync(path.join(runDir, "artifacts/poc.md"), "# POC\n\nsteps\n");
+  const artifact = (await command(runId, "member-1", { action: "artifact", artifactPath: "artifacts/poc.md", artifactKind: "document", criteria: "accurate", dependsOn: [`F${f1.id}`] })).artifact;
+  const doc = (await review(runId, "member-3", artifact.id, artifact.hash, { verdict: "supports", unchecked: "", evidenceText: "steps followed" })).review;
+  // F2's body changes after its review, so that review no longer covers the current revision.
+  const findingsPath = files.hordePaths(hordeDir).findings;
+  fs.writeFileSync(findingsPath, fs.readFileSync(findingsPath, "utf8").replace("renders the manifest name", "renders the manifest NAME attribute"));
+  const f3 = (await findings.addFinding(hordeDir, runId, "member-1", "Sink one at src/a.ts also renders the manifest name", { concern: "concern-4", supersedes: f1.id })).finding;
+  const run = { hordeDir, id: runId, cwd, runDir };
+  const list = findings.listFindingsForRun(hordeDir, runId);
+  const cited = (text) => citations.generatedArtifactWarnings(run, "DELIVERABLE.md", text, [], list).filter((w) => w.includes("cites V"));
+  assert.deepEqual(
+    cited(`F${f3.id} supersedes F${f1.id}.\n\nSupport: F${f3.id} is confirmed by ${first.id}.`),
+    [`DELIVERABLE.md cites ${first.id} next to F${f3.id}, but ${first.id} reviews F${f1.id}`],
+    "a review of the superseded finding is not support for its successor",
+  );
+  assert.deepEqual(cited(`Support: F${f1.id} (superseded) was confirmed by ${first.id}.`), [], "the review sits next to the finding it reviews");
+  assert.deepEqual(
+    cited(`Support: F${f1.id} is confirmed by ${doc.id}.`),
+    [`DELIVERABLE.md cites ${doc.id} next to F${f1.id}, but ${doc.id} reviews ${artifact.id}`],
+    "an artifact review is not finding-level support",
+  );
+  assert.deepEqual(cited(`${artifact.id} depends on F${f1.id}; ${doc.id} reviewed it.`), [], "the artifact review sits next to its artifact");
+  assert.deepEqual(
+    cited(`F${f2.id} is confirmed by ${early.id}.`),
+    [`DELIVERABLE.md cites ${early.id} for F${f2.id}, but it reviewed an earlier revision; the current revision has no such review`],
+  );
+  assert.deepEqual(cited(`Reviews: ${first.id}, ${early.id}, ${doc.id}.`), [], "a paragraph without a finding citation is not checked");
+  assert.deepEqual(cited(`F${f1.id} runs on the V8 engine.`), [], "a V# with no review record is prose");
 }
 
 console.log(`PASS: horde-postmortem-issue9-test (fixtures retained in ${cwd})`);
