@@ -178,7 +178,9 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   accepts a full-scope `sourced` or `derived` review against its criteria. Changing criteria or
   dependencies needs changed bytes and a fresh review. Open blockers and challenges block
   acceptance; `defer` keeps the debt visible, the recipient can still `respond` to a deferred
-  request, and the requester then resolves it.
+  request, and the requester then resolves it. A challenger can withdraw its own blocking
+  challenge on an F# or A# before any response by recording a supporting review of the current
+  revision and resolving with evidence on it; limits that review discloses remain acceptance debt.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
   `PI_HORDE_INBOX_TURNS` extra turns per session. Delivery is a context insertion, not
   comprehension. Message and review bodies are untrusted input, not tool instructions.

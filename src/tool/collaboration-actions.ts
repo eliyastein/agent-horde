@@ -85,20 +85,35 @@ function responseSubject(c: CollaborationCommand, m: PeerMessage): string {
   throw new Error("horde: responseTarget must be the challenged target, its successor, or a finding attached to the challenged idea");
 }
 
+/**
+ * A blocking request closes on the recipient's response plus the sender's own supporting check of
+ * the current revision. Before any response the sender may still withdraw its own challenge on an
+ * F# or A#: a challenger that verified the claim itself, or watched others verify it, records a
+ * supporting review of the current revision and cites evidence on it. Limits that review
+ * discloses stay acceptance debt on the review record; the withdrawal clears only the dispute.
+ */
 function validateResolution(c: CollaborationCommand, m: PeerMessage, refs: string[]): void {
-  if (!["responded", "deferred"].includes(m.state) || !m.responseRevision || refs.length === 0) throw new Error("horde: blocking resolution needs a response and evidence");
   if (m.sender === m.to) throw new Error("horde: a blocking request needs an independent resolver");
+  const withdrawal = m.responseRevision === undefined;
   const target = responseSubject(c, m);
+  const reviewable = /^[AF]\d+$/.test(target);
+  if (refs.length === 0 || (withdrawal && !reviewable) || (!withdrawal && !["responded", "deferred"].includes(m.state))) {
+    throw new Error("horde: blocking resolution needs a response and evidence");
+  }
   const revision = targetInfo(c.ctx, c.state, target).revision;
-  if ((c.params.revision ?? m.responseRevision) !== revision) throw new Error(`horde: response is stale; explicitly review and resolve ${target}@${revision}, or ask the owner to respond again`);
+  if ((c.params.revision ?? m.responseRevision ?? revision) !== revision) throw new Error(`horde: response is stale; explicitly review and resolve ${target}@${revision}, or ask the owner to respond again`);
   if (!refs.some((id) => c.state.evidence.some((e) => e.id === id && e.target === target && e.revision === revision))) {
     const detail = staleEvidence(c.state, refs, target, revision) ?? `none of ${refs.join(", ")} targets ${target}@${revision.slice(0, 12)}`;
     throw new Error(`horde: resolution evidence must address the current response target revision: ${detail}; attach evidence to that revision first`);
   }
-  if (target.startsWith("A") || target.startsWith("F")) {
-    const review = c.state.reviews.findLast((r) => r.target === target && r.revision === revision && r.actor === c.ctx.actor);
-    if (!review || review.verdict !== "supports" || (target.startsWith("A") && review.unchecked)) throw new Error("horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
+  if (!reviewable) return;
+  const review = c.state.reviews.findLast((r) => r.target === target && r.revision === revision && r.actor === c.ctx.actor);
+  if (!review || review.verdict !== "supports") {
+    throw new Error(withdrawal
+      ? `horde: no response yet; to withdraw your own challenge, record a supporting review of ${target}@${revision.slice(0, 12)} and cite evidence on it`
+      : "horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
   }
+  if (!withdrawal && target.startsWith("A") && review.unchecked) throw new Error("horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
 }
 
 function attachEvidence(c: CollaborationCommand): EventDraft {

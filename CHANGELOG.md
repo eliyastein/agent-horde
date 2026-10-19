@@ -33,6 +33,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   queue, one floor per queued member up to four plus two recheck shares, instead of a flat 50k that
   funded two attempts; each attempt has a turn cap (`PI_HORDE_REPAIR_TURNS`, 40), the phase start
   records the budget, and `repair-end` records the attempt's turns and first-turn cost (#9).
+- A challenger could not withdraw its own blocking challenge: `resolve` required the recipient's
+  response, so a retracted objection kept its target disputed when the recipient was gone. The
+  sender can now resolve before any response with its own supporting review of the current F# or
+  A# revision and evidence on it; limits that review discloses stay acceptance debt (#9).
 
 ## [0.1.2] - 2026-10-16
 
