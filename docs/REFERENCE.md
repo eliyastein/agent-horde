@@ -37,7 +37,9 @@ synthesize it.
    a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times.
 3. **Repair.** After discovery ends normally, finished members get fresh, targeted sessions to
    answer open blockers, review requests, and responses, within the `PI_HORDE_REPAIR_*` budgets.
-   A user stop skips this phase.
+   The default totals follow the queue, so every queued member can afford a cold first turn; the
+   phase start records the budget and `repair-end` records each attempt's turns and first-turn
+   cost. A user stop skips this phase.
 4. **Finalize.** Acceptance is frozen (`ACCEPTANCE.*`, `snapshot/`), resource cleanup commands
    run, `SUMMARY.md` and `REPORT.md` are written, then a synthesis member writes `DELIVERABLE.md`
    and a read-only reviewer writes `POSTMORTEM.md`. The widget shows `synthesizing` until both
@@ -235,10 +237,11 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
 | `PI_HORDE_ALLOW_UNVERIFIED` | unset | `1` accepts a validated answer with unverified findings |
 | `PI_HORDE_REPAIR_ROUNDS` | 4 | post-discovery repair rounds (max 6; `0` disables) |
-| `PI_HORDE_REPAIR_MS` | 120000 | total repair time |
-| `PI_HORDE_REPAIR_TOKENS` | 50000 | total repair tokens |
-| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | token floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_REPAIR_MS` | queue-sized | total repair time: one `PI_HORDE_REPAIR_MIN_MS` per queued member (max 4) plus two recheck shares; a number here is a flat total |
+| `PI_HORDE_REPAIR_TOKENS` | queue-sized | total repair tokens: one `PI_HORDE_REPAIR_MIN_TOKENS` per queued member (max 4) plus two recheck shares; a number here is a flat total |
+| `PI_HORDE_REPAIR_MIN_TOKENS` | 40000 | token floor per attempt; below it scheduling stops with a `repair-skipped` event |
 | `PI_HORDE_REPAIR_MIN_MS` | 60000 | time floor per attempt; the clock is split only among attempts the token budget can fund |
+| `PI_HORDE_REPAIR_TURNS` | 40 | turn cap per attempt; an attempt still reading its inbox at the cap is stopped with `turns` |
 | `PI_HORDE_DELIVERABLE` | on | `off` skips the synthesis member |
 | `PI_HORDE_POSTMORTEM` | on | `off` skips the automatic post-mortem |
 | `PI_HORDE_POSTMORTEM_MS` | 300000 | post-mortem reviewer timeout |

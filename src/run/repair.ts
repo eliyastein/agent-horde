@@ -41,14 +41,54 @@ export function repairTimeShare(remainingMs: number, queued: number, laterRounds
 }
 
 /**
- * A fresh repair session pays the full system prompt, tool schemas and task on its first turn
- * (about 8k uncached tokens on deepseek) and needs the better part of a minute to read its inbox,
- * inspect, attach and review. A share below either floor is killed before it can act, so each
- * attempt gets at least the floor and lower-priority members go unserved instead.
+ * A fresh repair session pays the full system prompt, tool schemas, task and queued inbox before
+ * it can act: about 20k input+output tokens over five turns on deepseek for a queue of two to
+ * four threads, and the better part of a minute to read, inspect, attach and review. A share
+ * below either floor is killed before it acts, so each attempt gets at least the floor and
+ * lower-priority members go unserved instead.
  */
 export function repairAllowance(share: number, remaining: number, floor: number): number | undefined {
   if (remaining < Math.max(1, floor)) return undefined;
   return Math.max(share, floor);
+}
+
+export interface RepairFloors {
+  tokens: number;
+  ms: number;
+}
+
+export function repairFloors(): RepairFloors {
+  return {
+    tokens: Math.max(0, envNumber("PI_HORDE_REPAIR_MIN_TOKENS", 40_000)),
+    ms: Math.max(0, envNumber("PI_HORDE_REPAIR_MIN_MS", 60_000)),
+  };
+}
+
+/** Queued members a default budget funds at the floor; the overrides name flat totals instead. */
+const FUNDED_ATTEMPTS = 4;
+
+export interface RepairBudget {
+  tokens: number;
+  ms: number;
+  /** Turns per attempt: one that has not finished its inbox read by then will not finish with more. */
+  turns: number;
+  queued: number;
+}
+
+/**
+ * Totals follow the queue: one floor per queued member up to `FUNDED_ATTEMPTS`, plus the two
+ * correction/recheck shares that `repairShare` reserves for later rounds, unless
+ * `PI_HORDE_REPAIR_TOKENS` or `PI_HORDE_REPAIR_MS` names a flat total. A flat 50k tokens funded
+ * two attempts in an eight-member run and skipped six members with queued work.
+ */
+export function repairBudget(queued: number, floors: RepairFloors, rounds: number): RepairBudget {
+  const funded = Math.min(Math.max(1, queued), FUNDED_ATTEMPTS) + Math.min(2, Math.max(0, rounds - 1));
+  return {
+    tokens: Math.max(0, envNumber("PI_HORDE_REPAIR_TOKENS", floors.tokens * funded)),
+    ms: Math.max(0, envNumber("PI_HORDE_REPAIR_MS", floors.ms * funded)),
+    turns: Math.max(1, envNumber("PI_HORDE_REPAIR_TURNS", 40)),
+    queued,
+  };
 }
 
 type SkipReason = "insufficient-budget" | "insufficient-time";
@@ -63,13 +103,22 @@ async function recordSkipped(launch: RunLaunch, pending: MemberState[], reason: 
   await recordEvent(ctx, "repair-skipped", { payload: { reason, ...detail, members } });
 }
 
-interface RepairFloors {
+interface RepairLimits {
   tokens: number;
-  ms: number;
+  turns: number;
+}
+
+/** What the attempt's first turn cost, so the token floor can be tuned from data. */
+interface FirstTurnCost {
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
 }
 
 /** A finished worker receives a fresh, bounded attempt with a precise evidence handoff. */
-async function repairMember(launch: RunLaunch, member: MemberState, deadline: number, tokens: number, floors: RepairFloors): Promise<void> {
+async function repairMember(launch: RunLaunch, member: MemberState, deadline: number, limits: RepairLimits, floors: RepairFloors): Promise<void> {
   const { run } = launch;
   const ctx = { hordeDir: run.hordeDir, runId: run.id, actor: member.name };
   const queue = queueFor(launch, member);
@@ -79,21 +128,28 @@ async function repairMember(launch: RunLaunch, member: MemberState, deadline: nu
   member.repairs = (member.repairs ?? 0) + 1;
   member.repairStopReason = undefined;
   member.attempt = randomUUID();
-  const allowance = { tokens, ms: Math.max(0, deadline - Date.now()) };
-  member.resetNote = `Repair attempt ${member.repairs}. Discovery is closed. Budget: about ${tokens} input+output tokens and ${allowance.ms}ms. ` +
+  const allowance = { ...limits, ms: Math.max(0, deadline - Date.now()) };
+  let firstTurn: FirstTurnCost | undefined;
+  member.resetNote = `Repair attempt ${member.repairs}. Discovery is closed. Budget: about ${allowance.tokens} input+output tokens, ${allowance.turns} turns and ${allowance.ms}ms. ` +
     `Read horde inbox and referenced evidence. Work in this priority order: ${queue.map((m) => `${m.id} ${m.target} (${m.state})`).join(", ")}. ` +
     "Handle blockers and artifact reviews before administrative threads. For review requests, independently check the current revision against its artifact kind and criteria and record evidence plus a scoped review. " +
-    "For corrections, acknowledge, repair, publish, and respond with the current hash. Requesters recheck and resolve or defer with evidence. Preserve unchecked limits. Do not reopen unrelated work.";
+    "For corrections, repair, publish, and respond with the current hash. Requesters recheck and resolve or defer with evidence. Preserve unchecked limits. Do not reopen unrelated work.";
+  const spent = (): number => member.usage.input + member.usage.output;
   const halt = (reason: NonNullable<MemberState["repairStopReason"]>) => {
     if (member.repairStopReason) return;
     member.repairStopReason = reason;
-    fs.appendFileSync(path.join(run.runDir, `${member.name}.log`), `[horde] repair stop: ${reason}; allowance=${JSON.stringify(allowance)}; observed tokens=${member.usage.input + member.usage.output}\n`);
+    fs.appendFileSync(path.join(run.runDir, `${member.name}.log`), `[horde] repair stop: ${reason}; allowance=${JSON.stringify(allowance)}; observed tokens=${spent()} turns=${member.turns}\n`);
     hardStopMembers(run, [member.name]);
   };
   const check = () => {
+    if (firstTurn === undefined && member.turns > 0) {
+      const { input, output, cacheRead, cacheWrite } = member.usage;
+      firstTurn = { turns: member.turns, input, output, cacheRead, cacheWrite };
+    }
     const reason = stopReason(launch);
     if (reason) halt(reason);
-    else if (member.usage.input + member.usage.output >= tokens) halt("tokens");
+    else if (spent() >= allowance.tokens) halt("tokens");
+    else if (member.turns >= allowance.turns) halt("turns");
     else if (Date.now() >= deadline) halt("time");
   };
   const timeout = setTimeout(() => halt("time"), Math.max(1, deadline - Date.now()));
@@ -110,12 +166,13 @@ async function repairMember(launch: RunLaunch, member: MemberState, deadline: nu
       await spawnOne(launch, member, undefined, check);
     }
     await recordEvent({ ...ctx, attempt: member.attempt }, "repair-end", { payload: {
-      cause: member.endCause, stopReason: member.repairStopReason, allowance, usage: member.usage, messages: queue.map((m) => m.id),
+      cause: member.endCause, stopReason: member.repairStopReason, allowance, usage: member.usage, turns: member.turns, firstTurn,
+      messages: queue.map((m) => m.id),
     } });
   } finally {
     clearTimeout(timeout);
     clearInterval(watchdog);
-    run.repairTokens = (run.repairTokens ?? 0) + member.usage.input + member.usage.output;
+    run.repairTokens = (run.repairTokens ?? 0) + spent();
     member.turns += prior.turns;
     member.toolCalls += prior.toolCalls;
     for (const key of ["input", "output", "cacheRead", "cacheWrite", "cost"] as const) member.usage[key] += prior.usage[key];
@@ -128,10 +185,10 @@ export async function drainRepairs(launch: RunLaunch): Promise<void> {
   const { run } = launch;
   let started = false;
   // The repair phase is recorded only once an attempt or a budget refusal actually happens.
-  const begin = async (): Promise<void> => {
+  const begin = async (budget: RepairBudget): Promise<void> => {
     if (started) return;
     started = true;
-    await recordPhase(run, "repair", "start");
+    await recordPhase(run, "repair", "start", { budget });
   };
   try {
     await runRepairRounds(launch, begin);
@@ -140,44 +197,49 @@ export async function drainRepairs(launch: RunLaunch): Promise<void> {
   }
 }
 
-async function runRepairRounds(launch: RunLaunch, begin: () => Promise<void>): Promise<void> {
+function eligibleMembers(launch: RunLaunch): Array<{ member: MemberState; queue: PeerMessage[] }> {
+  return launch.run.members.map((member) => ({ member, queue: queueFor(launch, member) })).filter((entry) => entry.queue.length)
+    .sort((a, b) => repairPriority(a.queue[0]!) - repairPriority(b.queue[0]!) ||
+      (a.member.repairs ?? 0) - (b.member.repairs ?? 0) || a.queue[0]!.createdAt.localeCompare(b.queue[0]!.createdAt));
+}
+
+async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) => Promise<void>): Promise<void> {
   const { run } = launch;
   const rounds = Math.max(0, Math.min(6, envNumber("PI_HORDE_REPAIR_ROUNDS", 4)));
-  const deadline = Date.now() + Math.max(0, envNumber("PI_HORDE_REPAIR_MS", 120_000));
-  const tokenLimit = Math.max(0, envNumber("PI_HORDE_REPAIR_TOKENS", 50_000));
-  const tokenFloor = Math.max(0, envNumber("PI_HORDE_REPAIR_MIN_TOKENS", 20_000));
-  const timeFloor = Math.max(0, envNumber("PI_HORDE_REPAIR_MIN_MS", 60_000));
-  const floors = { tokens: tokenFloor, ms: timeFloor };
-  const exhausted = () => stopReason(launch) || Date.now() >= deadline || (run.repairTokens ?? 0) >= tokenLimit;
+  if (rounds === 0 || stopReason(launch)) return;
+  const floors = repairFloors();
+  await scheduleCollaboration(launch, { settleMs: 0, liveOnly: false });
+  const budget = repairBudget(eligibleMembers(launch).length, floors, rounds);
+  if (budget.queued === 0) return;
+  const deadline = Date.now() + budget.ms;
+  const exhausted = () => stopReason(launch) || Date.now() >= deadline || (run.repairTokens ?? 0) >= budget.tokens;
   for (let round = 0; round < rounds; round++) {
     if (exhausted()) return;
-    await scheduleCollaboration(launch, { settleMs: 0, liveOnly: false });
-    const eligible = run.members.map((member) => ({ member, queue: queueFor(launch, member) })).filter((entry) => entry.queue.length)
-      .sort((a, b) => repairPriority(a.queue[0]!) - repairPriority(b.queue[0]!) ||
-        (a.member.repairs ?? 0) - (b.member.repairs ?? 0) || a.queue[0]!.createdAt.localeCompare(b.queue[0]!.createdAt));
+    if (round > 0) await scheduleCollaboration(launch, { settleMs: 0, liveOnly: false });
+    const eligible = eligibleMembers(launch);
     if (!eligible.length) return;
     // Sequential attempts preserve owner -> reviewer ordering while reserving others' shares.
     for (let index = 0; index < eligible.length; index++) {
       if (exhausted()) return;
       const pending = eligible.slice(index).filter(({ member }) => queueFor(launch, member).length);
-      const remaining = tokenLimit - (run.repairTokens ?? 0);
+      const remaining = budget.tokens - (run.repairTokens ?? 0);
       const laterRounds = rounds - round - 1;
-      const tokens = repairAllowance(repairShare(remaining, pending.length, laterRounds), remaining, tokenFloor);
+      const tokens = repairAllowance(repairShare(remaining, pending.length, laterRounds), remaining, floors.tokens);
       if (tokens === undefined) {
-        await begin();
-        await recordSkipped(launch, pending.map((entry) => entry.member), "insufficient-budget", { remaining, floor: tokenFloor });
+        await begin(budget);
+        await recordSkipped(launch, pending.map((entry) => entry.member), "insufficient-budget", { remaining, floor: floors.tokens });
         return;
       }
       const remainingMs = Math.max(0, deadline - Date.now());
-      const fundable = Math.floor(remaining / Math.max(1, tokenFloor));
-      const ms = repairAllowance(repairTimeShare(remainingMs, pending.length, laterRounds, fundable), remainingMs, timeFloor);
+      const fundable = Math.floor(remaining / Math.max(1, floors.tokens));
+      const ms = repairAllowance(repairTimeShare(remainingMs, pending.length, laterRounds, fundable), remainingMs, floors.ms);
       if (ms === undefined || ms < 1) {
-        await begin();
-        await recordSkipped(launch, pending.map((entry) => entry.member), "insufficient-time", { remainingMs, floorMs: timeFloor });
+        await begin(budget);
+        await recordSkipped(launch, pending.map((entry) => entry.member), "insufficient-time", { remainingMs, floorMs: floors.ms });
         return;
       }
-      await begin();
-      await repairMember(launch, eligible[index]!.member, Date.now() + ms, tokens, floors);
+      await begin(budget);
+      await repairMember(launch, eligible[index]!.member, Date.now() + ms, { tokens, turns: budget.turns }, floors);
     }
   }
 }

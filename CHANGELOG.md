@@ -29,6 +29,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   `noop` event; REPORT.md counts both (#7).
 - The `text` parameter documents every action that requires it, and a review whose evidence is
   pinned to another revision is told which ref and which revisions (#7).
+- Repair: the token floor is 40k (`PI_HORDE_REPAIR_MIN_TOKENS`) and the default totals follow the
+  queue, one floor per queued member up to four plus two recheck shares, instead of a flat 50k that
+  funded two attempts; each attempt has a turn cap (`PI_HORDE_REPAIR_TURNS`, 40), the phase start
+  records the budget, and `repair-end` records the attempt's turns and first-turn cost (#9).
 
 ## [0.1.2] - 2026-10-16
 

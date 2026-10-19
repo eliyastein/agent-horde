@@ -378,7 +378,7 @@ export function runEndSentence(run: RunSummaryInput): string {
   }
   parts.push(run.stopped ? `Run ${run.stopLabel ?? "was stopped by the user"}.` : "Run ended when every member exited.");
   const attempts = run.members.reduce((n, m) => n + (m.repairs ?? 0), 0);
-  const killed = run.members.filter((m) => m.repairStopReason === "tokens" || m.repairStopReason === "time");
+  const killed = run.members.filter((m) => ["tokens", "turns", "time"].includes(m.repairStopReason ?? ""));
   const skipped = run.repairSkipped ?? [];
   if (attempts > 0 || skipped.length > 0) {
     const detail = [
