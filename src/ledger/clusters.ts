@@ -114,9 +114,10 @@ export function clusterFindings(entries: FindingEntry[]): FindingCluster[] {
   return drafts
     .filter((draft) => draft.findings.length > 0)
     .map((draft) => {
-      // A cluster is represented by its root finding: a non-delta with the lowest id.
+      // A cluster is represented by its root finding: a current non-delta with the lowest id. A
+      // superseded root would file the whole cluster, successor included, under superseded.
       const representative = [...draft.findings].sort((a, b) => {
-        const rank = (finding: FindingEntry): number => (finding.deltaOf === undefined ? 0 : 1);
+        const rank = (finding: FindingEntry): number => (finding.supersededBy === undefined ? 0 : 2) + (finding.deltaOf === undefined ? 0 : 1);
         return rank(a) - rank(b) || a.id - b.id;
       })[0]!;
       const members: string[] = [];
