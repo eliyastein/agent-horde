@@ -22,6 +22,9 @@ interface CollaborationCommand {
 function evidenceRefs(state: CollaborationState, refs: string[] = []): string[] {
   for (const id of refs) {
     if (state.evidence.some((e) => e.id === id)) continue;
+    // A review is the record members most want to cite; it already names the evidence it rests on.
+    const review = state.reviews.find((r) => r.id === id);
+    if (review) throw new Error(`horde: ${id} is a review, not evidence; cite its evidence instead: ${review.evidence.join(", ") || "none recorded"}`);
     const kind = /^[A-Z]\d+$/.test(id) && !id.startsWith("E") ? `; ${id} is not evidence, refs take E# ids (attach evidence first, or name ${id} as the target)` : "";
     throw new Error(`horde: unknown evidence ${id}${kind}`);
   }
@@ -43,6 +46,8 @@ function newMessage(c: CollaborationCommand): EventDraft {
   const task = path.join(ctx.hordeDir, "runs", ctx.runId, "TASK.md");
   const count = fs.existsSync(task) ? Number(/^Members: (\d+)/m.exec(fs.readFileSync(task, "utf8"))?.[1]) : 0;
   if (!/^member-[1-9]\d*$/.test(to) || (count && Number(to.slice(7)) > count)) throw new Error("horde: recipient must be a member of this run");
+  // The recipient defaults to the target's owner, which is the sender itself on its own work.
+  if (to === ctx.actor) throw new Error(`horde: a message cannot be addressed to its sender; ${target} is yours, name another member with to=member-N`);
   if (p.revision && p.revision !== info.revision) throw new Error("horde: target changed; inspect current revision");
   const message: PeerMessage = {
     id: `Q${seq}`, sender: ctx.actor, to, target, revision: info.revision, kind: p.kind ?? "question",

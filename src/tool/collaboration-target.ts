@@ -59,7 +59,12 @@ export function retainArtifact(ctx: EventContext, file: string): { path: string;
   const runDir = path.join(ctx.hordeDir, "runs", ctx.runId);
   const root = fs.realpathSync(path.join(runDir, "artifacts"));
   const candidate = path.isAbsolute(file) ? file : path.join(runDir, file);
-  const real = fs.realpathSync(candidate);
+  let real: string;
+  try {
+    real = fs.realpathSync(candidate);
+  } catch {
+    throw new Error(`horde: artifactPath not found: ${file}; artifacts live under runs/${ctx.runId}/artifacts/`);
+  }
   if (!real.startsWith(root + path.sep) || !fs.statSync(real).isFile()) throw new Error("horde: evidence must be a file inside this run's artifacts directory");
   const bytes = fs.readFileSync(real);
   const hash = hashText(bytes);

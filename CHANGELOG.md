@@ -4,6 +4,18 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Fixed
+
+- A message whose recipient is its sender is refused: a review request on your own artifact
+  defaulted to yourself and was accepted, so it sat in your own inbox until reissued (#11).
+- The REPORT.md ranked and superseded headlines are bounded, so a single-paragraph finding no
+  longer prints its whole body as the headline; a finding superseded by one in its own cluster no
+  longer drags the successor out of the ranked list, and the superseded section lists findings
+  rather than clusters (#11).
+- An `artifactPath` that does not exist is refused with a horde error naming the path and the
+  artifacts directory, instead of a raw ENOENT with an absolute path (#11).
+- A ref naming a V# is told that it is a review and which E# ids to cite instead (#11).
+
 ## [0.1.3] - 2026-10-19
 
 ### Added

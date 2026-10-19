@@ -98,7 +98,8 @@ Collaboration loop:
 - Attach evidence to anyone's work: horde attach target=F# text=observation relation=supports|contradicts|extends,
   optionally artifactPath=artifacts/file. Returned E# retains the full evidence. Ownership is unnecessary.
 - horde message target=F#/A#/I#/R# kind=challenge|review-request|question|blocker|handoff|decision text=question,
-  to=member-N (default owner), refs=[E#]. Challenges/blockers default to blocking acceptance.
+  to=member-N (default owner; a request about your own work names another member), refs=[E#].
+  Challenges/blockers default to blocking acceptance.
 - Read horde inbox. Recipient: respond target=Q# revision=hash text=result; ack target=Q# text=plan first only to signal intent.
   Respond with the challenged target's current revision, not another finding's hash. For an I# resolved by
   a finding on that idea, explicitly set responseTarget=F#. Superseded F# requests follow the correction.
@@ -770,10 +771,13 @@ function findingLine(finding: FindingEntry, input: RunReportInput): string {
   );
 }
 
+/** A finding's title is its first line; a single-paragraph finding would otherwise print its whole body as the headline. */
+const HEADLINE_CHARS = 160;
+
 function findingsSection(input: RunReportInput, supersededBy: Map<number, number>): string[] {
   const reviewRank = (cluster: FindingCluster): number => Math.max(...cluster.findings.map((f) => ({ full: 3, limited: 2, legacy: 1, disputed: 0, unreviewed: 0, superseded: 0 })[findingReviewState(f, input.scopedReviews, input.reviewMessages).status]));
   const liveClusters = input.clusters.filter((cluster) => !supersededBy.has(cluster.representative.id)).sort((a, b) => reviewRank(b) - reviewRank(a));
-  const supersededClusters = input.clusters.filter((cluster) => supersededBy.has(cluster.representative.id));
+  const superseded = input.findings.filter((finding) => supersededBy.has(finding.id));
   const lines = [
     "",
     "## Distinct findings (ranked by review status, then legacy/support ranking, then importance, " +
@@ -785,16 +789,15 @@ function findingsSection(input: RunReportInput, supersededBy: Map<number, number
     const delta =
       cluster.deltaMembers.length > 0 ? `; deltas: ${cluster.deltaMembers.join(", ")}` : "";
     lines.push(
-      `${index + 1}. ${cluster.representative.title} ` +
+      `${index + 1}. ${oneLine(cluster.representative.title, HEADLINE_CHARS)} ` +
         `(members: ${cluster.members.join(", ") || "none"}${delta}; ${cluster.findings.length} entries)`,
     );
     for (const finding of cluster.findings) lines.push(findingLine(finding, input));
   });
-  if (supersededClusters.length > 0) {
+  if (superseded.length > 0) {
     lines.push("", "## Superseded by later findings", "");
-    for (const cluster of supersededClusters) {
-      const by = supersededBy.get(cluster.representative.id);
-      lines.push(`- F${cluster.representative.id} (superseded by F${by}): ${cluster.representative.title}`);
+    for (const finding of superseded) {
+      lines.push(`- F${finding.id} (superseded by F${supersededBy.get(finding.id)}): ${oneLine(finding.title, HEADLINE_CHARS)}`);
     }
   }
   return lines;
