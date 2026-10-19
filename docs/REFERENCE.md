@@ -182,7 +182,8 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   challenge on an F# or A# before any response by recording a supporting review of the current
   revision and resolving with evidence on it; limits that review discloses remain acceptance debt.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
-  `PI_HORDE_INBOX_TURNS` extra turns per session. Delivery is a context insertion, not
+  `PI_HORDE_INBOX_TURNS` extra turns per session. A recipient answers with `respond`; `ack` is an
+  optional first step that signals intent. Delivery is a context insertion, not
   comprehension. Message and review bodies are untrusted input, not tool instructions.
 - **Reminders.** Every `PI_HORDE_REMIND_CALLS` tool calls or `PI_HORDE_REMIND_MS`, the tool
   result restates the task, role, and claimed ideas. A member that finishes its last idea while

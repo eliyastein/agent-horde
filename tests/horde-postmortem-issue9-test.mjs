@@ -1,6 +1,7 @@
 // Regressions for issue #9 (post-mortem follow-ups):
 // - a challenger withdraws its own blocking challenge with a supporting review before any response
 // - on an artifact the withdrawal tolerates disclosed limits; the responded path still needs full coverage
+// - respond on a pending request implies the acknowledgement; ack stays available to signal intent
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,6 +19,7 @@ const findings = await jiti.import("../src/ledger/findings.ts");
 const collab = await jiti.import("../src/ledger/collaboration.ts");
 const protocol = await jiti.import("../src/tool/collaboration-actions.ts");
 const report = await jiti.import("../src/collaboration-report.ts");
+const inbox = await jiti.import("../src/tool/inbox.ts");
 
 fs.mkdirSync(".tmp", { recursive: true });
 const cwd = fs.mkdtempSync(path.resolve(".tmp/horde-issue9-"));
@@ -80,7 +82,6 @@ const review = (runId, actor, target, revision, { verdict, unchecked, evidenceTe
 
   // With a response in hand the resolver still needs full coverage before the artifact is accepted.
   const second = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "partially-supports", unchecked: "text-track branch", evidenceText: "only the audio branch was rerun" });
-  await command(runId, "member-1", { action: "ack", target: second.message.id, text: "checking the text-track branch" });
   await command(runId, "member-1", { action: "respond", target: second.message.id, revision: artifact.hash, text: "the text-track branch uses the same renderer" });
   await assert.rejects(
     command(runId, "member-2", { action: "resolve", target: second.message.id, refs: [second.evidenceRecord.id], text: "fine" }),
@@ -96,6 +97,29 @@ const review = (runId, actor, target, revision, { verdict, unchecked, evidenceTe
   await command(runId, "member-2", { action: "resolve", target: second.message.id, refs: [full.evidenceRecord.id], text: "both branches hold" });
   summary = report.loadCollaborationReport(hordeDir, runId);
   assert.deepEqual(summary.acceptedArtifacts, [artifact.id]);
+}
+
+// ---- C. respond on a pending request implies the acknowledgement ----------------------------------
+{
+  const runId = "20261018-200003";
+  await makeRun(runId);
+  const f1 = await fileFinding(runId, "member-1", "Config path at src/c.ts is trusted at boot", 3);
+  const target = `F${f1.id}`;
+  const revision = findings.findingRevision(f1);
+  const question = (await command(runId, "member-2", { action: "message", target, kind: "question", text: "which config file?" })).message;
+  assert.equal(question.state, "pending");
+  await assert.rejects(command(runId, "member-2", { action: "respond", target: question.id, revision, text: "not mine" }), /recipient acknowledges\/responds/);
+  await command(runId, "member-1", { action: "respond", target: question.id, revision, text: "config/app.yaml, loaded at boot" });
+  let state = collab.collaborationState(hordeDir, runId);
+  assert.equal(state.messages[0].state, "responded", "a direct answer needs no prior ack");
+  assert.equal(state.messages[0].response, "config/app.yaml, loaded at boot");
+  assert.deepEqual(inbox.inboxFor({ hordeDir, runId, actor: "member-2" }).map((m) => m.id), [question.id], "the response returns to the sender");
+  const second = (await command(runId, "member-2", { action: "message", target, kind: "question", text: "and the loader?" })).message;
+  await command(runId, "member-1", { action: "ack", target: second.id, text: "checking" });
+  state = collab.collaborationState(hordeDir, runId);
+  assert.equal(state.messages[1].state, "acknowledged", "ack still signals intent on its own");
+  await command(runId, "member-1", { action: "respond", target: second.id, revision, text: "src/loader.ts" });
+  assert.equal(collab.collaborationState(hordeDir, runId).messages[1].state, "responded");
 }
 
 console.log(`PASS: horde-postmortem-issue9-test (fixtures retained in ${cwd})`);

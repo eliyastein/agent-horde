@@ -99,7 +99,7 @@ Collaboration loop:
   optionally artifactPath=artifacts/file. Returned E# retains the full evidence. Ownership is unnecessary.
 - horde message target=F#/A#/I#/R# kind=challenge|review-request|question|blocker|handoff|decision text=question,
   to=member-N (default owner), refs=[E#]. Challenges/blockers default to blocking acceptance.
-- Read horde inbox. Recipient: ack target=Q# text=plan, then respond target=Q# revision=hash text=result.
+- Read horde inbox. Recipient: respond target=Q# revision=hash text=result; ack target=Q# text=plan first only to signal intent.
   Respond with the challenged target's current revision, not another finding's hash. For an I# resolved by
   a finding on that idea, explicitly set responseTarget=F#. Superseded F# requests follow the correction.
   Requester: attach/review evidence on the current response target, then resolve target=Q# refs=[E#]

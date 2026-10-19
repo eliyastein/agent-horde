@@ -63,7 +63,7 @@ function transition(c: CollaborationCommand): EventDraft {
   if (m.state === "deferred" && p.action !== "resolve" && p.action !== "respond") throw new Error("horde: a deferred request takes a response from its recipient or a resolution from its sender");
   const closing = p.action === "resolve" || p.action === "defer";
   if (closing ? ctx.actor !== m.sender : ctx.actor !== m.to) throw new Error("horde: recipient acknowledges/responds; sender resolves/defers after review");
-  if (p.action === "respond" && !["acknowledged", "responded", "deferred"].includes(m.state)) throw new Error("horde: acknowledge the request before responding");
+  // A direct answer shows the request was seen: `ack` only signals intent, so `respond` implies it.
   const text = requireText(p.text, p.action);
   const refs = evidenceRefs(state, p.refs);
   if (p.action === "resolve" && m.blocking) validateResolution(c, m, refs);

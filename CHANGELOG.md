@@ -37,6 +37,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   response, so a retracted objection kept its target disputed when the recipient was gone. The
   sender can now resolve before any response with its own supporting review of the current F# or
   A# revision and evidence on it; limits that review discloses stay acceptance debt (#9).
+- `respond` on a pending request no longer requires a prior `ack`, which carried no acceptance
+  meaning and was the most common rejected write; `ack` stays available to signal intent first (#9).
 
 ## [0.1.2] - 2026-10-16
 
