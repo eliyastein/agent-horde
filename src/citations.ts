@@ -230,6 +230,15 @@ function citedWithoutLabel(text: string, id: number): boolean {
 }
 
 /**
+ * The units a review citation is judged in: paragraphs, except that each list item and table row
+ * stands alone. A bullet that cites reviews as the source of a limitation does not claim them as
+ * support for a finding named two bullets up.
+ */
+function citationUnits(text: string): string[] {
+  return text.split(/\n\s*\n/).flatMap((paragraph) => (/^\s*(?:[-*]|\d+\.|\|)\s/m.test(paragraph) ? paragraph.split("\n") : [paragraph]));
+}
+
+/**
  * A V# cited next to an F# must review that finding at its current revision. A review of the
  * finding it superseded, of an artifact that merely depends on it, or of an earlier revision is
  * not support for the claim it sits next to. A V# with no review record is left alone: "V8" in
@@ -237,8 +246,8 @@ function citedWithoutLabel(text: string, id: number): boolean {
  */
 function reviewCitationWarnings(label: string, text: string, findings: FindingEntry[], reviews: ReviewRecord[]): string[] {
   const warnings: string[] = [];
-  for (const paragraph of text.split(/\n\s*\n/)) {
-    const cited = [...paragraph.matchAll(/\bF(\d+)\b/g)].map((match) => `F${match[1]}`);
+  for (const paragraph of citationUnits(text)) {
+    const cited = [...new Set([...paragraph.matchAll(/\bF(\d+)\b/g)].map((match) => `F${match[1]}`))];
     if (cited.length === 0) continue;
     const targets = new Set([...cited, ...[...paragraph.matchAll(/\bA(\d+)\b/g)].map((match) => `A${match[1]}`)]);
     for (const match of paragraph.matchAll(/\bV(\d+)\b/g)) {

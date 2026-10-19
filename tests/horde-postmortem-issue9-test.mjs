@@ -160,6 +160,17 @@ const review = (runId, actor, target, revision, { verdict, unchecked, evidenceTe
   );
   assert.deepEqual(cited(`Reviews: ${first.id}, ${early.id}, ${doc.id}.`), [], "a paragraph without a finding citation is not checked");
   assert.deepEqual(cited(`F${f1.id} runs on the V8 engine.`), [], "a V# with no review record is prose");
+  // List items and table rows are judged on their own, so a bullet that cites reviews as the source
+  // of a limitation is not read as support for the finding named in another bullet.
+  assert.deepEqual(cited(`- F${f2.id} was not rerun on a patched build.\n- The negative control is missing (stated in ${first.id}, ${doc.id}).`), []);
+  assert.deepEqual(
+    cited(`| # | Issue | Review |\n|---|---|---|\n| F${f1.id} F${f1.id} | sink | ${doc.id} on artifact |\n| F${f2.id} | sink | ${early.id} |`),
+    [
+      `DELIVERABLE.md cites ${doc.id} next to F${f1.id}, but ${doc.id} reviews ${artifact.id}`,
+      `DELIVERABLE.md cites ${early.id} for F${f2.id}, but it reviewed an earlier revision; the current revision has no such review`,
+    ],
+    "each table row is its own unit and repeated ids are named once",
+  );
 }
 
 console.log(`PASS: horde-postmortem-issue9-test (fixtures retained in ${cwd})`);

@@ -41,7 +41,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   meaning and was the most common rejected write; `ack` stays available to signal intent first (#9).
 - The deliverable warning now checks V# citations: a review cited next to a finding it does not
   review, such as a review of the finding it superseded or of an artifact that depends on it, or
-  one that reviewed an earlier revision, is flagged (#9).
+  one that reviewed an earlier revision, is flagged; list items and table rows are judged on
+  their own (#9).
 - The dashboard resources page shows who cited each resource in the active run next to the
   explicit reclaims, so it no longer disagrees with REPORT.md for the same run (#9).
 
