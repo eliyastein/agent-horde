@@ -37,10 +37,11 @@ if (process.argv.includes("--mode")) {
       if (q.state === "responded" && fixed) await act({ action: "resolve", target: q.id, refs: [evidence.id], text: "retest passed" });
     }
   }
-  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "repair complete" }], stopReason: "stop", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } }) + "\n");
+  const input = Number(process.env.PI_HORDE_FIXTURE_REPAIR_USAGE ?? 10);
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "repair complete" }], stopReason: "stop", usage: { input, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } }) + "\n");
 } else {
   const { initHordeDir } = await jiti.import("../src/ledger/files.ts");
-  const { drainRepairs, repairAllowance, repairShare, repairTimeShare } = await jiti.import("../src/run/repair.ts");
+  const { drainRepairs, repairAllowance, repairBudget, repairShare, repairTimeShare } = await jiti.import("../src/run/repair.ts");
   const { readEvents } = await jiti.import("../src/ledger/events.ts");
   const { newMemberState } = await jiti.import("../src/member.ts");
   const { loadCollaborationReport } = await jiti.import("../src/collaboration-report.ts");
@@ -75,7 +76,14 @@ if (process.argv.includes("--mode")) {
   assert.equal(repairShare(0, 2, 3), 0);
   const savedEnv = { ...process.env };
   try {
-    for (const [index, scenario, kind] of [[1, "greedy", "blocker"], [2, "greedy", "question"], [3, "hang", "blocker"]]) {
+    const scenarios = [
+      { index: 1, scenario: "greedy", kind: "blocker", stop: "tokens" },
+      { index: 2, scenario: "greedy", kind: "question", stop: "tokens" },
+      { index: 3, scenario: "hang", kind: "blocker", stop: "time" },
+      // A greedy owner under a turn cap is stopped by turns before its tokens run out.
+      { index: 4, scenario: "greedy", kind: "blocker", stop: "turns" },
+    ];
+    for (const { index, scenario, kind, stop } of scenarios) {
       const caseId = `20260928-20403${index}`;
       const caseDir = path.join(hordeDir, "runs", caseId);
       fs.mkdirSync(path.join(caseDir, "artifacts"), { recursive: true });
@@ -92,11 +100,12 @@ if (process.argv.includes("--mode")) {
       caseMembers[0].usage.input = 50_332;
       const caseRun = { ...run, id: caseId, runDir: caseDir, members: caseMembers, count: 6, verifier: "member-6", repairTokens: 0, controller: new AbortController(), controllers: new Map(), procs: new Map() };
       process.env.PI_HORDE_FIXTURE_REPAIR = scenario;
-      process.env.PI_HORDE_REPAIR_TOKENS = scenario === "hang" ? "50000" : "300";
+      process.env.PI_HORDE_REPAIR_TOKENS = stop === "tokens" ? "300" : "50000";
       process.env.PI_HORDE_REPAIR_MS = scenario === "hang" ? "4000" : "20000";
       process.env.PI_HORDE_REPAIR_ROUNDS = scenario === "hang" ? "1" : "2";
       process.env.PI_HORDE_REPAIR_MIN_TOKENS = "1";
       process.env.PI_HORDE_REPAIR_MIN_MS = "1";
+      process.env.PI_HORDE_REPAIR_TURNS = stop === "turns" ? "3" : "40";
       await drainRepairs({ ...launch, run: caseRun, roles: Array(6).fill("fixture") });
       const events = readEvents(hordeDir, caseId);
       const starts = events.filter((e) => e.action === "repair-start");
@@ -105,14 +114,17 @@ if (process.argv.includes("--mode")) {
       const caseReviews = collaborationState(hordeDir, caseId).reviews;
       assert.equal(caseReviews.filter((r) => r.actor !== "member-1").length, 7, "all seven queued artifact reviews ran despite greedy/hung owner");
       assert.ok(new Set(caseReviews.map((r) => r.actor)).size > 1, "reviews spread across non-owners instead of queuing on the verifier");
-      assert.equal(caseMembers[0].repairStopReason, scenario === "hang" ? "time" : "tokens");
-      assert.ok(ends.some((e) => e.actor === "member-1" && e.payload.stopReason === caseMembers[0].repairStopReason), "stop attribution is persisted independently from generic process kill");
+      assert.equal(caseMembers[0].repairStopReason, stop);
+      const ownerEnd = ends.find((e) => e.actor === "member-1" && e.payload.stopReason === stop);
+      assert.ok(ownerEnd, "stop attribution is persisted independently from generic process kill");
       assert.ok(starts[0].payload.allowance.tokens < Number(process.env.PI_HORDE_REPAIR_TOKENS));
+      assert.equal(starts[0].payload.allowance.turns, Number(process.env.PI_HORDE_REPAIR_TURNS), "the turn cap is recorded with the attempt");
       assert.ok(caseMembers[0].usage.input >= 50_332, "discovery usage survives bounded repair attempts");
-      assert.ok(caseRun.repairTokens < 360, "budget excludes prior discovery usage; overshoot is at most one reported 60-token message");
+      if (stop === "tokens") assert.ok(caseRun.repairTokens < 360, "budget excludes prior discovery usage; overshoot is at most one reported 60-token message");
+      if (stop === "turns") assert.ok(ownerEnd.payload.turns >= 3 && ownerEnd.payload.turns < 40, `the owner was stopped at the turn cap, not the token cap: ${ownerEnd.payload.turns} turns`);
     }
   } finally {
-    for (const key of ["PI_HORDE_FIXTURE_REPAIR", "PI_HORDE_REPAIR_TOKENS", "PI_HORDE_REPAIR_MS", "PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_MIN_TOKENS", "PI_HORDE_REPAIR_MIN_MS"]) {
+    for (const key of ["PI_HORDE_FIXTURE_REPAIR", "PI_HORDE_REPAIR_TOKENS", "PI_HORDE_REPAIR_MS", "PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_MIN_TOKENS", "PI_HORDE_REPAIR_MIN_MS", "PI_HORDE_REPAIR_TURNS"]) {
       if (savedEnv[key] === undefined) delete process.env[key]; else process.env[key] = savedEnv[key];
     }
   }
@@ -169,7 +181,7 @@ if (process.argv.includes("--mode")) {
     const fourStarts = readEvents(hordeDir, fourRun.id).filter((e) => e.action === "repair-start");
     assert.equal(fourStarts.length, 4, "every queued member was served");
     assert.ok(fourStarts.every((e) => e.payload.allowance.ms >= 60_000), `no attempt below the time floor: ${fourStarts.map((e) => e.payload.allowance.ms).join(", ")}`);
-    assert.deepEqual(fourStarts[0].payload.floors, { tokens: 20_000, ms: 60_000 }, "the floors in force are recorded with the attempt");
+    assert.deepEqual(fourStarts[0].payload.floors, { tokens: 40_000, ms: 60_000 }, "the floors in force are recorded with the attempt");
     assert.equal(fourRun.repairSkipped, undefined);
 
     process.env.PI_HORDE_REPAIR_MS = "30000";
@@ -185,6 +197,40 @@ if (process.argv.includes("--mode")) {
   } finally {
     for (const key of ["PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_MS"]) {
       if (budgetEnv[key] === undefined) delete process.env[key]; else process.env[key] = budgetEnv[key];
+    }
+  }
+
+  // The default totals follow the queue, one floor per queued member up to four, so attempts that
+  // each cost about a floor all start. The former flat 50k total served one such attempt.
+  const floors = { tokens: 40_000, ms: 60_000 };
+  assert.deepEqual(repairBudget(4, floors, 1), { tokens: 160_000, ms: 240_000, turns: 40, queued: 4 });
+  assert.deepEqual(repairBudget(4, floors, 4), { tokens: 240_000, ms: 360_000, turns: 40, queued: 4 }, "later rounds reserve two correction/recheck floors");
+  assert.equal(repairBudget(8, floors, 1).tokens, 160_000, "the default funds at most four queued members");
+  assert.equal(repairBudget(0, floors, 1).ms, 60_000, "an empty queue still names one floor");
+  const costEnv = { ...process.env };
+  try {
+    process.env.PI_HORDE_REPAIR_ROUNDS = "1";
+    process.env.PI_HORDE_FIXTURE_REPAIR_USAGE = "39000";
+    const costlyRun = await queued("20261018-120003", 5);
+    await drainRepairs({ ...launch, run: costlyRun, roles: Array(5).fill("fixture") });
+    const costlyEvents = readEvents(hordeDir, costlyRun.id);
+    assert.equal(costlyEvents.filter((e) => e.action === "repair-start").length, 4, "four attempts that each cost a floor all start");
+    assert.equal(costlyRun.repairSkipped, undefined);
+    const phase = costlyEvents.find((e) => e.action === "phase-start" && e.payload.phase === "repair");
+    assert.deepEqual(phase.payload.budget, { tokens: 160_000, ms: 240_000, turns: 40, queued: 4 }, "the budget in force is recorded with the phase");
+    const costlyEnd = costlyEvents.find((e) => e.action === "repair-end");
+    assert.equal(costlyEnd.payload.turns, 1);
+    assert.deepEqual(costlyEnd.payload.firstTurn, { turns: 1, input: 39_000, output: 5, cacheRead: 0, cacheWrite: 0 }, "the first-turn cost is recorded so the floor can be tuned from data");
+
+    process.env.PI_HORDE_REPAIR_TOKENS = "50000";
+    process.env.PI_HORDE_REPAIR_MIN_TOKENS = "20000";
+    const flatRun = await queued("20261018-120004", 5);
+    await drainRepairs({ ...launch, run: flatRun, roles: Array(5).fill("fixture") });
+    assert.equal(readEvents(hordeDir, flatRun.id).filter((e) => e.action === "repair-start").length, 1, "a flat 50k total funds one attempt that costs 39k");
+    assert.deepEqual(flatRun.repairSkipped.sort(), ["member-2", "member-3", "member-4"], "the assigned artifact review went first; the questions were skipped");
+  } finally {
+    for (const key of ["PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_FIXTURE_REPAIR_USAGE", "PI_HORDE_REPAIR_TOKENS", "PI_HORDE_REPAIR_MIN_TOKENS"]) {
+      if (costEnv[key] === undefined) delete process.env[key]; else process.env[key] = costEnv[key];
     }
   }
 

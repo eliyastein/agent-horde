@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { clusterFindings } from "./ledger/clusters.js";
 import { collaborationState } from "./ledger/collaboration.js";
-import type { CollaborationState } from "./ledger/collaboration.js";
-import { findingReviewState } from "./ledger/findings.js";
+import type { CollaborationState, ReviewRecord } from "./ledger/collaboration.js";
+import { findingReviewState, findingRevision } from "./ledger/findings.js";
 import type { FindingEntry } from "./ledger/findings.js";
 import { listResources, readRunResources } from "./ledger/resources.js";
 import type { ResourceEntry } from "./ledger/resources.js";
@@ -229,6 +229,35 @@ function citedWithoutLabel(text: string, id: number): boolean {
   return citing.length > 0 && !citing.some((paragraph) => UNREVIEWED_LABEL.test(paragraph));
 }
 
+/**
+ * A V# cited next to an F# must review that finding at its current revision. A review of the
+ * finding it superseded, of an artifact that merely depends on it, or of an earlier revision is
+ * not support for the claim it sits next to. A V# with no review record is left alone: "V8" in
+ * prose is an engine, not a citation.
+ */
+function reviewCitationWarnings(label: string, text: string, findings: FindingEntry[], reviews: ReviewRecord[]): string[] {
+  const warnings: string[] = [];
+  for (const paragraph of text.split(/\n\s*\n/)) {
+    const cited = [...paragraph.matchAll(/\bF(\d+)\b/g)].map((match) => `F${match[1]}`);
+    if (cited.length === 0) continue;
+    const targets = new Set([...cited, ...[...paragraph.matchAll(/\bA(\d+)\b/g)].map((match) => `A${match[1]}`)]);
+    for (const match of paragraph.matchAll(/\bV(\d+)\b/g)) {
+      const id = `V${match[1]}`;
+      const review = reviews.find((entry) => entry.id === id);
+      if (!review) continue;
+      if (!targets.has(review.target)) {
+        warnings.push(`${label} cites ${id} next to ${cited.join(", ")}, but ${id} reviews ${review.target}`);
+        continue;
+      }
+      const finding = findings.find((entry) => `F${entry.id}` === review.target);
+      if (finding && review.revision !== findingRevision(finding)) {
+        warnings.push(`${label} cites ${id} for ${review.target}, but it reviewed an earlier revision; the current revision has no such review`);
+      }
+    }
+  }
+  return warnings;
+}
+
 export function generatedArtifactWarnings(
   run: HordeRun,
   label: string,
@@ -259,6 +288,7 @@ export function generatedArtifactWarnings(
         "without saying so in the citing paragraph",
     );
   }
+  warnings.push(...reviewCitationWarnings(label, text, findings, state.reviews));
   return [...new Set(warnings)];
 }
 

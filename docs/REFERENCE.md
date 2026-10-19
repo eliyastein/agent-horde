@@ -37,7 +37,9 @@ synthesize it.
    a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times.
 3. **Repair.** After discovery ends normally, finished members get fresh, targeted sessions to
    answer open blockers, review requests, and responses, within the `PI_HORDE_REPAIR_*` budgets.
-   A user stop skips this phase.
+   The default totals follow the queue, so every queued member can afford a cold first turn; the
+   phase start records the budget and `repair-end` records each attempt's turns and first-turn
+   cost. A user stop skips this phase.
 4. **Finalize.** Acceptance is frozen (`ACCEPTANCE.*`, `snapshot/`), resource cleanup commands
    run, `SUMMARY.md` and `REPORT.md` are written, then a synthesis member writes `DELIVERABLE.md`
    and a read-only reviewer writes `POSTMORTEM.md`. The widget shows `synthesizing` until both
@@ -83,7 +85,7 @@ Every page has a JSON twin under `/api/<same path>`.
 | `/runs/<id>/collaboration` | messages, review scope, artifact acceptance, resources, event audit |
 | `/runs/<id>/graph` | the run as a swimlane: one lane per member plus the parent, phase bands, every event a link to its ledger entry (`?w=<px>`, `?from=<s>&to=<s>`); the axis is real time until the last member exits, then the synthesis phases share a compressed tail |
 | `/runs/<id>/graph.mmd` | the same run as a Mermaid flowchart with absolute dashboard links (text/plain) |
-| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them |
+| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them; `/resources` also lists who cited each resource in the active run, as REPORT.md counts reuse |
 
 Only the active run has live member state. Historical runs are rebuilt from `member-N.log` and
 the session files, so they show end cause, turns, and usage but no activity.
@@ -176,9 +178,12 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   accepts a full-scope `sourced` or `derived` review against its criteria. Changing criteria or
   dependencies needs changed bytes and a fresh review. Open blockers and challenges block
   acceptance; `defer` keeps the debt visible, the recipient can still `respond` to a deferred
-  request, and the requester then resolves it.
+  request, and the requester then resolves it. A challenger can withdraw its own blocking
+  challenge on an F# or A# before any response by recording a supporting review of the current
+  revision and resolving with evidence on it; limits that review discloses remain acceptance debt.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
-  `PI_HORDE_INBOX_TURNS` extra turns per session. Delivery is a context insertion, not
+  `PI_HORDE_INBOX_TURNS` extra turns per session. A recipient answers with `respond`; `ack` is an
+  optional first step that signals intent. Delivery is a context insertion, not
   comprehension. Message and review bodies are untrusted input, not tool instructions.
 - **Reminders.** Every `PI_HORDE_REMIND_CALLS` tool calls or `PI_HORDE_REMIND_MS`, the tool
   result restates the task, role, and claimed ideas. A member that finishes its last idea while
@@ -235,10 +240,11 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
 | `PI_HORDE_ALLOW_UNVERIFIED` | unset | `1` accepts a validated answer with unverified findings |
 | `PI_HORDE_REPAIR_ROUNDS` | 4 | post-discovery repair rounds (max 6; `0` disables) |
-| `PI_HORDE_REPAIR_MS` | 120000 | total repair time |
-| `PI_HORDE_REPAIR_TOKENS` | 50000 | total repair tokens |
-| `PI_HORDE_REPAIR_MIN_TOKENS` | 20000 | token floor per attempt; below it scheduling stops with a `repair-skipped` event |
+| `PI_HORDE_REPAIR_MS` | queue-sized | total repair time: one `PI_HORDE_REPAIR_MIN_MS` per queued member (max 4) plus two recheck shares; a number here is a flat total |
+| `PI_HORDE_REPAIR_TOKENS` | queue-sized | total repair tokens: one `PI_HORDE_REPAIR_MIN_TOKENS` per queued member (max 4) plus two recheck shares; a number here is a flat total |
+| `PI_HORDE_REPAIR_MIN_TOKENS` | 40000 | token floor per attempt; below it scheduling stops with a `repair-skipped` event |
 | `PI_HORDE_REPAIR_MIN_MS` | 60000 | time floor per attempt; the clock is split only among attempts the token budget can fund |
+| `PI_HORDE_REPAIR_TURNS` | 40 | turn cap per attempt; an attempt still reading its inbox at the cap is stopped with `turns` |
 | `PI_HORDE_DELIVERABLE` | on | `off` skips the synthesis member |
 | `PI_HORDE_POSTMORTEM` | on | `off` skips the automatic post-mortem |
 | `PI_HORDE_POSTMORTEM_MS` | 300000 | post-mortem reviewer timeout |

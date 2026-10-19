@@ -26,7 +26,7 @@ export interface MemberUsage {
 export interface MemberState {
   attempt?: string;
   repairs?: number;
-  repairStopReason?: "tokens" | "time" | "user-stop" | "disposed" | "master-abort";
+  repairStopReason?: "tokens" | "turns" | "time" | "user-stop" | "disposed" | "master-abort";
   name: string;
   index: number;
   status: MemberStatus;
