@@ -85,7 +85,7 @@ Every page has a JSON twin under `/api/<same path>`.
 | `/runs/<id>/collaboration` | messages, review scope, artifact acceptance, resources, event audit |
 | `/runs/<id>/graph` | the run as a swimlane: one lane per member plus the parent, phase bands, every event a link to its ledger entry (`?w=<px>`, `?from=<s>&to=<s>`); the axis is real time until the last member exits, then the synthesis phases share a compressed tail |
 | `/runs/<id>/graph.mmd` | the same run as a Mermaid flowchart with absolute dashboard links (text/plain) |
-| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them |
+| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them; `/resources` also lists who cited each resource in the active run, as REPORT.md counts reuse |
 
 Only the active run has live member state. Historical runs are rebuilt from `member-N.log` and
 the session files, so they show end cause, turns, and usage but no activity.

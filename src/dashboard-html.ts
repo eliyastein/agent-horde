@@ -628,15 +628,17 @@ export function renderResources(vm: ResourcesVm, ctx: RenderContext): string {
     e(resource.name),
     authorLink(resource.owner, ctx.activeId),
     e(resource.note ?? ""),
-    resource.reusers.length > 0
-      ? resource.reusers.map((name) => authorLink(name, ctx.activeId)).join(", ")
-      : "",
+    resource.reusers.map((name) => authorLink(name, ctx.activeId)).join(", "),
+    resource.citedBy.map((name) => authorLink(name, ctx.activeId)).join(", "),
     e(resource.cleanup ?? ""),
   ]);
+  const scope = vm.run
+    ? `<p>cited by: non-owners whose findings, evidence, reviews or leases name the resource in run ${e(vm.run)}</p>`
+    : "<p>cited by: needs an active run; only explicit reclaims are shown</p>";
   return page(
     "resources",
     [{ text: "resources" }],
-    table(["id", "name", "owner", "note", "reused by", "cleanup"], rows, "no shared resources claimed"),
+    scope + table(["id", "name", "owner", "note", "reused by", "cited by", "cleanup"], rows, "no shared resources claimed"),
     ctx,
   );
 }

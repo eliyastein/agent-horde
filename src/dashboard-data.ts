@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MAX_MEMBERS } from "./args.js";
+import { resourceCitingMembers } from "./citations.js";
 import { loadCollaborationReport } from "./collaboration-report.js";
 import type { CollaborationReport } from "./collaboration-report.js";
 import { readEvents } from "./ledger/events.js";
@@ -14,7 +15,7 @@ import { listFacts } from "./ledger/facts.js";
 import type { FactEntry } from "./ledger/facts.js";
 import { hordePaths } from "./ledger/files.js";
 import { collaborationState } from "./ledger/collaboration.js";
-import { findingReviewState, parseFindings } from "./ledger/findings.js";
+import { findingReviewState, listFindingsForRun, parseFindings } from "./ledger/findings.js";
 import type { FindingEntry } from "./ledger/findings.js";
 import { listIdeas } from "./ledger/ideas.js";
 import type { Idea } from "./ledger/ideas.js";
@@ -802,13 +803,24 @@ export function loadClaims(src: DashboardSource): ClaimsVm {
 }
 
 export interface ResourcesVm {
-  resources: ResourceEntry[];
+  /** The active run whose findings, evidence, reviews and leases were scanned for citations. */
+  run?: string | undefined;
+  resources: Array<ResourceEntry & { citedBy: string[] }>;
 }
 
-/** Shared labs/harnesses/control corpora and who reused them. */
+/**
+ * Shared labs/harnesses/control corpora, who reclaimed them, and who cited them. Citations are
+ * counted the way REPORT.md counts them, from the active run's ledgers; without an active run
+ * only explicit reclaims are known.
+ */
 export function loadResources(src: DashboardSource): ResourcesVm {
   const paths = hordePaths(src.hordeDir);
-  return { resources: fs.existsSync(paths.resources) ? listResources(src.hordeDir) : [] };
+  const resources = fs.existsSync(paths.resources) ? listResources(src.hordeDir) : [];
+  const live = src.getActive();
+  const citing = live
+    ? resourceCitingMembers(resources, listFindingsForRun(src.hordeDir, live.id), collaborationState(src.hordeDir, live.id))
+    : new Map<number, string[]>();
+  return { run: live?.id, resources: resources.map((resource) => ({ ...resource, citedBy: citing.get(resource.id) ?? [] })) };
 }
 
 export interface FactsVm {
