@@ -4,6 +4,33 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-19
+
+### Added
+
+- A challenger can withdraw its own blocking challenge: the sender resolves before any response
+  with its own supporting review of the current F# or A# revision and evidence on it; limits that
+  review discloses stay acceptance debt. Before, `resolve` required the recipient's response, so a
+  retracted objection kept its target disputed when the recipient was gone (#9).
+- Each repair attempt has a turn cap (`PI_HORDE_REPAIR_TURNS`, 40) with stop reason `turns`; the
+  repair phase start records the budget in force, and `repair-end` records the attempt's turns and
+  first-turn cost (#9).
+- The deliverable warning checks V# citations: a review cited next to a finding it does not
+  review, such as a review of the finding it superseded or of an artifact that depends on it, or
+  one that reviewed an earlier revision, is flagged; list items and table rows are judged on
+  their own (#9).
+- The dashboard resources page shows who cited each resource in the active run next to the
+  explicit reclaims, so it no longer disagrees with REPORT.md for the same run (#9).
+
+### Changed
+
+- Repair: the token floor is 40k (`PI_HORDE_REPAIR_MIN_TOKENS`) and the default totals follow the
+  queue, one floor per queued member up to four plus two recheck shares, instead of a flat 50k that
+  funded two attempts; `PI_HORDE_REPAIR_TOKENS` and `PI_HORDE_REPAIR_MS` still name a flat total
+  when set (#9).
+- `respond` on a pending request no longer requires a prior `ack`, which carried no acceptance
+  meaning and was the most common rejected write; `ack` stays available to signal intent first (#9).
+
 ### Fixed
 
 - Repair: the time share has a floor (`PI_HORDE_REPAIR_MIN_MS`, 60 s) and is split only among the
@@ -29,22 +56,6 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   `noop` event; REPORT.md counts both (#7).
 - The `text` parameter documents every action that requires it, and a review whose evidence is
   pinned to another revision is told which ref and which revisions (#7).
-- Repair: the token floor is 40k (`PI_HORDE_REPAIR_MIN_TOKENS`) and the default totals follow the
-  queue, one floor per queued member up to four plus two recheck shares, instead of a flat 50k that
-  funded two attempts; each attempt has a turn cap (`PI_HORDE_REPAIR_TURNS`, 40), the phase start
-  records the budget, and `repair-end` records the attempt's turns and first-turn cost (#9).
-- A challenger could not withdraw its own blocking challenge: `resolve` required the recipient's
-  response, so a retracted objection kept its target disputed when the recipient was gone. The
-  sender can now resolve before any response with its own supporting review of the current F# or
-  A# revision and evidence on it; limits that review discloses stay acceptance debt (#9).
-- `respond` on a pending request no longer requires a prior `ack`, which carried no acceptance
-  meaning and was the most common rejected write; `ack` stays available to signal intent first (#9).
-- The deliverable warning now checks V# citations: a review cited next to a finding it does not
-  review, such as a review of the finding it superseded or of an artifact that depends on it, or
-  one that reviewed an earlier revision, is flagged; list items and table rows are judged on
-  their own (#9).
-- The dashboard resources page shows who cited each resource in the active run next to the
-  explicit reclaims, so it no longer disagrees with REPORT.md for the same run (#9).
 
 ## [0.1.2] - 2026-10-16
 
