@@ -531,8 +531,8 @@ export interface RunReportInput extends RunSummaryInput {
   deliverable?: string | undefined;
   /** Shared resources claimed during the run, with the non-owners whose records cite each one. */
   resources?: ReportResource[] | undefined;
-  /** Members credited with validating the proposal, and those whose confirmation came after it. */
-  solvedConfirmations?: { credited: string[]; redundant: string[] } | undefined;
+  /** Members credited with validating the proposal, and those who confirmed it after that. */
+  solvedConfirmations?: { credited: string[]; additional: string[] } | undefined;
   /** Idea creations this run made, and the ones dedup folded into an existing idea. */
   ideaCreations?: { created: number; absorbed: Array<{ id: number; count: number }> } | undefined;
   /** Set when a member reported the goal answered. */
@@ -604,9 +604,9 @@ function artifactDiagnosis(input: RunReportInput): string[] {
       `- solved: ${input.solved.member} proposed the goal answered (${how}): ${oneLine(input.solved.text, 200)}`,
     );
     if (input.solvedConfirmations) {
-      const { credited, redundant } = input.solvedConfirmations;
-      const names = (members: string[]): string => (members.length ? ` (${members.join(", ")})` : "");
-      lines.push(`- confirm-solved: ${credited.length} credited${names(credited)}, ${redundant.length} redundant${names(redundant)}`);
+      const { credited, additional } = input.solvedConfirmations;
+      const also = additional.length ? `; also confirmed by ${additional.join(", ")}` : "";
+      lines.push(`- confirm-solved: ${credited.length ? `credited ${credited.join(", ")}` : "none credited"}${also}`);
     }
     lines.push("- answer: ANSWER.md (full answer text in this run directory)");
   } else if (input.solvedContested) {

@@ -73,7 +73,10 @@ export function citedDataFiles(text: string): string[] {
   return [...out];
 }
 
-/** Bounded search for a file by name under a directory; artifact dirs are small. */
+/** Trees a basename search never descends into: run data, dependencies and version control. */
+const UNSEARCHED_DIRS = new Set([".horde", "node_modules", ".git"]);
+
+/** Bounded search for a file by name under a directory; artifact dirs and source trees are shallow. */
 function fileNamedUnder(dir: string, name: string, depth = 6): boolean {
   let entries: fs.Dirent[];
   try {
@@ -83,7 +86,7 @@ function fileNamedUnder(dir: string, name: string, depth = 6): boolean {
   }
   for (const entry of entries) {
     if (entry.isFile() && entry.name === name) return true;
-    if (entry.isDirectory() && depth > 0 && fileNamedUnder(path.join(dir, entry.name), name, depth - 1)) {
+    if (entry.isDirectory() && depth > 0 && !UNSEARCHED_DIRS.has(entry.name) && fileNamedUnder(path.join(dir, entry.name), name, depth - 1)) {
       return true;
     }
   }
@@ -94,7 +97,8 @@ function fileNamedUnder(dir: string, name: string, depth = 6): boolean {
  * True when a cited file cannot be resolved to an existing file on disk. Paths
  * are tried against the repo root, the run directory, its artifacts directory,
  * and the directory of the citing file. Because generated artifacts usually cite
- * retained files by a relative name, a basename match anywhere in this run's tree
+ * retained files by a relative name, and a deliverable cites the reviewed project's
+ * own files by bare name, a basename match in this run's tree or in the project tree
  * also counts, which keeps the warning precise instead of noisy.
  */
 function citedFileMissing(run: HordeRun, ref: string, baseDir?: string): boolean {
@@ -110,7 +114,7 @@ function citedFileMissing(run: HordeRun, ref: string, baseDir?: string): boolean
     }
   }
   const base = ref.replace(/^\.\//, "").split("/").pop() ?? ref;
-  return !fileNamedUnder(run.runDir, base);
+  return !fileNamedUnder(run.runDir, base) && !fileNamedUnder(run.cwd, base);
 }
 
 export function resourceCitations(text: string): number[] {

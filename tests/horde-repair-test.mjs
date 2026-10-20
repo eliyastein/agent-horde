@@ -200,13 +200,14 @@ if (process.argv.includes("--mode")) {
     }
   }
 
-  // The default totals follow the queue, one floor per queued member up to four, so attempts that
+  // The default totals follow the queues, one floor per demand unit up to six, so attempts that
   // each cost about a floor all start. The former flat 50k total served one such attempt.
   const floors = { tokens: 40_000, ms: 60_000 };
-  assert.deepEqual(repairBudget(4, floors, 1), { tokens: 160_000, ms: 240_000, turns: 40, queued: 4 });
-  assert.deepEqual(repairBudget(4, floors, 4), { tokens: 240_000, ms: 360_000, turns: 40, queued: 4 }, "later rounds reserve two correction/recheck floors");
-  assert.equal(repairBudget(8, floors, 1).tokens, 160_000, "the default funds at most four queued members");
-  assert.equal(repairBudget(0, floors, 1).ms, 60_000, "an empty queue still names one floor");
+  assert.deepEqual(repairBudget([1, 1, 1, 1], floors, 1), { tokens: 160_000, ms: 240_000, turns: 40, queued: 4 });
+  assert.deepEqual(repairBudget([1, 1, 1, 1], floors, 4), { tokens: 240_000, ms: 360_000, turns: 40, queued: 4 }, "later rounds reserve two correction/recheck floors");
+  assert.deepEqual(repairBudget([3, 1], floors, 1), { tokens: 160_000, ms: 240_000, turns: 40, queued: 2 }, "a three-review queue is funded as three units");
+  assert.equal(repairBudget(Array(8).fill(1), floors, 1).tokens, 240_000, "the default funds at most six units");
+  assert.equal(repairBudget([], floors, 1).ms, 60_000, "an empty queue still names one floor");
   const costEnv = { ...process.env };
   try {
     process.env.PI_HORDE_REPAIR_ROUNDS = "1";

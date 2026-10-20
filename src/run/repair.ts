@@ -26,18 +26,34 @@ function queueFor(launch: RunLaunch, member: MemberState): PeerMessage[] {
     .sort((a, b) => repairPriority(a) - repairPriority(b) || a.createdAt.localeCompare(b.createdAt));
 }
 
-/** Reserve shares for the other queued members and up to two correction/recheck turns. */
-export function repairShare(remaining: number, queued: number, laterRounds: number): number {
-  return Math.max(0, Math.floor(remaining / (Math.max(1, queued) + Math.min(2, Math.max(0, laterRounds)))));
+/**
+ * What a queue costs in floors: one cold session covers the administrative threads in it, and
+ * each review request or blocking challenge is an inspect/attach/review cycle of about a floor
+ * on its own. A seven-handoff queue and a one-review queue both demand one unit; a queue holding
+ * three reviews demands three, so its share is sized to the work rather than to the member.
+ */
+export function repairDemand(queue: PeerMessage[]): number {
+  const checks = queue.filter((m) => m.blocking || (m.kind === "review-request" && /^[AF]\d+$/.test(m.target))).length;
+  return Math.max(1, checks);
+}
+
+/** The reservation a share is cut from: every pending unit plus up to two correction/recheck turns. */
+function reservedUnits(pendingUnits: number, laterRounds: number): number {
+  return Math.max(1, pendingUnits) + Math.min(2, Math.max(0, laterRounds));
+}
+
+/** This attempt's share of what remains, in proportion to its demand against every pending unit. */
+export function repairShare(remaining: number, pendingUnits: number, laterRounds: number, units = 1): number {
+  return Math.max(0, Math.floor((remaining * units) / reservedUnits(pendingUnits, laterRounds)));
 }
 
 /**
  * The clock is split only among the attempts the token budget can still pay for. Reserving time
  * for members the token floor will skip anyway shrank every attempt to a share nobody could use.
  */
-export function repairTimeShare(remainingMs: number, queued: number, laterRounds: number, fundable: number): number {
-  const reserved = Math.max(1, queued) + Math.min(2, Math.max(0, laterRounds));
-  return Math.max(0, Math.floor(remainingMs / Math.min(reserved, Math.max(1, fundable))));
+export function repairTimeShare(remainingMs: number, pendingUnits: number, laterRounds: number, fundable: number, units = 1): number {
+  const divisor = Math.min(reservedUnits(pendingUnits, laterRounds), Math.max(1, fundable));
+  return Math.max(0, Math.min(remainingMs, Math.floor((remainingMs * units) / divisor)));
 }
 
 /**
@@ -64,8 +80,8 @@ export function repairFloors(): RepairFloors {
   };
 }
 
-/** Queued members a default budget funds at the floor; the overrides name flat totals instead. */
-const FUNDED_ATTEMPTS = 4;
+/** Demand units a default budget funds at the floor; the overrides name flat totals instead. */
+const FUNDED_UNITS = 6;
 
 export interface RepairBudget {
   tokens: number;
@@ -76,18 +92,20 @@ export interface RepairBudget {
 }
 
 /**
- * Totals follow the queue: one floor per queued member up to `FUNDED_ATTEMPTS`, plus the two
- * correction/recheck shares that `repairShare` reserves for later rounds, unless
- * `PI_HORDE_REPAIR_TOKENS` or `PI_HORDE_REPAIR_MS` names a flat total. A flat 50k tokens funded
- * two attempts in an eight-member run and skipped six members with queued work.
+ * Totals follow the queues: one floor per demand unit across the queued members up to
+ * `FUNDED_UNITS`, plus the two correction/recheck shares that `repairShare` reserves for later
+ * rounds, unless `PI_HORDE_REPAIR_TOKENS` or `PI_HORDE_REPAIR_MS` names a flat total. A flat 50k
+ * tokens funded two attempts in an eight-member run and skipped six members with queued work;
+ * one floor per member gave a one-review verifier and a seven-thread owner the same 60 seconds.
  */
-export function repairBudget(queued: number, floors: RepairFloors, rounds: number): RepairBudget {
-  const funded = Math.min(Math.max(1, queued), FUNDED_ATTEMPTS) + Math.min(2, Math.max(0, rounds - 1));
+export function repairBudget(demands: number[], floors: RepairFloors, rounds: number): RepairBudget {
+  const units = demands.reduce((sum, demand) => sum + demand, 0);
+  const funded = Math.min(Math.max(1, units), FUNDED_UNITS) + Math.min(2, Math.max(0, rounds - 1));
   return {
     tokens: Math.max(0, envNumber("PI_HORDE_REPAIR_TOKENS", floors.tokens * funded)),
     ms: Math.max(0, envNumber("PI_HORDE_REPAIR_MS", floors.ms * funded)),
     turns: Math.max(1, envNumber("PI_HORDE_REPAIR_TURNS", 40)),
-    queued,
+    queued: demands.length,
   };
 }
 
@@ -155,7 +173,7 @@ async function repairMember(launch: RunLaunch, member: MemberState, deadline: nu
   const timeout = setTimeout(() => halt("time"), Math.max(1, deadline - Date.now()));
   const watchdog = setInterval(check, 100);
   try {
-    await recordEvent({ ...ctx, attempt: member.attempt }, "repair-start", { payload: { messages: queue.map((m) => m.id), prior, allowance, floors } });
+    await recordEvent({ ...ctx, attempt: member.attempt }, "repair-start", { payload: { messages: queue.map((m) => m.id), demand: repairDemand(queue), prior, allowance, floors } });
     if (stopReason(launch) || Date.now() >= deadline) {
       halt(stopReason(launch) ?? "time");
       member.status = "stopped";
@@ -209,7 +227,7 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
   if (rounds === 0 || stopReason(launch)) return;
   const floors = repairFloors();
   await scheduleCollaboration(launch, { settleMs: 0, liveOnly: false });
-  const budget = repairBudget(eligibleMembers(launch).length, floors, rounds);
+  const budget = repairBudget(eligibleMembers(launch).map((entry) => repairDemand(entry.queue)), floors, rounds);
   if (budget.queued === 0) return;
   const deadline = Date.now() + budget.ms;
   const exhausted = () => stopReason(launch) || Date.now() >= deadline || (run.repairTokens ?? 0) >= budget.tokens;
@@ -221,21 +239,25 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
     // Sequential attempts preserve owner -> reviewer ordering while reserving others' shares.
     for (let index = 0; index < eligible.length; index++) {
       if (exhausted()) return;
-      const pending = eligible.slice(index).filter(({ member }) => queueFor(launch, member).length);
+      // Queues move while earlier attempts run, so the demand is measured now, not at round start.
+      const pending = eligible.slice(index).map(({ member }) => ({ member, queue: queueFor(launch, member) })).filter((entry) => entry.queue.length);
+      const pendingUnits = pending.reduce((sum, entry) => sum + repairDemand(entry.queue), 0);
+      const units = repairDemand(pending.find((entry) => entry.member === eligible[index]!.member)?.queue ?? []);
+      const unserved = pending.map((entry) => entry.member);
       const remaining = budget.tokens - (run.repairTokens ?? 0);
       const laterRounds = rounds - round - 1;
-      const tokens = repairAllowance(repairShare(remaining, pending.length, laterRounds), remaining, floors.tokens);
+      const tokens = repairAllowance(repairShare(remaining, pendingUnits, laterRounds, units), remaining, floors.tokens);
       if (tokens === undefined) {
         await begin(budget);
-        await recordSkipped(launch, pending.map((entry) => entry.member), "insufficient-budget", { remaining, floor: floors.tokens });
+        await recordSkipped(launch, unserved, "insufficient-budget", { remaining, floor: floors.tokens });
         return;
       }
       const remainingMs = Math.max(0, deadline - Date.now());
       const fundable = Math.floor(remaining / Math.max(1, floors.tokens));
-      const ms = repairAllowance(repairTimeShare(remainingMs, pending.length, laterRounds, fundable), remainingMs, floors.ms);
+      const ms = repairAllowance(repairTimeShare(remainingMs, pendingUnits, laterRounds, fundable, units), remainingMs, floors.ms);
       if (ms === undefined || ms < 1) {
         await begin(budget);
-        await recordSkipped(launch, pending.map((entry) => entry.member), "insufficient-time", { remainingMs, floorMs: floors.ms });
+        await recordSkipped(launch, unserved, "insufficient-time", { remainingMs, floorMs: floors.ms });
         return;
       }
       await begin(budget);
