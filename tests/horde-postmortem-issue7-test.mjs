@@ -6,7 +6,7 @@
 // - two resources of one run cannot register the same cleanup object
 // - the unreviewed-citation warning accepts the acceptance vocabulary next to the citation
 // - resource reuse counts citing non-owners
-// - redundant confirm-solved calls and absorbed idea creations record noop events, feed the report and the graph
+// - later confirm-solved calls and absorbed idea creations are recorded, feed the report and the graph
 // - ANSWER.md names superseded citations; SUMMARY.md states how the run actually ended
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -176,8 +176,9 @@ const fileFinding = async (runId, author, text, n) =>
   const f2 = (await findings.addFinding(hordeDir, runId, "member-1", "Correction: the config path read needs no symlink at all", { concern: "concern-5", supersedes: f1.id })).finding;
   await act("member-1", { action: "solved", text: `Chain: F${f1.id} gives the read, F${f2.id} removes the symlink requirement.` });
   await act("member-2", { action: "confirm-solved", text: "reproduced" });
-  const redundant = await act("member-3", { action: "confirm-solved", text: "me too" });
-  assert.match(redundant.text, /already validated by member-2/);
+  const additional = await act("member-3", { action: "confirm-solved", text: "me too" });
+  assert.match(additional.text, /already validated by member-2/);
+  assert.equal(additional.confirmation, "additional");
   const log = events.readEvents(hordeDir, runId);
   const settled = (action, actor) => log.find((e) => e.action === action && e.actor === actor && e.outcome !== "intent");
   const absorbedEvent = settled("idea", "member-2");
@@ -185,8 +186,8 @@ const fileFinding = async (runId, author, text, n) =>
   assert.equal(absorbedEvent.payload.result.noop, true);
   assert.equal(absorbedEvent.payload.result.id, added.id);
   assert.equal(settled("confirm-solved", "member-2").outcome, "applied");
-  assert.equal(settled("confirm-solved", "member-3").outcome, "noop");
-  assert.deepEqual(metrics.solvedConfirmations(log), { credited: ["member-2"], redundant: ["member-3"] });
+  assert.equal(settled("confirm-solved", "member-3").outcome, "applied", "a later confirmation is a record, not a no-op");
+  assert.deepEqual(metrics.solvedConfirmations(log), { credited: ["member-2"], additional: ["member-3"] });
   assert.equal(metrics.ideaCreationCount(log), 1);
   assert.deepEqual(metrics.absorbedIdeaCreations(log), [{ id: added.id, count: 1 }]);
   // The graph draws a repeat as a marker pointing at what it repeated, not as a refusal.
@@ -196,7 +197,7 @@ const fileFinding = async (runId, author, text, n) =>
   assert.equal(dup.label, "idea (duplicate)");
   assert.ok(graph.edges.some((edge) => edge.from === dup.id && edge.to === `I${added.id}` && edge.label === "duplicate"));
   const again = graph.nodes.find((n) => n.action === "confirm-solved" && n.lane === "member-3");
-  assert.ok(graph.edges.some((edge) => edge.from === again.id && edge.label === "confirms (redundant)"));
+  assert.ok(graph.edges.some((edge) => edge.from === again.id && edge.label === "confirms (additional)"));
   assert.deepEqual(finalize.supersededCitations(`Uses F${f1.id} and F${f2.id}`, findings.listFindingsForRun(hordeDir, runId)), [`F${f1.id} (now F${f2.id})`]);
 
   // Finalize: the answer is labeled, SUMMARY says the solve did not wind the run down, REPORT counts the repeats.
@@ -216,7 +217,7 @@ const fileFinding = async (runId, author, text, n) =>
   assert.match(summary, /member-1 proposed the goal solved at \d\d:\d\d:\d\d, validated by member-2; the run did not wind down on it\. Run ended when every member exited\. Repair: 0 attempt\(s\), 1 skipped for budget \(member-3\)\. Outcome: completed-incomplete\./);
   const reportMd = fs.readFileSync(path.join(runDir, "REPORT.md"), "utf8");
   assert.match(reportMd, /- outcome: completed-incomplete/);
-  assert.match(reportMd, /- confirm-solved: 1 credited \(member-2\), 1 redundant \(member-3\)/);
+  assert.match(reportMd, /- confirm-solved: credited member-2; also confirmed by member-3/);
   assert.match(reportMd, new RegExp(`- ideas: 1 created, 1 duplicate creation\\(s\\) absorbed \\(#${added.id} x1\\)`));
 }
 

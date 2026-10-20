@@ -4,7 +4,28 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Changed
+
+- Repair shares follow demand: a queue's demand is one floor plus one per review request or
+  blocking challenge beyond the first, the default totals fund up to six such units, and each
+  attempt's token and time share is cut in proportion, so a one-review verifier and a
+  seven-handoff owner no longer get the same 60 seconds (#14).
+- Every `confirm-solved` after the credited one is recorded as an applied event with its text,
+  posted to the board, and named in REPORT.md as "also confirmed by", instead of a `noop`
+  reported as "redundant" (#14).
+
 ### Fixed
+
+- `done`, `drop` and `rule-out` take the result from `note` when `text` is absent; three ideas
+  closed with `note` had lost their result lines (#14).
+- A `resource` without `text` is told that the name goes in `text` and the pointer in `note` (#14).
+- The member that added an unclaimed idea can drop it; before, folding your own duplicate
+  required claiming it first (#14).
+- A ref naming the E# of the event that recorded a V#, A# or Q# is told which record that is
+  and what to cite instead (#14).
+- Deliverable path warnings also look for a bare filename in the project tree (outside `.horde`,
+  `node_modules` and `.git`), so files of the reviewed repo cited by name are not reported as
+  missing (#14).
 
 - A message whose recipient is its sender is refused: a review request on your own artifact
   defaulted to yourself and was accepted, so it sat in your own inbox until reissued (#11).

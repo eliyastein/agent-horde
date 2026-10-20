@@ -13,7 +13,7 @@ import { validateFindingResourceCitations } from "../citations.js";
 import { idleHint } from "./hints.js";
 import type { HordeToolParams } from "./params.js";
 import { COLLABORATION_ACTIONS, runCollaborationAction } from "./collaboration-actions.js";
-import { recordEvent } from "../ledger/events.js";
+import { readEvents, recordEvent } from "../ledger/events.js";
 import type { EventContext } from "../ledger/events.js";
 
 const CLEAN_STOP_NOTICE =
@@ -30,8 +30,10 @@ const WORK_PLAN_POST =
 interface ActionResult {
   text: string;
   id?: number;
-  /** True when the call changed nothing: a duplicate idea, or a confirmation after the credited one. */
+  /** True when the call changed nothing, such as a duplicate idea. */
   noop?: boolean;
+  /** For confirm-solved: whether this confirmation validated the proposal or joined an earlier one. */
+  confirmation?: "credited" | "additional";
 }
 
 interface ActionContext {
@@ -50,6 +52,20 @@ function requireId(params: HordeToolParams): number {
     throw new Error(`horde: id is required for action '${params.action}'`);
   }
   return params.id;
+}
+
+/** The result line of a closed idea: `text`, or `note` when a member reached for that field instead. */
+function closeNote(params: HordeToolParams): string | undefined {
+  return params.text ?? params.note;
+}
+
+/** The member whose `idea` write created #id in this run, from the event log; undefined outside a run. */
+function ideaAuthor(hordeDir: string, runId: string | undefined, id: number): string | undefined {
+  if (!runId) return undefined;
+  const created = readEvents(hordeDir, runId).find(
+    (event) => event.action === "idea" && event.outcome === "applied" && (event.payload.result as { id?: unknown } | undefined)?.id === id,
+  );
+  return created?.actor;
 }
 
 function requireRun(ctx: ActionContext): string {
@@ -283,6 +299,7 @@ async function claimAction({ hordeDir, member, params }: ActionContext): Promise
 
 async function resourceAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params, runId } = ctx;
+  if ((params.text ?? "").trim() === "") throw new Error("horde: resource needs its name in text (note holds the reuse pointer)");
   const { resource, reused, ownedByCaller } = await claimResource(hordeDir, member, {
     name: params.text,
     note: params.note,
@@ -341,9 +358,15 @@ async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
 async function confirmSolvedAction(ctx: ActionContext): Promise<ActionResult> {
   const answer = await confirmSolved(ctx.hordeDir, requireRun(ctx), ctx.member, ctx.params.text, ctx.params.revision);
   if (!answer.ok) throw new Error(`horde: ${answer.reason}`);
-  if (answer.reason !== "validated") return { text: `The SOLVED proposal was already validated by ${answer.by}.`, noop: true };
+  if (answer.reason !== "validated") {
+    return {
+      text: `Recorded your confirmation; the proposal was already validated by ${answer.by}. Finish your claimed work.`,
+      confirmation: "additional",
+    };
+  }
   return {
     text: "Validated the SOLVED proposal. Finish your claimed work; the parent will wind down once any coverage requirement is satisfied.",
+    confirmation: "credited",
   };
 }
 
@@ -357,19 +380,20 @@ async function contestSolvedAction(ctx: ActionContext): Promise<ActionResult> {
 
 async function doneAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params } = ctx;
-  const idea = await finishIdea(hordeDir, member, requireId(params), params.text);
+  const idea = await finishIdea(hordeDir, member, requireId(params), closeNote(params));
   return closedIdea(ctx, idea, `Done #${idea.id}: ${idea.text}`);
 }
 
 async function dropAction(ctx: ActionContext): Promise<ActionResult> {
-  const { hordeDir, member, params } = ctx;
-  const idea = await dropIdea(hordeDir, member, requireId(params), params.text);
+  const { hordeDir, member, params, runId } = ctx;
+  const id = requireId(params);
+  const idea = await dropIdea(hordeDir, member, id, closeNote(params), { author: ideaAuthor(hordeDir, runId, id) });
   return closedIdea(ctx, idea, `Dropped #${idea.id}: ${idea.text}`);
 }
 
 async function ruleOutAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params } = ctx;
-  const idea = await ruleOutIdea(hordeDir, member, requireId(params), params.text);
+  const idea = await ruleOutIdea(hordeDir, member, requireId(params), closeNote(params));
   return closedIdea(ctx, idea, `Ruled out #${idea.id}: ${idea.note ?? "dead end"}`);
 }
 

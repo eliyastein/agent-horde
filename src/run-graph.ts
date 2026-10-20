@@ -284,7 +284,8 @@ function solvedHandler(label: string, tone: EdgeTone): Handler {
       draft.lastSolved = marker;
       return;
     }
-    if (draft.lastSolved) draft.edges.push({ from: marker, to: draft.lastSolved, label: event.outcome === "noop" ? `${label} (redundant)` : label, tone });
+    const additional = result.confirmation === "additional";
+    if (draft.lastSolved) draft.edges.push({ from: marker, to: draft.lastSolved, label: additional ? `${label} (additional)` : label, tone });
   };
 }
 
@@ -494,7 +495,7 @@ function addRefused(draft: Draft, event: HordeEvent): void {
   addEdge(draft, marker, refusedTarget(event.action, input), event.action, "negative");
 }
 
-/** A no-op that still names a result (a duplicate idea, a redundant confirmation) is a repeat, not a refusal. */
+/** A no-op that still names a result (a duplicate idea) is a repeat, not a refusal. */
 function isRepeat(event: HordeEvent): boolean {
   return event.outcome === "noop" && record(event.payload.result).noop === true;
 }

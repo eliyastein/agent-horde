@@ -235,7 +235,11 @@ export async function confirmSolved(
     if (state.proposal.member === member) return { ok: false, reason: "the proposer cannot validate their own proposal" };
     if (revision && state.proposal.revision !== revision) return { ok: false, reason: "stale answer revision; inspect the current proposal" };
     if (state.contest) return { ok: false, reason: `the proposal was already contested by ${state.contest.member}` };
-    if (state.confirm) return { ok: true, reason: "already validated", by: state.confirm.member };
+    if (state.confirm) {
+      // The first confirmation credits the wind-down; later ones are still verification records.
+      appendEntry(hordePaths(hordeDir).board, boardEntry(member, `also validated SOLVED: ${requireText(note, "confirm-solved")}`));
+      return { ok: true, reason: "already validated", by: state.confirm.member };
+    }
     const signal: SolvedSignal = {
       member,
       text: requireText(note, "confirm-solved"),

@@ -25,10 +25,26 @@ function evidenceRefs(state: CollaborationState, refs: string[] = []): string[] 
     // A review is the record members most want to cite; it already names the evidence it rests on.
     const review = state.reviews.find((r) => r.id === id);
     if (review) throw new Error(`horde: ${id} is a review, not evidence; cite its evidence instead: ${review.evidence.join(", ") || "none recorded"}`);
+    // Evidence ids share the event counter, so the E# of the event that recorded V#, A# or Q# is
+    // the guess a member makes when it knows the record but not its evidence.
+    const recorded = recordedAtEvent(state, id);
+    if (recorded) throw new Error(`horde: ${id} is the event that recorded ${recorded.id}, not evidence; ${recorded.hint}`);
     const kind = /^[A-Z]\d+$/.test(id) && !id.startsWith("E") ? `; ${id} is not evidence, refs take E# ids (attach evidence first, or name ${id} as the target)` : "";
     throw new Error(`horde: unknown evidence ${id}${kind}`);
   }
   return refs;
+}
+
+function recordedAtEvent(state: CollaborationState, id: string): { id: string; hint: string } | undefined {
+  const seq = /^E(\d+)$/.exec(id)?.[1];
+  if (!seq) return undefined;
+  const review = state.reviews.find((r) => r.id === `V${seq}`);
+  if (review) return { id: review.id, hint: `cite ${review.id}'s evidence instead: ${review.evidence.join(", ") || "none recorded"}` };
+  const artifact = state.artifacts.find((a) => a.id === `A${seq}`);
+  if (artifact) return { id: artifact.id, hint: `attach evidence to ${artifact.id} first, or name ${artifact.id} as the target` };
+  const message = state.messages.find((m) => m.id === `Q${seq}`);
+  if (message) return { id: message.id, hint: `cite the evidence on ${message.id} instead: ${[...message.evidence, ...(message.responseEvidence ?? [])].join(", ") || "none recorded"}` };
+  return undefined;
 }
 
 /** Name the stale ref and both revisions, so a retry does not have to guess which evidence to replace. */

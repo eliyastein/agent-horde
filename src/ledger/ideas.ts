@@ -215,18 +215,26 @@ export async function finishIdea(
   });
 }
 
+/**
+ * Release a claimed idea back to the pool, or retire an unclaimed one you added. `author` is the
+ * member whose write created the idea, when the caller knows it; an unclaimed idea is dropped only
+ * by its author, so folding your own duplicate does not require claiming it first.
+ */
 export async function dropIdea(
   hordeDir: string,
   owner: string,
   id: number,
   reason: string | undefined,
+  options: { author?: string | undefined } = {},
 ): Promise<Idea> {
   return withHordeLock(hordeDir, owner, () => {
     const doc = readIdeasDoc(hordeDir);
     const { index, idea } = requireIdea(doc, id);
-    if (idea.owner !== owner) {
-      const holder = idea.owner ? `claimed by ${idea.owner}` : "not claimed";
-      throw new Error(`horde: idea #${id} is ${holder}; you can only drop ideas you claimed`);
+    if (idea.owner && idea.owner !== owner) {
+      throw new Error(`horde: idea #${id} is claimed by ${idea.owner}; you can only drop ideas you claimed`);
+    }
+    if (!idea.owner && options.author !== owner) {
+      throw new Error(`horde: idea #${id} is not claimed; only the member who added it or its claimant can drop it`);
     }
     const dropped: Idea = { id, mark: " ", text: idea.text };
     doc.lines[index] = formatIdea(dropped);

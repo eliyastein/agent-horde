@@ -75,7 +75,11 @@ export const HordeParams = Type.Object({
     }),
   ),
   note: Type.Optional(
-    Type.String({ description: "For a resource: a short pointer (path, command, or fact id) others should reuse" }),
+    Type.String({
+      description:
+        "For a resource: a short pointer (path, command, or fact id) others should reuse. For done/drop/rule-out: " +
+        "the result line, when text is not given",
+    }),
   ),
   cleanup: Type.Optional(
     Type.String({

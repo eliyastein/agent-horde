@@ -3,17 +3,18 @@ import type { HordeEvent } from "./events.js";
 export interface SolvedConfirmations {
   /** Members whose confirm-solved was the one credited for a proposal revision. */
   credited: string[];
-  /** Members whose confirm-solved arrived after the credited one and changed nothing. */
-  redundant: string[];
+  /** Members who confirmed the same proposal after the credited one; their text is in the event. */
+  additional: string[];
 }
 
-/** The report shows how many members spent a confirmation on an already validated proposal. */
+/** The report names every member that confirmed the proposal, not only the one credited. */
 export function solvedConfirmations(events: HordeEvent[]): SolvedConfirmations {
-  const out: SolvedConfirmations = { credited: [], redundant: [] };
+  const out: SolvedConfirmations = { credited: [], additional: [] };
   for (const event of events) {
-    if (event.action !== "confirm-solved") continue;
-    if (event.outcome === "applied") out.credited.push(event.actor);
-    else if (event.outcome === "noop") out.redundant.push(event.actor);
+    if (event.action !== "confirm-solved" || event.outcome === "rejected" || event.outcome === "intent") continue;
+    const result = event.payload.result as { confirmation?: unknown } | undefined;
+    if (event.outcome === "applied" && result?.confirmation !== "additional") out.credited.push(event.actor);
+    else out.additional.push(event.actor);
   }
   return out;
 }
