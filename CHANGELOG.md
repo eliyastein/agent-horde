@@ -4,6 +4,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-20
+
 ### Added
 
 - A blocking challenge that a `partially-supports` review raised is cleared when a different
