@@ -51,6 +51,10 @@ function artifactProblem(hordeDir: string, runId: string, state: CollaborationSt
     const file = fs.realpathSync(path.join(hordeDir, "runs", runId, artifact.path));
     if (!file.startsWith(root + path.sep) || hashText(fs.readFileSync(file)) !== artifact.hash) return "file changed after publication";
   } catch { return "published file unavailable"; }
+  // A blocker is named as such: the acceptance text is read by members and the deliverable, and
+  // "needs a review" sent them after a review that already existed.
+  const blocker = blockingMessages(state).find((m) => m.target === artifact.id);
+  if (blocker) return `blocked by ${blocker.id} (${blocker.state} blocking ${blocker.kind} from ${blocker.sender})`;
   return artifactAccepted(state, artifact) ? undefined : artifact.kind === "document"
     ? "needs a full independent review against document criteria"
     : "needs a full independent tested/reproduced review";

@@ -196,7 +196,29 @@ function recordReview(c: CollaborationCommand): EventDraft {
     verdict: p.verdict, support: p.support, checked, unchecked: p.unchecked,
     text, evidence: refs },
     ...completeAssignedReview(c, target, `V${seq}`, text, refs),
-    ...(["refutes", "partially-supports"].includes(p.verdict) ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
+    ...(["refutes", "partially-supports"].includes(p.verdict) ? automaticChallenge(c, target, info, text, refs) : {}),
+    ...(p.verdict === "supports" && !p.unchecked.trim() ? coverageClearance(c, target, info, `V${seq}`, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
+}
+
+/** The challenge a partially-supports review raised in its own event, as opposed to an objection a member wrote. */
+function coverageChallenge(state: CollaborationState, message: PeerMessage): boolean {
+  return state.reviews.some((r) => r.id === `V${message.id.slice(1)}` && r.actor === message.sender && r.verdict === "partially-supports");
+}
+
+/**
+ * A partial review opens a blocking challenge that only its sender may resolve. When that review
+ * contradicted nothing and another member later supports the whole revision, the unchecked scope
+ * is covered: the full review clears the challenge, and the resolution names both reviews.
+ */
+function coverageClearance(c: CollaborationCommand, target: string, info: { revision: string }, reviewId: string, refs: string[]): Record<string, unknown> {
+  const cleared = c.state.messages.filter((m) =>
+    m.target === target && m.revision === info.revision && m.blocking && m.state !== "resolved" && m.sender !== c.ctx.actor && coverageChallenge(c.state, m));
+  if (!cleared.length) return {};
+  return { clearances: cleared.map((m) => ({
+    id: m.id,
+    text: `cleared by ${reviewId}: ${c.ctx.actor}'s full-scope supporting review of ${target}@${info.revision.slice(0, 12)} covers the scope V${m.id.slice(1)} left unchecked`,
+    refs,
+  })) };
 }
 
 /** The parent's assignment closes with the review id and its evidence, so the thread shows what decided it. */

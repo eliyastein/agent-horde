@@ -4,7 +4,18 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Added
+
+- A blocking challenge that a `partially-supports` review raised is cleared when a different
+  non-owner member records a full-scope `supports` review of the same target revision; the
+  resolution names both reviews. A refuting review's challenge, a member's own written challenge,
+  and the partial reviewer's own later review are not cleared this way (#15).
+
 ### Changed
+
+- Repair attempts are picked in priority order re-read before each attempt, one per member per
+  round, so a thread that became blocking during an attempt is served before administrative
+  queues ordered at round start (#15).
 
 - Repair shares follow demand: a queue's demand is one floor plus one per review request or
   blocking challenge beyond the first, the default totals fund up to six such units, and each
@@ -16,6 +27,11 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- Acceptance names the blocking message when that is what fails an artifact (`blocked by Q249
+  (responded blocking challenge from member-4)`), instead of asking for a full independent review
+  the artifact already had (#15).
+- Review citations in prose are judged per sentence, so a document review cited in the sentence
+  after a finding's review is no longer flagged as reviewing the wrong target (#15).
 - `done`, `drop` and `rule-out` take the result from `note` when `text` is absent; three ideas
   closed with `note` had lost their result lines (#14).
 - A `resource` without `text` is told that the name goes in `text` and the pointer in `note` (#14).

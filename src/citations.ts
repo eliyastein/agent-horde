@@ -233,13 +233,17 @@ function citedWithoutLabel(text: string, id: number): boolean {
   return citing.length > 0 && !citing.some((paragraph) => UNREVIEWED_LABEL.test(paragraph));
 }
 
+/** A sentence ends at `.`, `!` or `?`, possibly inside closing emphasis or brackets, before a capitalised start. */
+const SENTENCE_BREAK = /(?<=[.!?][*_)\]"']*)\s+(?=[A-Z"'([*_`])/;
+
 /**
- * The units a review citation is judged in: paragraphs, except that each list item and table row
+ * The units a review citation is judged in: sentences, except that each list item and table row
  * stands alone. A bullet that cites reviews as the source of a limitation does not claim them as
- * support for a finding named two bullets up.
+ * support for a finding named two bullets up, and a sentence that cites a document's review does
+ * not claim it for the finding named in the sentence before.
  */
 function citationUnits(text: string): string[] {
-  return text.split(/\n\s*\n/).flatMap((paragraph) => (/^\s*(?:[-*]|\d+\.|\|)\s/m.test(paragraph) ? paragraph.split("\n") : [paragraph]));
+  return text.split(/\n\s*\n/).flatMap((paragraph) => (/^\s*(?:[-*]|\d+\.|\|)\s/m.test(paragraph) ? paragraph.split("\n") : paragraph.split(SENTENCE_BREAK)));
 }
 
 /**

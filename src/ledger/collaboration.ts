@@ -100,8 +100,21 @@ export function projectCollaboration(events: HordeEvent[]): CollaborationState {
       state.resources = state.resources.filter((r) => r.target !== contract.target).concat(contract);
     }
     if (p.transition) applyTransition(state, event);
+    if (Array.isArray(p.clearances)) applyClearances(state, event);
   }
   return state;
+}
+
+/** A full-scope review that covers a partial review's unchecked scope resolves the challenge that review raised. */
+function applyClearances(state: CollaborationState, event: HordeEvent): void {
+  for (const clearance of event.payload.clearances as Array<{ id: string; text: string; refs: string[] }>) {
+    const message = state.messages.find((m) => m.id === clearance.id);
+    if (!message || message.state === "resolved") continue;
+    message.state = "resolved";
+    message.resolution = clearance.text;
+    message.resolutionEvidence = clearance.refs;
+    message.updatedAt = event.at;
+  }
 }
 
 function applyTransition(state: CollaborationState, event: HordeEvent): void {

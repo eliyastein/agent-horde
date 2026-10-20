@@ -235,6 +235,29 @@ if (process.argv.includes("--mode")) {
     }
   }
 
+  // The order is re-read before each attempt: a blocking challenge raised during the reviewer's
+  // attempt sends its recipient ahead of a member whose queue is a question, within the same round.
+  const orderId = "20261019-500004";
+  const orderDir = path.join(hordeDir, "runs", orderId);
+  fs.mkdirSync(path.join(orderDir, "artifacts"), { recursive: true });
+  fs.writeFileSync(path.join(orderDir, "TASK.md"), "Members: 3\n");
+  fs.writeFileSync(path.join(orderDir, "SYSTEM.md"), "fixture");
+  fs.writeFileSync(path.join(orderDir, "artifacts/scanner.txt"), "broken: negative=tracker\n");
+  const orderArtifact = JSON.parse((await runCollaborationAction({ hordeDir, runId: orderId, actor: "member-1" }, { action: "artifact", artifactPath: "artifacts/scanner.txt", criteria: "negative unknown; positive tracker" })).text).artifact;
+  await runCollaborationAction({ hordeDir, runId: orderId, actor: "member-1" }, { action: "message", target: orderArtifact.id, to: "member-3", kind: "question", text: "is the control set complete?" });
+  const orderMembers = [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" }));
+  const orderRun = { ...run, id: orderId, runDir: orderDir, members: orderMembers, count: 3, verifier: "member-2", repairTokens: 0, repairSkipped: undefined, controller: new AbortController(), controllers: new Map(), procs: new Map() };
+  const orderEnv = { ...process.env };
+  try {
+    process.env.PI_HORDE_REPAIR_ROUNDS = "1";
+    await drainRepairs({ ...launch, run: orderRun, roles: Array(3).fill("fixture") });
+  } finally {
+    if (orderEnv.PI_HORDE_REPAIR_ROUNDS === undefined) delete process.env.PI_HORDE_REPAIR_ROUNDS; else process.env.PI_HORDE_REPAIR_ROUNDS = orderEnv.PI_HORDE_REPAIR_ROUNDS;
+  }
+  const orderStarts = readEvents(hordeDir, orderId).filter((e) => e.action === "repair-start").map((e) => e.actor);
+  assert.deepEqual(orderStarts, ["member-2", "member-1", "member-3"], "the owner's new blocker is served before the pending question, in the single round");
+  assert.ok(collaborationState(hordeDir, orderId).messages.some((m) => m.kind === "challenge" && m.to === "member-1" && m.state === "responded"), "the owner answered the challenge raised mid-round");
+
   // Hard stops never schedule repair sessions, even with work pending.
   await runCollaborationAction({ hordeDir, runId: id, actor: "member-2" }, { action: "message", target: artifact.id, kind: "challenge", text: "new unresolved issue" });
   run.stopped = true;
