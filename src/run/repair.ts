@@ -234,15 +234,17 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
   for (let round = 0; round < rounds; round++) {
     if (exhausted()) return;
     if (round > 0) await scheduleCollaboration(launch, { settleMs: 0, liveOnly: false });
-    const eligible = eligibleMembers(launch);
-    if (!eligible.length) return;
-    // Sequential attempts preserve owner -> reviewer ordering while reserving others' shares.
-    for (let index = 0; index < eligible.length; index++) {
+    // One attempt per member per round, picked in priority order re-read before each attempt:
+    // a thread that became blocking during an attempt moves its recipient ahead of the
+    // administrative queues that were ordered first at round start.
+    const served = new Set<string>();
+    for (;;) {
       if (exhausted()) return;
-      // Queues move while earlier attempts run, so the demand is measured now, not at round start.
-      const pending = eligible.slice(index).map(({ member }) => ({ member, queue: queueFor(launch, member) })).filter((entry) => entry.queue.length);
+      const pending = eligibleMembers(launch).filter((entry) => !served.has(entry.member.name));
+      if (!pending.length) break;
+      const next = pending[0]!;
       const pendingUnits = pending.reduce((sum, entry) => sum + repairDemand(entry.queue), 0);
-      const units = repairDemand(pending.find((entry) => entry.member === eligible[index]!.member)?.queue ?? []);
+      const units = repairDemand(next.queue);
       const unserved = pending.map((entry) => entry.member);
       const remaining = budget.tokens - (run.repairTokens ?? 0);
       const laterRounds = rounds - round - 1;
@@ -261,7 +263,8 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
         return;
       }
       await begin(budget);
-      await repairMember(launch, eligible[index]!.member, Date.now() + ms, { tokens, turns: budget.turns }, floors);
+      served.add(next.member.name);
+      await repairMember(launch, next.member, Date.now() + ms, { tokens, turns: budget.turns }, floors);
     }
   }
 }

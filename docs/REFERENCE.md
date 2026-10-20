@@ -182,6 +182,9 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   request, and the requester then resolves it. A challenger can withdraw its own blocking
   challenge on an F# or A# before any response by recording a supporting review of the current
   revision and resolving with evidence on it; limits that review discloses remain acceptance debt.
+  The blocking challenge a `partially-supports` review raises is cleared when a different
+  non-owner member records a full-scope `supports` review of the same revision; the resolution
+  names both reviews. Acceptance names an open blocker as `blocked by Q#`.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
   `PI_HORDE_INBOX_TURNS` extra turns per session. A recipient answers with `respond`; `ack` is an
   optional first step that signals intent. Delivery is a context insertion, not
