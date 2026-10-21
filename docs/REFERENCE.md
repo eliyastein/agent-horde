@@ -72,7 +72,9 @@ own when the parent is gone, even after a SIGKILL or OOM kill.
 HEAD, never writes to `.horde/`, and stays up after the run until the session ends. A busy port
 refuses the run before any run directory is created. Live pages reload every three seconds
 (`?refresh=0` disables); expandable entries are URL-backed, so they stay open across refreshes.
-Every page has a JSON twin under `/api/<same path>`.
+Every page has a JSON twin under `/api/<same path>`. The footer of every page names the
+agent-horde version from its package.json and, when it runs from a git checkout, the commit it is
+at (`-dirty` when the tree has uncommitted changes), linked to the commit on GitHub.
 
 | page | shows |
 |------|-------|
@@ -319,6 +321,7 @@ watchdog.ts           child exits when its parent pid is gone
 widget.ts             TUI widget above the editor
 citations.ts          R#/F#/T# and file-path citation checks for findings and generated artifacts
 dashboard.ts          localhost HTTP server; dashboard-data.ts loads pages, dashboard-html.ts renders
+build-info.ts         the running package's version and checkout commit, for the dashboard footer
 collaboration-report.ts  acceptance checks, frozen snapshots, collaboration metrics
 run-graph.ts          events.jsonl projected into lanes, phases, nodes, and edges with dashboard links
 run-graph-svg.ts      the swimlane SVG and its legend; run-graph-mermaid.ts the Mermaid export and GRAPH.md

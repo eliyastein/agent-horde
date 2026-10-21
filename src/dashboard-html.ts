@@ -24,6 +24,7 @@ import type {
   TranscriptVm,
 } from "./dashboard-data.js";
 import { RUN_FILES } from "./dashboard-data.js";
+import { buildInfo } from "./build-info.js";
 import { detailKey, formatClock, formatElapsed, formatTokens, oneLine } from "./format.js";
 import { renderRunGraphMermaid } from "./run-graph-mermaid.js";
 import { GRAPH_CSS, graphLegendHtml, renderRunGraphSvg } from "./run-graph-svg.js";
@@ -54,7 +55,7 @@ const CSS =
   "th,td{border:1px solid #000;padding:2px 6px;vertical-align:top;text-align:left}" +
   "th{background:#eee}pre{white-space:pre-wrap;word-break:break-word;margin:0}" +
   "nav a{margin-right:8px}.r{text-align:right}h1,h2{font-size:13px;margin:8px 0 4px}" +
-  "details>summary{cursor:pointer}a{color:#000}" +
+  "details>summary{cursor:pointer}a{color:#000}footer{margin-top:16px;color:#666}footer a{color:#666}" +
   ".export{position:absolute;top:8px;right:8px;line-height:0}" +
   ".modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7)}" +
   ".modal:target{display:flex;align-items:center;justify-content:center}" +
@@ -230,13 +231,20 @@ function nativeDetails(body: string): string {
   return body.replace(/<details data-expand="[a-f0-9]+">/g, "<details>");
 }
 
+/** Which agent-horde produced the page: the package version and, from a checkout, the commit. */
+function footer(): string {
+  const { name, version, commit, repository } = buildInfo();
+  const at = commit ? ` at ${repository ? link(`${repository}/commit/${commit.replace(/-dirty$/, "")}`, commit) : e(commit)}` : "";
+  return `<footer>${e(name)} ${e(version)}${at}</footer>`;
+}
+
 export function page(title: string, crumbs: Crumb[], body: string, ctx: RenderContext, head = ""): string {
   body = ctx.export ? nativeDetails(body) : persistentDetails(body, ctx.href);
   const meta = ctx.refresh?.on ? `<meta http-equiv="refresh" content="${ctx.refresh.seconds}">` : head;
   return (
     `<!doctype html><html><head><meta charset="utf-8"><title>${e(title)}</title>${meta}` +
     `<style>${CSS}</style></head><body>${exportControl(ctx)}${nav(ctx)}${crumbLine(crumbs)}${refreshLine(ctx)}` +
-    `<h1>${e(title)}</h1>${body}</body></html>`
+    `<h1>${e(title)}</h1>${body}${footer()}</body></html>`
   );
 }
 
