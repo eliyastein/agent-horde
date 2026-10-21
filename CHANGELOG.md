@@ -4,6 +4,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-21
+
 ### Added
 
 - `/export.zip` packs the whole dashboard into a zip of static HTML whose `index.html` opens from
