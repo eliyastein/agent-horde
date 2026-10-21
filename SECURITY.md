@@ -35,7 +35,10 @@ or browser tab on the machine, member transcripts included. Do not forward or pr
 `/export.zip` packs every dashboard page, transcripts and logs included, into one archive meant
 to be shared. The export control warns before the download, but the archive carries whatever the
 members read or produced: file contents, command output, paths, and any credentials they met.
-Review it before passing it on.
+Review it before passing it on. Building it costs seconds of work, so the dashboard runs one
+export at a time and refuses to start one for a request the browser marks as cross-site; a page
+on another origin cannot read the dashboard, but it can otherwise make a browser request its
+localhost port.
 
 ## Supply chain
 

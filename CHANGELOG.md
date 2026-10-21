@@ -11,7 +11,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   each other. A download icon in the top-right corner of every page opens a warning modal, built
   with CSS alone so the dashboard still runs no scripts; confirming leads to `/export`, which
   starts the download and explains the wait. The zip is streamed as it is packed, one page per
-  event-loop turn, so the browser shows the download at once and the run is not held up (#20).
+  event-loop turn, so the browser shows the download at once and the run is not held up. One
+  export runs at a time, and cross-site requests cannot start one (#20).
 
 ### Changed
 

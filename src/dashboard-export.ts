@@ -104,7 +104,7 @@ interface ZipRecord {
   name: Buffer;
   method: number;
   crc: number;
-  compressed: Buffer;
+  compressedSize: number;
   size: number;
   offset: number;
 }
@@ -117,7 +117,7 @@ function zipHeader(signature: number, record: ZipRecord, stamp: { time: number; 
   header.writeUInt16LE(stamp.time, 6);
   header.writeUInt16LE(stamp.date, 8);
   header.writeUInt32LE(record.crc, 10);
-  header.writeUInt32LE(record.compressed.length, 14);
+  header.writeUInt32LE(record.compressedSize, 14);
   header.writeUInt32LE(record.size, 18);
   header.writeUInt16LE(record.name.length, 22);
   header.writeUInt16LE(0, 24);
@@ -147,16 +147,16 @@ export async function* zipArchive(entries: AsyncIterable<ZipEntry> | Iterable<Zi
   for await (const entry of entries) {
     if (records.length >= ZIP_MAX_ENTRIES) throw new Error(`dashboard export exceeds ${ZIP_MAX_ENTRIES} files; zip64 is not supported`);
     const deflated = zlib.deflateRawSync(entry.data);
-    const smaller = deflated.length < entry.data.length;
+    const compressed = deflated.length < entry.data.length ? deflated : entry.data;
     const record: ZipRecord = {
       name: Buffer.from(entry.path, "utf8"),
-      method: smaller ? 8 : 0,
+      method: compressed === deflated ? 8 : 0,
       crc: zlib.crc32(entry.data),
-      compressed: smaller ? deflated : entry.data,
+      compressedSize: compressed.length,
       size: entry.data.length,
       offset,
     };
-    const local = Buffer.concat([zipHeader(0x04034b50, record, stamp), record.name, record.compressed]);
+    const local = Buffer.concat([zipHeader(0x04034b50, record, stamp), record.name, compressed]);
     records.push(record);
     offset += local.length;
     if (offset > ZIP_MAX_BYTES) throw new Error("dashboard export exceeds 4 GiB; zip64 is not supported");

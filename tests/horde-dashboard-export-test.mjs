@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as http from "node:http";
 import * as path from "node:path";
 import * as zlib from "node:zlib";
 import { createJiti, DEPS, PI } from "./harness.mjs";
@@ -185,5 +186,32 @@ assert.equal((await fetch(`${base}/api/export`)).status, 404);
 const headZip = await fetch(`${base}/export.zip`, { method: "HEAD" });
 assert.equal(headZip.status, 200);
 assert.equal((await headZip.text()).length, 0);
+
+// One export at a time: a second request while the first streams is refused, and the slot frees after.
+const first = await fetch(`${base}/export.zip`);
+const reader = first.body.getReader();
+assert.ok(!(await reader.read()).done, "first chunk arrives");
+const second = await fetch(`${base}/export.zip`);
+assert.equal(second.status, 503);
+assert.ok((await second.text()).includes("already in progress"));
+for (;;) if ((await reader.read()).done) break;
+const third = await fetch(`${base}/export.zip`);
+assert.equal(third.status, 200);
+readZip(Buffer.from(await third.arrayBuffer()));
+
+// Other sites cannot start an export; the dashboard's own navigations can.
+const withSite = (path, site) => new Promise((resolve, reject) => {
+  const req = http.request({ host: "127.0.0.1", port: server.port, path, headers: { "Sec-Fetch-Site": site } }, (res) => {
+    res.resume();
+    res.on("end", () => resolve(res.statusCode));
+  });
+  req.on("error", reject);
+  req.end();
+});
+assert.equal(await withSite("/export.zip", "cross-site"), 403);
+assert.equal(await withSite("/export", "cross-site"), 403);
+assert.equal(await withSite("/export", "same-origin"), 200);
+assert.equal(await withSite("/export.zip", "none"), 200);
+assert.equal(await withSite("/board", "cross-site"), 200, "ordinary pages are unaffected");
 await server.close();
 console.log("PASS: horde-dashboard-export-test");

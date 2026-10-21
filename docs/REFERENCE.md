@@ -102,7 +102,9 @@ control itself is absent. Pages that fail to load are exported as their error pa
 dangles. The export is built when requested and has no cache. It is streamed one page per
 event-loop turn, so the download appears in the browser at once and grows while the pages are
 packed, and the run is not held up; a dashboard with many long transcripts takes a few seconds
-and the archive can run to hundreds of megabytes.
+and the archive can run to hundreds of megabytes. One export runs at a time (a second request
+gets 503), and requests a browser marks as coming from another site (`Sec-Fetch-Site:
+cross-site`) get 403.
 
 Only the active run has live member state. Historical runs are rebuilt from `member-N.log` and
 the session files, so they show end cause, turns, and usage but no activity.
