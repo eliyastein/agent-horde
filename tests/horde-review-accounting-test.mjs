@@ -48,7 +48,7 @@ assert.match(report, /scoped reviews: 19 current-revision records/);
 assert.match(report, /designated verifier scoped checks: 10 records across 10 current findings/);
 assert.doesNotMatch(report, /verified: 0 of 10|check methods:\s*\n|check authors[^\n]*:\s*\n/);
 assert.match(report, /review=limited checks=V\d+:tested/);
-assert.match(summaryMarkdown(input), /member-6[\s\S]*10 independently reviewed \(scoped\)/);
+assert.match(summaryMarkdown(input), /member-6[\s\S]*10 independently reviewed \(scoped: /);
 const diagnosis = buildDiagnosis({ members, resets: [] }, { findings: entries, scopedReviews: state.reviews, reviewMessages: state.messages, distinctFindings: 10, claims: [], released: [], latePosts: [] });
 assert.match(diagnosis, /finding reviews with limitations: F1, F2/);
 assert.doesNotMatch(diagnosis, /unverified findings|without independent review/);

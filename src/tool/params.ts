@@ -28,19 +28,20 @@ export const HordeParams = Type.Object({
       "confirm-solved",
       "contest-solved",
       "concerns",
-      "verify", "inbox", "message", "ack", "respond", "resolve", "defer",
-      "attach", "review", "artifact", "resource-state", "collaboration", "inspect",
+      "verify", "amend", "inbox", "message", "ack", "respond", "resolve", "defer",
+      "attach", "review", "reattest", "artifact", "resource-state", "collaboration", "inspect",
     ] as const,
     {
       description:
         "list/findings/facts/claims/resources/concerns: read shared state; post: BOARD.md; " +
         "idea/claim/done/drop/rule-out: checklist (rule-out is a terminal negative); " +
         "finding: FINDINGS.md with a claimed idea, a concern slug, and optional importance/" +
-        "confidence/support; " +
+        "confidence/support; amend: rewrite the body prose of your own F#id at its current revision; " +
         "verify: record your independent reproduction of finding F#id with the support level you reached; " +
         "fact: FACTS.md; assert/confirm/contest/retract/supersede: change claim C#id state; " +
         "resource: claim a shared dataset, harness, corpus, or sandbox (with cleanup) before building it; " +
-        "solved: propose the goal answered; confirm-solved/contest-solved: validate or refute it",
+        "solved: propose the goal answered; confirm-solved/contest-solved: validate or refute it; " +
+        "reattest: carry your earlier review of F#/A# forward to its current revision with evidence that the checked behaviour is unchanged",
     },
   ),
   detail: Type.Optional(StringEnum(["summary", "full"] as const, { description: "Collaboration reads default to summaries; full returns complete page bodies, inspected subjects or write receipts. inspect E#/V#/Q# always returns the full record." })),
@@ -57,7 +58,8 @@ export const HordeParams = Type.Object({
   relation: Type.Optional(StringEnum(["supports", "contradicts", "extends"] as const)),
   verdict: Type.Optional(StringEnum(["supports", "partially-supports", "refutes", "inconclusive"] as const)),
   checked: Type.Optional(Type.String({ description: "Exact assertions checked and method; required for review." })),
-  unchecked: Type.Optional(Type.String({ description: "Assertions left unchecked or limitations; empty only for full coverage." })),
+  unchecked: Type.Optional(Type.String({ description: "Assertions inside the target's stated claim or criteria that you did not check; empty only for full coverage of that scope. Disclosures outside the criteria go in limits." })),
+  limits: Type.Optional(Type.String({ description: "For review: limits outside the target's declared claim or criteria (one engine, no hardened deployment). Recorded on the acceptance as limits, never as blockers." })),
   artifactKind: Type.Optional(StringEnum(["runnable", "document"] as const, { description: "Artifact classification, immutable after publication. Default runnable requires tested/reproduced review. document permits full-scope sourced/derived review of its stated criteria, not runtime acceptance." })),
   artifactPath: Type.Optional(Type.String({ description: "File path relative to this run, under artifacts/, retained by content hash." })),
   criteria: Type.Optional(Type.String({ description: "Artifact acceptance criteria, including positive/negative tests." })),
@@ -168,8 +170,8 @@ export type HordeToolParams = {
     | "confirm-solved"
     | "contest-solved"
     | "concerns"
-    | "verify" | "inbox" | "message" | "ack" | "respond" | "resolve" | "defer"
-    | "attach" | "review" | "artifact" | "resource-state" | "collaboration" | "inspect";
+    | "verify" | "amend" | "inbox" | "message" | "ack" | "respond" | "resolve" | "defer"
+    | "attach" | "review" | "reattest" | "artifact" | "resource-state" | "collaboration" | "inspect";
   detail?: "summary" | "full";
   offset?: number;
   limit?: number;
@@ -185,6 +187,7 @@ export type HordeToolParams = {
   verdict?: "supports" | "partially-supports" | "refutes" | "inconclusive";
   checked?: string;
   unchecked?: string;
+  limits?: string;
   artifactPath?: string;
   artifactKind?: "runnable" | "document";
   criteria?: string;

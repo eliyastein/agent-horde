@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { artifactAccepted, blockingMessages, collaborationState, openMessages } from "./ledger/collaboration.js";
+import { artifactAccepted, artifactLimits, blockingMessages, collaborationState, openMessages, partialArtifactReviews } from "./ledger/collaboration.js";
 import type { ArtifactRecord, CollaborationState, PeerMessage } from "./ledger/collaboration.js";
 import { readEvents } from "./ledger/events.js";
 import { findingReviewState, findingRevision, listFindingsForRun } from "./ledger/findings.js";
@@ -13,6 +13,8 @@ export interface CollaborationReport {
   sequence: number;
   state: CollaborationState;
   issues: string[];
+  /** Limits the accepting reviews disclosed outside each accepted artifact's criteria. */
+  limits: string[];
   acceptedArtifacts: string[];
   acceptedDocuments: string[];
   acceptedRunnableArtifacts: string[];
@@ -55,9 +57,14 @@ function artifactProblem(hordeDir: string, runId: string, state: CollaborationSt
   // "needs a review" sent them after a review that already existed.
   const blocker = blockingMessages(state).find((m) => m.target === artifact.id);
   if (blocker) return `blocked by ${blocker.id} (${blocker.state} blocking ${blocker.kind} from ${blocker.sender})`;
-  return artifactAccepted(state, artifact) ? undefined : artifact.kind === "document"
+  if (artifactAccepted(state, artifact)) return undefined;
+  // A partial review is coverage debt, not an objection: the acceptance names what it left
+  // unchecked so a full review, or one covering that scope, can settle it.
+  const partial = partialArtifactReviews(state, artifact).map((r) => `${r.id} (${r.actor}) left unchecked: ${r.unchecked.trim()}`);
+  const need = artifact.kind === "document"
     ? "needs a full independent review against document criteria"
     : "needs a full independent tested/reproduced review";
+  return partial.length ? `${need}; ${partial.join("; ")}` : need;
 }
 
 export function loadCollaborationReport(hordeDir: string, runId: string): CollaborationReport {
@@ -65,10 +72,15 @@ export function loadCollaborationReport(hordeDir: string, runId: string): Collab
   const state = collaborationState(hordeDir, runId);
   const issues = blockingMessages(state).map((m) => `${m.id} ${m.target}: ${m.state} blocking ${m.kind}`);
   const acceptedArtifacts: string[] = [];
+  const limits: string[] = [];
   for (const artifact of state.artifacts) {
     const problem = artifactProblem(hordeDir, runId, state, artifact);
-    if (problem) issues.push(`${artifact.id}@${artifact.hash}: ${problem}; exclude from recommended ${artifact.kind === "document" ? "document" : "runnable"} outputs`);
-    else acceptedArtifacts.push(artifact.id);
+    if (problem) {
+      issues.push(`${artifact.id}@${artifact.hash}: ${problem}; exclude from recommended ${artifact.kind === "document" ? "document" : "runnable"} outputs`);
+      continue;
+    }
+    acceptedArtifacts.push(artifact.id);
+    limits.push(...artifactLimits(state, artifact).map((limit) => `${artifact.id}@${artifact.hash}: accepted with limits outside its criteria; ${limit}`));
   }
   for (const f of listFindingsForRun(hordeDir, runId)) {
     if (f.supersededBy !== undefined) continue;
@@ -83,7 +95,7 @@ export function loadCollaborationReport(hordeDir: string, runId: string): Collab
   const delays = messages.flatMap((m) => Object.values(m.deliveries).slice(0, 1).map((time) => Date.parse(time) - Date.parse(m.createdAt)));
   const acceptedDocuments = state.artifacts.filter((a) => a.kind === "document" && acceptedArtifacts.includes(a.id)).map((a) => a.id);
   const acceptedRunnableArtifacts = acceptedArtifacts.filter((id) => !acceptedDocuments.includes(id));
-  return { runId, sequence: state.seq, state, issues, acceptedArtifacts, acceptedDocuments, acceptedRunnableArtifacts, metrics: {
+  return { runId, sequence: state.seq, state, issues, limits, acceptedArtifacts, acceptedDocuments, acceptedRunnableArtifacts, metrics: {
     events: events.length, rejected: events.filter((e) => e.outcome === "rejected").length,
     unresolved: openMessages(state).length, blocking: blockingMessages(state).length,
     resolvedChallenges: messages.filter((m) => m.kind === "challenge" && m.state === "resolved").length,
@@ -116,9 +128,10 @@ function collaborationMarkdown(report: CollaborationReport): string {
   return [
     `# Collaboration ${report.runId}`, `\nEvent high-water mark: ${report.sequence}. Delivery records context insertion, not comprehension.`,
     "\n## Acceptance issues", ...(report.issues.length ? report.issues.map((i) => `- ${i}`) : ["- No protocol-level issues recorded; task acceptance still requires coverage and review."]),
+    "\n## Accepted with limits", ...(report.limits.length ? report.limits.map((l) => `- ${l}`) : ["- none disclosed"]),
     "\n## Questions, challenges and handoffs", ...state.messages.map(messageMarkdown),
-    "\n## Artifact revisions", ...state.artifacts.map((a) => `- ${a.id} ${a.path}@${a.hash} owner=${a.owner} kind=${a.kind ?? "runnable"} snapshot=${a.snapshot} accepted=${report.acceptedArtifacts.includes(a.id)}\n  Criteria: ${a.criteria}\n  Dependencies: ${JSON.stringify(a.dependencies)}`),
-    "\n## Reviews", ...state.reviews.map((r) => `- ${r.id} ${r.target}@${r.revision} @${r.actor} ${r.verdict} [${r.support}] evidence=${r.evidence.join(",")}\n  Checked: ${r.checked}\n  Unchecked: ${r.unchecked || "none declared"}\n  ${r.text}`),
+    "\n## Artifact revisions", ...state.artifacts.map((a) => `- ${a.id} ${a.path}@${a.hash} owner=${a.owner} kind=${a.kind ?? "runnable"} snapshot=${a.snapshot} accepted=${report.acceptedArtifacts.includes(a.id)}\n  Criteria: ${a.criteria}\n  Dependencies: ${JSON.stringify(a.dependencies)}${a.changeNote ? `\n  Change: ${a.changeNote}` : ""}`),
+    "\n## Reviews", ...state.reviews.map((r) => `- ${r.id} ${r.target}@${r.revision} @${r.actor} ${r.verdict} [${r.support}] evidence=${r.evidence.join(",")}${r.reattests ? ` reattests=${r.reattests}` : ""}\n  Checked: ${r.checked}\n  Unchecked: ${r.unchecked || "none declared"}\n  Limits: ${r.limits || "none disclosed"}\n  ${r.text}`),
     "\n## Evidence", ...state.evidence.map((e) => `- ${e.id} ${e.target}@${e.revision} @${e.actor} ${e.relation}${e.path ? ` ${e.path}@${e.hash}` : ""}\n  ${e.text}`),
     "\n## Resources", ...state.resources.map((r) => `- ${r.target} ${r.state} generation=${r.generation} @${r.owner}/${r.attempt} ports=${r.ports.join(",")} lease=${new Date(r.leaseUntil).toISOString()}\n  Health: ${r.health}`),
     "\n## Metrics", ...Object.entries(report.metrics).map(([key, value]) => `- ${key}: ${value}`), "",
@@ -139,12 +152,13 @@ export function freezeAcceptance(hordeDir: string, runId: string, startIdeaId = 
     if (check.status === "disputed") issues.push(`${check.target}: unresolved challenge or refuting review`);
   }
   const runDir = path.join(hordeDir, "runs", runId);
-  const snapshot = { report, findings, findingReviews, ideas, issues };
+  const snapshot = { report, findings, findingReviews, ideas, issues, limits: report.limits };
   const hash = hashText(JSON.stringify(snapshot));
   const status = issues.length ? "incomplete" : "reviewed";
   writeFileAtomic(path.join(runDir, "COLLABORATION.md"), collaborationMarkdown(report));
   writeFileAtomic(path.join(runDir, "ACCEPTANCE.json"), JSON.stringify({ ...snapshot, hash, status }, null, 2));
-  writeFileAtomic(path.join(runDir, "ACCEPTANCE.md"), `# Acceptance ${runId}\n\nStatus: ${status}\nSnapshot: ${hash}\nEvent sequence: ${report.sequence}\n\n${issues.map((i) => `- ${i}`).join("\n")}\n`);
+  const limitsSection = report.limits.length ? `\n\n## Accepted with limits\n\n${report.limits.map((l) => `- ${l}`).join("\n")}` : "";
+  writeFileAtomic(path.join(runDir, "ACCEPTANCE.md"), `# Acceptance ${runId}\n\nStatus: ${status}\nSnapshot: ${hash}\nEvent sequence: ${report.sequence}\n\n${issues.map((i) => `- ${i}`).join("\n")}${limitsSection}\n`);
   const dir = path.join(runDir, "snapshot");
   fs.mkdirSync(dir, { recursive: true });
   for (const name of ["BOARD", "FINDINGS", "IDEAS", "FACTS", "CLAIMS", "RESOURCES", "CONCERNS"]) {

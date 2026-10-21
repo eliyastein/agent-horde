@@ -20,7 +20,7 @@ import { clusterFindings } from "../ledger/clusters.js";
 import { listFacts } from "../ledger/facts.js";
 import type { FactEntry } from "../ledger/facts.js";
 import { readHordeFile } from "../ledger/files.js";
-import { listFindingsForRun, parseFindings } from "../ledger/findings.js";
+import { listFindingsForRun, parseFindings, supersededCitations } from "../ledger/findings.js";
 import type { FindingEntry } from "../ledger/findings.js";
 import { countIdeas, parseIdeas, reconcileOwnedIdeas } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
@@ -132,12 +132,6 @@ interface SettledAnswer {
 }
 
 /** Findings the proposal names that a later finding corrected; labeled, not re-versioned. */
-export function supersededCitations(text: string, findings: FindingEntry[]): string[] {
-  return findings
-    .filter((finding) => finding.supersededBy !== undefined && new RegExp(`\\bF${finding.id}\\b`).test(text))
-    .map((finding) => `F${finding.id} (now F${finding.supersededBy})`);
-}
-
 /**
  * The proposal body is the member's verbatim text and can predate later challenges and corrections.
  * The status names the blockers still open at freeze and the findings a later finding superseded,

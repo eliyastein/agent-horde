@@ -13,9 +13,12 @@ import { scheduleCollaboration, stopReason } from "./schedule.js";
 import { spawnOne } from "./supervise.js";
 import type { RunLaunch } from "./supervise.js";
 
-/** Blockers and independent checks take precedence over administrative exchanges. */
+/**
+ * Blockers and independent checks take precedence over administrative exchanges. A request to
+ * validate the pending answer decides the run's outcome, so it ranks with the blockers.
+ */
 function repairPriority(message: PeerMessage): number {
-  if (message.blocking) return 0;
+  if (message.blocking || message.target === "answer") return 0;
   if (message.kind === "review-request" && /^[AF]\d+$/.test(message.target)) return 1;
   if (message.state === "responded") return 2;
   return 3;
@@ -33,7 +36,7 @@ function queueFor(launch: RunLaunch, member: MemberState): PeerMessage[] {
  * three reviews demands three, so its share is sized to the work rather than to the member.
  */
 export function repairDemand(queue: PeerMessage[]): number {
-  const checks = queue.filter((m) => m.blocking || (m.kind === "review-request" && /^[AF]\d+$/.test(m.target))).length;
+  const checks = queue.filter((m) => m.blocking || m.target === "answer" || (m.kind === "review-request" && /^[AF]\d+$/.test(m.target))).length;
   return Math.max(1, checks);
 }
 
@@ -135,8 +138,12 @@ interface FirstTurnCost {
   cacheWrite: number;
 }
 
-/** A finished worker receives a fresh, bounded attempt with a precise evidence handoff. */
-async function repairMember(launch: RunLaunch, member: MemberState, deadline: number, limits: RepairLimits, floors: RepairFloors): Promise<void> {
+/**
+ * A finished worker receives a fresh, bounded attempt with a precise evidence handoff. The time
+ * share is the allowance recorded and the deadline is derived from it once, so the record cannot
+ * read a millisecond under the floor the share was raised to.
+ */
+async function repairMember(launch: RunLaunch, member: MemberState, ms: number, limits: RepairLimits, floors: RepairFloors): Promise<void> {
   const { run } = launch;
   const ctx = { hordeDir: run.hordeDir, runId: run.id, actor: member.name };
   const queue = queueFor(launch, member);
@@ -146,7 +153,8 @@ async function repairMember(launch: RunLaunch, member: MemberState, deadline: nu
   member.repairs = (member.repairs ?? 0) + 1;
   member.repairStopReason = undefined;
   member.attempt = randomUUID();
-  const allowance = { ...limits, ms: Math.max(0, deadline - Date.now()) };
+  const deadline = Date.now() + ms;
+  const allowance = { ...limits, ms };
   let firstTurn: FirstTurnCost | undefined;
   member.resetNote = `Repair attempt ${member.repairs}. Discovery is closed. Budget: about ${allowance.tokens} input+output tokens, ${allowance.turns} turns and ${allowance.ms}ms. ` +
     `Read horde inbox and referenced evidence. Work in this priority order: ${queue.map((m) => `${m.id} ${m.target} (${m.state})`).join(", ")}. ` +
@@ -264,7 +272,7 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
       }
       await begin(budget);
       served.add(next.member.name);
-      await repairMember(launch, next.member, Date.now() + ms, { tokens, turns: budget.turns }, floors);
+      await repairMember(launch, next.member, ms, { tokens, turns: budget.turns }, floors);
     }
   }
 }

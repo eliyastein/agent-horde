@@ -1,8 +1,11 @@
 import * as fs from "node:fs";
 import { oneLine } from "../format.js";
+import { listClaims } from "./claims.js";
+import { CLUSTER_THRESHOLD } from "./clusters.js";
 import { appendEntry, hordePaths, requireText, writeFileAtomic } from "./files.js";
+import { listIdeas } from "./ideas.js";
 import { withHordeLock } from "./lock.js";
-import { bestTextMatch, factAnchors, salientTokens, stripLeadingId } from "./text-match.js";
+import { bestTextMatch, factAnchors, hardOverlap, salientTokens, stripLeadingId, textOverlap } from "./text-match.js";
 
 export interface FactEntry {
   id: number;
@@ -10,6 +13,8 @@ export interface FactEntry {
   author: string;
   deltaOf?: number | undefined;
   corroborators: string[];
+  /** The open idea (`#12`) or contested claim (`C3`) that was still auditing the subject when the fact was filed. */
+  provisionalOn?: string | undefined;
   headingLine: number;
 }
 
@@ -23,16 +28,56 @@ export function parseFacts(content: string): FactEntry[] {
     const meta = match[4] ?? "";
     const delta = /delta=#?T?(\d+)/.exec(meta);
     const corr = /corr=([^\s]+)/.exec(meta);
+    const prov = /prov=([^\s]+)/.exec(meta);
     facts.push({
       id: Number(match[1]),
       text: match[2] ?? "",
       author: match[3] ?? "",
       deltaOf: delta ? Number(delta[1]) : undefined,
       corroborators: corr?.[1] ? corr[1].split(",").map((s) => s.trim()).filter(Boolean) : [],
+      provisionalOn: prov?.[1],
       headingLine: lineIndex,
     });
   });
   return facts;
+}
+
+/**
+ * A fact asserting what an open idea is still auditing, or what a contested claim disputes, is
+ * provisional: it is recorded, but the answer may not quote it as settled until the idea closes
+ * or the claim resolves. Returns the subject it is provisional on, if any.
+ */
+function provisionalSubject(hordeDir: string, text: string): string | undefined {
+  const matches = (candidates: string[]): number | undefined => {
+    const match = textOverlap(candidates, text);
+    if (!match) return undefined;
+    return hardOverlap(match) || Math.max(match.jaccard, match.overlap) >= CLUSTER_THRESHOLD ? match.index : undefined;
+  };
+  const open = listIdeas(hordeDir).filter((idea) => idea.mark === " " || idea.mark === "~");
+  const idea = matches(open.map((entry) => entry.text));
+  if (idea !== undefined) return `#${open[idea]?.id}`;
+  const contested = listClaims(hordeDir).filter((claim) => claim.state === "contested");
+  const claim = matches(contested.map((entry) => entry.statement));
+  return claim === undefined ? undefined : `C${contested[claim]?.id}`;
+}
+
+/** Whether a fact's provisional subject is still open: an unclosed idea or a still-contested claim. */
+export function factUnsettled(hordeDir: string, fact: FactEntry): boolean {
+  if (!fact.provisionalOn) return false;
+  if (fact.provisionalOn.startsWith("#")) {
+    const idea = listIdeas(hordeDir).find((entry) => entry.id === Number(fact.provisionalOn?.slice(1)));
+    return idea !== undefined && (idea.mark === " " || idea.mark === "~");
+  }
+  const claim = listClaims(hordeDir).find((entry) => entry.id === Number(fact.provisionalOn?.slice(1)));
+  return claim?.state === "contested";
+}
+
+/** T# ids a text quotes whose provisional subject has not closed, each named with that subject. */
+export function unsettledFactCitations(hordeDir: string, text: string): string[] {
+  const cited = new Set([...text.matchAll(/\bT(\d+)\b/g)].map((m) => Number(m[1])));
+  return listFacts(hordeDir)
+    .filter((fact) => cited.has(fact.id) && factUnsettled(hordeDir, fact))
+    .map((fact) => `T${fact.id} (provisional on ${fact.provisionalOn})`);
 }
 
 /** Record a second reporter of the same fact on its heading, mirroring findings. */
@@ -46,9 +91,10 @@ function addFactCorroborator(content: string, entry: FactEntry, author: string):
   return lines.join("\n");
 }
 
-function factEntry(author: string, text: string, id: number, deltaOf?: number): string {
+function factEntry(author: string, text: string, id: number, deltaOf?: number, provisionalOn?: string): string {
   const delta = deltaOf !== undefined ? `  delta=#T${deltaOf}` : "";
-  return `\n- [T${id}] ${text}  @${author}${delta}\n`;
+  const prov = provisionalOn ? `  prov=${provisionalOn}` : "";
+  return `\n- [T${id}] ${text}  @${author}${delta}${prov}\n`;
 }
 
 interface AddFactResult {
@@ -117,8 +163,9 @@ export async function addFact(
       if (hit) return accrete(hit);
     }
     const id = facts.reduce((max, fact) => Math.max(max, fact.id), 0) + 1;
-    appendEntry(factsPath, factEntry(author, body, id, deltaOf));
-    return { fact: { id, text: body, author, deltaOf, corroborators: [], headingLine: -1 } };
+    const provisionalOn = provisionalSubject(hordeDir, body);
+    appendEntry(factsPath, factEntry(author, body, id, deltaOf, provisionalOn));
+    return { fact: { id, text: body, author, deltaOf, corroborators: [], provisionalOn, headingLine: -1 } };
   });
 }
 

@@ -2,12 +2,17 @@ import { postBoard } from "../ledger/board.js";
 import { assertClaim, confirmClaim, contestClaim, listClaims, retractClaim, supersedeClaim } from "../ledger/claims.js";
 import type { ClaimEntry } from "../ledger/claims.js";
 import { listConcerns } from "../ledger/concerns.js";
-import { addFact, listFacts } from "../ledger/facts.js";
-import { addFinding, findingSummaries, verifyFinding } from "../ledger/findings.js";
+import { addFact, factUnsettled, listFacts, unsettledFactCitations } from "../ledger/facts.js";
+import type { FactEntry } from "../ledger/facts.js";
+import * as path from "node:path";
+import { CLUSTER_THRESHOLD } from "../ledger/clusters.js";
+import { collaborationState } from "../ledger/collaboration.js";
+import { addFinding, amendFinding, answerCitations, findingReviewState, findingRevision, findingSummaries, listFindingsForRun, pendingReviewsForMember, staleAnswerCitations, verifyFinding } from "../ledger/findings.js";
+import { textOverlap } from "../ledger/text-match.js";
 import { addIdea, claimIdea, dropIdea, finishIdea, listIdeas, ruleOutIdea } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
 import { claimResource, listResources } from "../ledger/resources.js";
-import { cleanStopRequestedFor, confirmSolved, contestSolved, markSolved } from "../ledger/run-signals.js";
+import { cleanStopRequestedFor, confirmSolved, contestSolved, markSolved, readSolved } from "../ledger/run-signals.js";
 import { oneLine } from "../format.js";
 import { validateFindingResourceCitations } from "../citations.js";
 import { idleHint } from "./hints.js";
@@ -34,6 +39,10 @@ interface ActionResult {
   noop?: boolean;
   /** For confirm-solved: whether this confirmation validated the proposal or joined an earlier one. */
   confirmation?: "credited" | "additional";
+  /** For amend: the revisions the edit moved between, and whether the claim line changed; reattest reads them. */
+  previousRevision?: string;
+  revision?: string;
+  titleChanged?: boolean;
 }
 
 interface ActionContext {
@@ -43,6 +52,12 @@ interface ActionContext {
   runId: string | undefined;
   /** True when a clean stop is pending for this member. */
   cleanStop: boolean;
+  /** The member's role instruction, when one was assigned. */
+  role: string | undefined;
+}
+
+export function isVerifierRole(role: string | undefined): boolean {
+  return /verifier/i.test(role ?? "");
 }
 
 type ActionHandler = (ctx: ActionContext) => ActionResult | Promise<ActionResult>;
@@ -177,7 +192,23 @@ async function findingAction(ctx: ActionContext): Promise<ActionResult> {
     };
   }
   const advisory = concernAdvisory ? `\nNote: ${concernAdvisory}` : "";
-  return { text: `Recorded finding F${finding.id} [${concern}]: ${finding.title}${advisory}`, id: finding.id };
+  return { text: `Recorded finding F${finding.id} [${concern}]: ${finding.title}${advisory}${unregisteredHarness(ctx, text)}`, id: finding.id };
+}
+
+const HARNESS_PATH = /\bartifacts\/[\w./-]+\.(?:py|js|mjs|cjs|ts|sh|go|rs|rb|pl)\b/g;
+
+/**
+ * A driver or harness every member rewrote because nobody registered it: a runnable under
+ * artifacts/ that no resource note and no published artifact names is pointed at `resource`.
+ */
+function unregisteredHarness(ctx: ActionContext, text: string): string {
+  const paths = [...new Set(text.match(HARNESS_PATH) ?? [])];
+  if (!paths.length) return "";
+  const known = listResources(ctx.hordeDir).map((resource) => `${resource.name} ${resource.note ?? ""}`).join("\n");
+  const published = ctx.runId ? collaborationState(ctx.hordeDir, ctx.runId).artifacts.map((artifact) => artifact.path) : [];
+  const unregistered = paths.filter((file) => !known.includes(file) && !published.some((artifact) => file.endsWith(artifact)));
+  if (!unregistered.length) return "";
+  return `\nNote: ${unregistered.join(", ")} looks like a harness no R# covers. Claim it with 'horde resource' (name in text, path in note) so other members reuse it instead of writing their own.`;
 }
 
 function concernsAction({ hordeDir }: ActionContext): ActionResult {
@@ -209,6 +240,26 @@ async function verifyAction(ctx: ActionContext): Promise<ActionResult> {
   };
 }
 
+async function amendAction(ctx: ActionContext): Promise<ActionResult> {
+  const { hordeDir, member, params, runId } = ctx;
+  validateFindingResourceCitations(hordeDir, runId, params.text ?? "");
+  const { finding, previous, titleChanged } = await amendFinding(hordeDir, requireRun(ctx), member, {
+    id: requireId(params),
+    text: params.text,
+    note: params.note,
+  });
+  return {
+    text:
+      `Amended F${finding.id}: ${finding.title}. Revision ${previous.slice(0, 12)} is superseded by the new text; ` +
+      "reviews stay pinned to the revision they checked. " +
+      (titleChanged ? "The claim line changed, so reviewers must review again." : "Ask reviewers to reattest if what they checked is unchanged, or to review again."),
+    id: finding.id,
+    previousRevision: previous,
+    revision: findingRevision(finding),
+    titleChanged,
+  };
+}
+
 async function factAction({ hordeDir, member, params }: ActionContext): Promise<ActionResult> {
   const { fact, duplicateOf, corroborationFull } = await addFact(
     hordeDir,
@@ -225,13 +276,26 @@ async function factAction({ hordeDir, member, params }: ActionContext): Promise<
       id: fact.id,
     };
   }
-  return { text: `Recorded fact T${fact.id}: ${fact.text}`, id: fact.id };
+  const provisional = fact.provisionalOn
+    ? `\nT${fact.id} is provisional: ${fact.provisionalOn} is still auditing its subject. The answer may not quote it as settled until ${fact.provisionalOn} is closed or resolved; cite that closure with it.`
+    : "";
+  return { text: `Recorded fact T${fact.id}: ${fact.text}${provisional}`, id: fact.id };
 }
 
 function factsAction({ hordeDir }: ActionContext): ActionResult {
   const facts = listFacts(hordeDir);
   if (facts.length === 0) return { text: "FACTS.md has no facts yet" };
-  return { text: facts.map((fact) => `T${fact.id} ${fact.text} @${fact.author}`).join("\n") };
+  const status = (fact: FactEntry): string => {
+    if (!fact.provisionalOn) return "";
+    return factUnsettled(hordeDir, fact) ? ` [provisional: ${fact.provisionalOn} open]` : ` [was provisional on ${fact.provisionalOn}, now closed]`;
+  };
+  return { text: facts.map((fact) => `T${fact.id} ${fact.text} @${fact.author}${status(fact)}`).join("\n") };
+}
+
+/** An answer that quotes a provisional fact as settled asserts what an open idea is still auditing. */
+function unsettledAnswerFacts(ctx: ActionContext, text: string): string | undefined {
+  const unsettled = unsettledFactCitations(ctx.hordeDir, text);
+  return unsettled.length ? `quotes provisional ${unsettled.join(", ")}` : undefined;
 }
 
 async function assertAction({ hordeDir, member, params }: ActionContext): Promise<ActionResult> {
@@ -288,13 +352,44 @@ async function ideaAction({ hordeDir, member, params }: ActionContext): Promise<
   return { text: `Added idea #${idea.id}: ${idea.text}`, id: idea.id };
 }
 
-async function claimAction({ hordeDir, member, params }: ActionContext): Promise<ActionResult> {
+/**
+ * The verifier reviews before it investigates: a verifier that claimed ideas and filed the
+ * run's main findings left its first session with zero scoped reviews while its summary
+ * reported verification complete. Any verdict counts; a finding it cannot reproduce gets a
+ * refuting or inconclusive review, not silence.
+ */
+function checkVerifierClaim(ctx: ActionContext): void {
+  if (!ctx.runId || !isVerifierRole(ctx.role)) return;
+  const pending = pendingReviewsForMember(ctx.hordeDir, ctx.runId, ctx.member);
+  if (!pending.length) return;
+  throw new Error(
+    `horde: you are the verifier and ${pending.length} finding(s) by other members await your review: ` +
+      `${pending.map((f) => `F${f.id}`).join(", ")}. Review each (any verdict, with its unchecked scope) before claiming an idea`,
+  );
+}
+
+/** Findings of this run that already have an independent corroborator or a full review and overlap the idea. */
+function reproducedOverlap(ctx: ActionContext, idea: Idea): string {
+  if (!ctx.runId) return "";
+  const state = collaborationState(ctx.hordeDir, ctx.runId);
+  const settled = listFindingsForRun(ctx.hordeDir, ctx.runId).filter((f) =>
+    f.supersededBy === undefined && (f.corroborators.length > 0 || findingReviewState(f, state.reviews, state.messages).status === "full"));
+  const match = textOverlap(settled.map((f) => f.title), idea.text);
+  if (!match || Math.max(match.jaccard, match.overlap) < CLUSTER_THRESHOLD) return "";
+  const finding = settled[match.index];
+  if (!finding) return "";
+  return `\nNote: F${finding.id} ("${finding.title}") is already independently reproduced; a further reproduction adds nothing. Attach a new vector or distinct evidence with deltaOf: ${finding.id}, or take a different slice.`;
+}
+
+async function claimAction(ctx: ActionContext): Promise<ActionResult> {
+  const { hordeDir, member, params } = ctx;
+  checkVerifierClaim(ctx);
   const { idea, overlap } = await claimIdea(hordeDir, member, requireId(params));
   const warning = overlap
     ? `\nWarning: #${overlap.id} held by ${overlap.owner} covers a similar slice ("${overlap.text}"). ` +
       `Coordinate: take a distinct angle, or attach evidence to #${overlap.id} with a finding or contest.`
     : "";
-  return { text: `Claimed #${idea.id}: ${idea.text}${warning}`, id: idea.id };
+  return { text: `Claimed #${idea.id}: ${idea.text}${warning}${reproducedOverlap(ctx, idea)}`, id: idea.id };
 }
 
 async function resourceAction(ctx: ActionContext): Promise<ActionResult> {
@@ -341,12 +436,31 @@ function resourcesAction({ hordeDir }: ActionContext): ActionResult {
   };
 }
 
+/**
+ * An answer that cites a superseded finding, or one amended since the proposal pinned it, ships a
+ * stale reading as the run's result. The proposer cites the current text instead; a validator is
+ * refused until the proposer re-proposes.
+ */
+function staleAnswer(ctx: ActionContext, text: string, cites?: Record<string, string>): string | undefined {
+  const runId = requireRun(ctx);
+  const stale = staleAnswerCitations(listFindingsForRun(ctx.hordeDir, runId), text, cites);
+  if (!stale.length) return undefined;
+  return `cites ${stale.join(", ")}`;
+}
+
 async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
+  const runId = requireRun(ctx);
+  const text = ctx.params.text ?? "";
+  const stale = staleAnswer(ctx, text);
+  if (stale) throw new Error(`horde: the answer ${stale}; cite the current findings and propose again`);
+  const unsettled = unsettledAnswerFacts(ctx, text);
+  if (unsettled) throw new Error(`horde: the answer ${unsettled}; close the idea or resolve the claim first, or leave the fact out`);
   const { signal, alreadySolved } = await markSolved(
     ctx.hordeDir,
-    requireRun(ctx),
+    runId,
     ctx.member,
     ctx.params.text,
+    answerCitations(listFindingsForRun(ctx.hordeDir, runId), text),
   );
   return {
     text: alreadySolved
@@ -356,7 +470,13 @@ async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
 }
 
 async function confirmSolvedAction(ctx: ActionContext): Promise<ActionResult> {
-  const answer = await confirmSolved(ctx.hordeDir, requireRun(ctx), ctx.member, ctx.params.text, ctx.params.revision);
+  const runId = requireRun(ctx);
+  const proposal = readSolved(path.join(ctx.hordeDir, "runs", runId));
+  const stale = proposal ? staleAnswer(ctx, proposal.text, proposal.cites) : undefined;
+  if (stale) throw new Error(`horde: the pending answer ${stale}; it cannot be validated until ${proposal?.member} re-proposes against the current findings`);
+  const unsettled = proposal ? unsettledAnswerFacts(ctx, proposal.text) : undefined;
+  if (unsettled) throw new Error(`horde: the pending answer ${unsettled}; close the idea or resolve the claim before validating it`);
+  const answer = await confirmSolved(ctx.hordeDir, runId, ctx.member, ctx.params.text, ctx.params.revision);
   if (!answer.ok) throw new Error(`horde: ${answer.reason}`);
   if (answer.reason !== "validated") {
     return {
@@ -378,9 +498,23 @@ async function contestSolvedAction(ctx: ActionContext): Promise<ActionResult> {
   };
 }
 
+/** A result line that reports a confirmed negative: the lead is dead, not merely finished. */
+const NEGATIVE_RESULT =
+  /\b(?:not (?:exploitable|vulnerable|reachable|reproducible|affected)|does not reproduce|could not reproduce|cannot be reproduced|confirmed negative|negative result|dead end|ruled? out|no (?:vulnerability|exploit|issue|bug|weakness) (?:found|present|exists))\b/i;
+
 async function doneAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params } = ctx;
-  const idea = await finishIdea(hordeDir, member, requireId(params), closeNote(params));
+  const note = closeNote(params) ?? "";
+  // Four confirmed negatives were recorded only as done notes and prose, so the next run on the
+  // same target re-walked them. A negative closes with rule-out, which later runs can read.
+  const negative = NEGATIVE_RESULT.exec(note);
+  if (negative) {
+    throw new Error(
+      `horde: "${negative[0]}" reads as a confirmed negative; close #${requireId(params)} with 'horde rule-out' and the same note so later runs do not retry it. ` +
+        "Use done only for work that produced a result.",
+    );
+  }
+  const idea = await finishIdea(hordeDir, member, requireId(params), note || undefined);
   return closedIdea(ctx, idea, `Done #${idea.id}: ${idea.text}`);
 }
 
@@ -422,6 +556,7 @@ const HANDLERS: Partial<Record<HordeToolParams["action"], ActionHandler>> = {
   "contest-solved": contestSolvedAction,
   concerns: concernsAction,
   verify: verifyAction,
+  amend: amendAction,
 };
 
 export async function runHordeAction(
@@ -429,9 +564,10 @@ export async function runHordeAction(
   member: string,
   params: HordeToolParams,
   runId: string | undefined = process.env.PI_HORDE_RUN,
-  tracking: { attempt?: string; requestId?: string } = {},
+  tracking: { attempt?: string; requestId?: string; role?: string | undefined } = {},
 ): Promise<ActionResult> {
   const cleanStop = Boolean(runId && cleanStopRequestedFor(hordeDir, runId, member));
+  const role = tracking.role;
   const ctx: EventContext = { hordeDir, runId: runId ?? "", actor: member, ...tracking, requestId: params.requestId ?? tracking.requestId };
   if (COLLABORATION_ACTIONS.has(params.action)) {
     if (!runId) throw new Error("horde: collaboration needs an active run");
@@ -444,7 +580,7 @@ export async function runHordeAction(
   const intent = audit ? await recordEvent({ ...ctx, requestId: ctx.requestId ? `${ctx.requestId}:intent` : undefined }, params.action, { outcome: "intent", payload: { input: params } }) : undefined;
   try {
     const refused = cleanStop && NEW_WORK_ACTIONS.has(params.action);
-    const result = refused ? { text: CLEAN_STOP_NOTICE } : await handler({ hordeDir, member, params, runId, cleanStop });
+    const result = refused ? { text: CLEAN_STOP_NOTICE } : await handler({ hordeDir, member, params, runId, cleanStop, role });
     // A refusal and a no-op both record `noop`; the no-op keeps `result.noop` so the graph and the
     // report can tell an absorbed duplicate from refused work.
     if (audit) await recordEvent(ctx, params.action, { outcome: refused || result.noop ? "noop" : "applied", payload: { input: params, result }, parents: intent ? [intent.eventId] : [] });

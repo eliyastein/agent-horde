@@ -58,17 +58,36 @@ export interface RunSummaryInput {
   memberPosts?: Map<string, string> | undefined;
 }
 
+interface MemberContribution {
+  findings: number;
+  verified: number;
+  reviewed: number;
+  /** Current-revision reviews by this member with nothing left unchecked. */
+  fullScope: number;
+  /** Other members' current findings this member has not reviewed at their current revision. */
+  unreviewed: number[];
+  ideasClosed: number;
+  /** True for the member that held the verifier role; its coverage line is printed. */
+  verifier: boolean;
+}
+
 /** Findings filed, verified, and claimed ideas closed by one member, for the summary. */
 function memberContribution(
   name: string,
   findings: FindingEntry[],
   ideas: Idea[],
   reviews: ReviewRecord[] = [],
-): { findings: number; verified: number; reviewed: number; ideasClosed: number } {
+  verifier = false,
+): MemberContribution {
+  const current = findings.filter((f) => f.supersededBy === undefined);
+  const ownReview = (f: FindingEntry): ReviewRecord | undefined => findingReviewState(f, reviews).reviews.find((r) => r.actor === name);
   return {
+    verifier,
     findings: findings.filter((finding) => finding.author === name).length,
     verified: findings.filter((finding) => finding.verifiedBy === name).length,
-    reviewed: findings.filter((f) => f.supersededBy === undefined && findingReviewState(f, reviews).reviews.some((r) => r.actor === name)).length,
+    reviewed: current.filter((f) => ownReview(f) !== undefined).length,
+    fullScope: current.filter((f) => !ownReview(f)?.unchecked.trim() && ownReview(f) !== undefined).length,
+    unreviewed: current.filter((f) => f.author !== name && ownReview(f) === undefined).map((f) => f.id),
     ideasClosed: ideas.filter((idea) => idea.mark === "x" && idea.owner === name).length,
   };
 }
@@ -82,8 +101,10 @@ export const VERIFIER_ROLE =
   "You are the verifier. Reproduce the highest-importance unverified findings first. Record each " +
   "check with 'horde inspect', 'horde attach', then 'horde review': name the exact revision, assertions " +
   "checked, unchecked assertions, method, evidence refs and support. Source reasoning is not a live reproduction. When a finding does not reproduce, send a blocking challenge to its owner and contest its claim C# if one exists, or " +
-  "file a finding with supersedes: F# under the same idea and concern. Do not claim ideas or " +
-  "file findings of your own unless nothing is left to verify.";
+  "file a finding with supersedes: F# under the same idea and concern. The tool refuses your idea claims " +
+  "while other members' findings await your review, and a session that closes with high-importance " +
+  "findings unreviewed is replaced by a fresh one that owes them. Your summary's coverage sentence is " +
+  "derived from your review records, so name what you left unreviewed rather than calling the work verified.";
 
 const COLLABORATION_PROTOCOL = `
 Collaboration loop:
@@ -114,14 +135,29 @@ Collaboration loop:
   review can accept a document; runnable outputs require tested/reproduced support. Document acceptance
   does not establish execution or remove finding limitations. Kind is immutable. Updates need target=A#
   and revision=previous-hash; changed criteria/dependencies require changed file bytes and a fresh review.
-  Ask a peer to review A# before settling.
-- Review with target=F#/A#, revision=current-hash, checked=assertions-and-method, unchecked=remaining-gaps,
-  verdict=supports|partially-supports|refutes|inconclusive, support=tested|reproduced|derived|sourced,
-  refs=[E#], text=observations. Empty unchecked means you checked the whole stated claim.
+  Ask a peer to review A# before settling. Once other artifacts pin your A# (a spec they build against),
+  its revision is a frozen contract: route clarifications to a follow-up, and republish only with text=
+  naming the change and whether behaviour is unchanged, so dependents can reattest instead of re-reviewing.
+- Review with target=F#/A#, revision=current-hash, checked=assertions-and-method, unchecked=in-criteria-gaps,
+  limits=out-of-criteria-disclosures, verdict=supports|partially-supports|refutes|inconclusive,
+  support=tested|reproduced|derived|sourced, refs=[E#], text=observations. Judge unchecked against the
+  target's stated claim or criteria: a gap inside them keeps acceptance open until a full review covers it;
+  a limit outside them (one engine, no hardened deployment) goes in limits and is recorded on the
+  acceptance, never as a blocker. Empty unchecked means you checked the whole stated scope. A partial
+  verdict refutes nothing and opens no challenge: the acceptance names what it left unchecked. Only
+  refutes opens a challenge to the owner; send a challenge yourself when a partial check found a defect.
   To avoid a separate attach call, review may include evidenceText=full-observation and optional
   artifactPath instead of (or alongside) refs. Evidence and review commit atomically with separate E#/V#
   IDs and the same independence/revision checks. Keep text a decision summary; do not repeat the raw
   evidence in checked, text and evidenceText. The separate attach/review workflow remains available.
+- When a target you reviewed is re-hashed without changing what you checked (an amended sentence, a
+  republish against a corrected dependency, a spec clarification), horde reattest target=F#/A#
+  revision=current-hash evidenceText=what-you-compared text=why carries your earlier review forward
+  instead of repeating it. Reattest only what is unchanged; a changed claim needs a new review.
+- Fix wrong prose in your own finding with horde amend id=F# text=full-replacement note=why: the
+  revision changes, reviews stay pinned to what they checked, and reviewers reattest or re-review.
+  A reviewer's unchecked text or refutation that contradicts a sentence of your body is a request to
+  amend or supersede, not to leave the sentence standing. Another member corrects you with supersedes.
 - horde resource-state target=R# resourceState=building|ready|broken|retired text=health-result ports=[port]
   leaseSeconds=300 generation=last-generation. Ready needs refs=[health-evidence-E#]. Read collaboration first.
   Only the lease holder mutates a lab. Expired leases require checking its state before takeover.
@@ -172,7 +208,9 @@ Protocol:
    deletion is refused: reproducers under the run artifacts directory are retained as evidence.
 4. Record each checkable environment fact once with 'horde fact' (include the command and the
    observed result). If it extends an existing fact, pass delta-of: T# instead of restating it.
-   Read FACTS.md before re-deriving anything, and do not duplicate it.
+   Read FACTS.md before re-deriving anything, and do not duplicate it. A fact about what an open
+   idea is still auditing, or what a contested claim disputes, is recorded as provisional on it:
+   the answer may not quote it until that idea closes or the claim resolves.
 5. Record each finding with 'horde finding'. The claimed idea id and a concern slug are required.
    A concern is a short stable slug for the subject or issue, for example auth-token-refresh or
    chapter-3-voice; different subjects or entry points need different concerns and separate
@@ -185,6 +223,10 @@ Protocol:
    from primary documents, or speculative. If the tool
    returns an existing F#, cite that id and file only distinct evidence with delta-of: F# and the
    exact same concern. Prefer attach for new evidence on an existing finding; stronger follow-up reviews are welcome.
+   Before reproducing an existing F#, run 'horde findings': one with a corroborator or a full-scope
+   review is settled, and a further reproduction is refused. Bring a new vector or distinct evidence
+   as delta-of: F#, or take a different slice. Register the harness, driver, lab or corpus you build
+   as an R# before others need it, with its path in note, so they reuse it instead of rewriting it.
    If your finding corrects or overturns an earlier finding, pass supersedes: F#. Cite R# for every run artifact. If it contradicts an earlier
    finding, use supersedes: F#, or record a claim with assert/contest, instead of leaving the
    correction in prose. Independent review is recorded by another member at the exact revision.
@@ -192,8 +234,9 @@ Protocol:
    inconclusive reviews remain reviewed-with-gaps. Neither a review count nor full claim coverage
    automatically establishes runtime exploitation. Keep source checks, controlled tests, and
    end-to-end reproductions distinct; legacy verified= headings are not the scoped-review count.
-6. When a lead is a confirmed negative, use 'horde rule-out' so later runs do not retry it.
-   Use 'horde drop' only to return work you are not pursuing to the open pool.
+6. When a lead is a confirmed negative, use 'horde rule-out' so later runs do not retry it; 'done'
+   with a negative result line is refused. Contradicting evidence attached to an idea is a rule-out
+   candidate for its owner. Use 'horde drop' only to return work you are not pursuing to the open pool.
 7. When two members actually disagree on a hypothesis, 'horde assert' it and use
    'confirm'/'contest'/'retract' with primary evidence. Do not use CLAIMS.md for work ownership.
 8. Post progress and dead ends in one or two lines so others do not repeat them. Re-read
@@ -207,8 +250,12 @@ Protocol:
     Continue distinct claimed work while another member validates it. For a broad task,
     one finding is never the complete answer: every current-run priority idea must first be done or
     ruled out. Call 'horde confirm-solved' only after independent verification, or
-    'horde contest-solved' with what is missing. Pass the revision from ANSWER.md or
-    'horde inspect' target=answer to either action, so stale reviews cannot approve a newer proposal.
+    'horde contest-solved' with what is missing, naming the open ideas (#12, #14) that block it: the
+    proposal reopens for validation once every idea it named is done or ruled out. Pass the revision
+    from ANSWER.md or 'horde inspect' target=answer to either action, so stale reviews cannot approve
+    a newer proposal. An answer that cites a superseded F# or quotes a provisional T# is refused, and a
+    pending proposal is withdrawn for re-proposal when a finding it cites is superseded. A request to
+    the proposer or a validator about the pending answer (target=answer) is served with the blockers.
     The parent enforces coverage before wind-down.
 
 ${COLLABORATION_PROTOCOL}
@@ -315,7 +362,7 @@ function memberElapsed(m: MemberState, now: number): string {
 function memberSummarySection(
   m: MemberState,
   now: number,
-  stats?: { findings: number; verified: number; reviewed: number; ideasClosed: number },
+  stats?: MemberContribution,
   resets: MemberReset[] = [],
   memberPosts?: Map<string, string>,
 ): string[] {
@@ -324,9 +371,17 @@ function memberSummarySection(
   lines.push(`${m.turns} turns, ${m.toolCalls} tool calls, ${tokens}, ${memberElapsed(m, now)}`);
   if (stats) {
     lines.push(
-      `${stats.findings} findings filed, ${stats.reviewed} independently reviewed (scoped), ${stats.verified} legacy verification labels, ` +
+      `${stats.findings} findings filed, ${stats.reviewed} independently reviewed (scoped: ${stats.fullScope} full, ` +
+        `${stats.reviewed - stats.fullScope} with unchecked scope), ${stats.verified} legacy verification labels, ` +
         `${stats.ideasClosed} claimed idea(s) closed`,
     );
+    // The coverage sentence comes from the review records, not from the member's prose: a
+    // verifier's "all work is verified" over twelve reviews with unchecked scope stated zero.
+    if (stats.verifier) {
+      const total = stats.reviewed + stats.unreviewed.length;
+      const owed = stats.unreviewed.length ? `; unreviewed: ${stats.unreviewed.map((id) => `F${id}`).join(", ")}` : "";
+      lines.push(`verifier coverage from review records: ${stats.reviewed} of ${total} other members' current findings reviewed, ${stats.fullScope} at full scope${owed}`);
+    }
   }
   if (resets.length > 0) {
     lines.push(`resets: ${resets.length} (${resets.map((reset) => reset.reason).join("; ")})`);
@@ -411,7 +466,7 @@ export function summaryMarkdown(run: RunSummaryInput, now: number = Date.now()):
   const ideas = run.ideas ?? [];
   const haveLedger = findings.length > 0 || ideas.length > 0;
   for (const m of run.members) {
-    const stats = haveLedger ? memberContribution(m.name, findings, ideas, run.scopedReviews) : undefined;
+    const stats = haveLedger ? memberContribution(m.name, findings, ideas, run.scopedReviews, m.name === run.verifier) : undefined;
     lines.push(...memberSummarySection(m, now, stats, resetsOf(m.name, run.resets), run.memberPosts));
   }
   return lines.join("\n");

@@ -154,17 +154,19 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
 | `list`, `findings`, `facts`, `claims`, `resources`, `concerns` | print a ledger |
 | `post` | append a message to BOARD.md |
 | `idea` | add an open checklist item; a near-duplicate returns the existing id |
-| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id |
+| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id; `done` with a confirmed-negative result line is refused in favour of `rule-out` |
 | `finding` | file under a claimed `idea` with a `concern` and `support`; `importance` and `confidence` are optional; `deltaOf: F#` adds distinct evidence, `supersedes: F#` corrects |
 | `verify` | record your own reproduction of F#id with the support level you reached |
-| `fact` | record a checkable fact; `deltaOf: T#` extends one |
+| `amend` | rewrite the body prose of your own F#id (`text`) with a `note` saying why; the revision changes, reviews stay pinned to what they checked, earlier verification notes are kept as history of the previous revision, and the legacy `verified=` label and corroborators are dropped |
+| `fact` | record a checkable fact; `deltaOf: T#` extends one; a fact about what an open idea or contested claim is still auditing is recorded as provisional on it |
 | `assert`, `confirm`, `contest`, `retract`, `supersede` | create or move claim C#id |
 | `resource` | claim a shared dataset, harness, corpus, or sandbox by name, with an optional `cleanup` command |
 | `solved`, `confirm-solved`, `contest-solved` | propose, validate, or refute the goal answer |
 | `message`, `inbox`, `ack`, `respond`, `resolve`, `defer` | targeted threads: question, blocker, review-request, challenge, handoff, decision |
 | `attach` | add supporting, contradicting, or extending evidence to a target |
-| `review` | record a revision-pinned check with explicit `checked` and `unchecked` scope, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call |
-| `artifact` | publish a file under `artifacts/` with `artifactKind`, `criteria`, and revision-pinned `dependsOn` |
+| `review` | record a revision-pinned check with explicit `checked` and `unchecked` (in-criteria gaps) scope, `limits` outside the criteria, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call |
+| `reattest` | carry your earlier review of F#/A# forward to its current revision, with evidence that what you checked is unchanged; refused across a changed artifact criteria or kind, a changed finding claim line, or a revision no `amend` started from |
+| `artifact` | publish a file under `artifacts/` with `artifactKind`, `criteria`, and revision-pinned `dependsOn`; republishing a revision other artifacts pin needs `text` naming the change |
 | `resource-state` | publish building, ready, broken, or retired state with a lease, ports, and health evidence |
 | `inspect`, `collaboration` | one record in full (`F#`, `I#`, `R#`, `A#`, `E#`, `V#`, `Q#`, `answer`), or a paged index |
 
@@ -191,18 +193,40 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   validated and every idea this run created or its members hold is done or ruled out. With no
   other member running, or no validation within `PI_HORDE_SOLVED_CONFIRM_MS`, an uncontested
   proposal commits as `solved-unvalidated`. Findings no other member reproduced hold wind-down
-  while other members run, unless `PI_HORDE_ALLOW_UNVERIFIED=1`.
+  while other members run, unless `PI_HORDE_ALLOW_UNVERIFIED=1`. A proposal pins the revision of
+  every finding it cites. An answer that cites a superseded F# or quotes a provisional T# is
+  refused at `solved` and at `confirm-solved`; a pending proposal whose cited finding is
+  superseded or amended later is withdrawn (`solved-withdrawn`) for re-proposal. A contest that names idea ids reopens the proposal under a new revision
+  (`solved-reopened`) once every named idea is done or ruled out, with the citations it pinned;
+  if a cited finding changed or a quoted fact is still provisional by then, it is withdrawn instead. Repair serves a request about
+  the pending answer (`target=answer`) with the blockers.
 - **Reviews are revision-pinned.** A runnable artifact needs a full-scope `tested` or
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)
-  accepts a full-scope `sourced` or `derived` review against its criteria. Changing criteria or
-  dependencies needs changed bytes and a fresh review. Open blockers and challenges block
-  acceptance; `defer` keeps the debt visible, the recipient can still `respond` to a deferred
-  request, and the requester then resolves it. A challenger can withdraw its own blocking
-  challenge on an F# or A# before any response by recording a supporting review of the current
-  revision and resolving with evidence on it; limits that review discloses remain acceptance debt.
-  The blocking challenge a `partially-supports` review raises is cleared when a different
-  non-owner member records a full-scope `supports` review of the same revision; the resolution
-  names both reviews. Acceptance names an open blocker as `blocked by Q#`.
+  accepts a full-scope `sourced` or `derived` review against its criteria. `unchecked` names gaps
+  inside the target's stated claim or criteria and keeps acceptance open; `limits` names
+  disclosures outside the criteria and is recorded on the acceptance (`Accepted with limits` in
+  ACCEPTANCE.md and COLLABORATION.md), never as a blocker. A `partially-supports` verdict refutes
+  nothing and opens no challenge: the acceptance names the review and what it left unchecked, and
+  another member's full-scope review settles it. Only `refutes` opens a challenge. Changing
+  criteria or dependencies needs changed bytes and a fresh review; republishing a revision that
+  other artifacts pin needs `text` naming the change, and the owner of each dependent is handed a
+  repin request when a pinned dependency is superseded or re-hashed. `reattest` carries a
+  reviewer's earlier review forward to the current revision with evidence that the checked
+  behaviour is unchanged; the parent prefers prior reviewers when assigning a re-review. Open
+  blockers and challenges block acceptance; `defer` keeps the debt visible, the recipient can
+  still `respond` to a deferred request, and the requester then resolves it. A challenger can
+  withdraw its own blocking challenge on an F# or A# before any response by recording a
+  supporting review of the current revision and resolving with evidence on it; limits that
+  review discloses remain acceptance debt. Acceptance names an open blocker as `blocked by Q#`.
+- **Verifier.** The verifier's idea claims are refused while other members' findings await its
+  review at their current revision; the pending F# list follows every review, reattest and board
+  post. A verifier whose session closes with critical or high-importance findings unreviewed is
+  reset once more into a fresh session that owes them, within `PI_HORDE_RESET_CAP`. SUMMARY.md
+  derives its coverage sentence from the review records and names the unreviewed F#.
+- **Reproductions.** A finding with an independent corroborator or a full-scope review is
+  settled: a claim whose text overlaps it is told to bring a new vector as `deltaOf`, and a
+  third duplicate report is dropped. A finding that cites a runnable under `artifacts/` no R# or
+  A# covers is told to register it.
 - **Inbox.** Targeted messages are inserted at turn boundaries, for at most
   `PI_HORDE_INBOX_TURNS` extra turns per session. A recipient answers with `respond`; `ack` is an
   optional first step that signals intent. Delivery is a context insertion, not

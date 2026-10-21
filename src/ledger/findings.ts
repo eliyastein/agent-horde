@@ -242,7 +242,7 @@ function findingEntry(
   if (meta.concern) tag += ` concern=${meta.concern}`;
   if (meta.deltaOf !== undefined) tag += ` delta=#F${meta.deltaOf}`;
   if (meta.supersedes !== undefined) tag += ` supersedes=#F${meta.supersedes}`;
-  return `\n### ${formatClock(now)} ${author}${tag}\n${neutralizeHeadings(text.trim())}\n`;
+  return `\n### ${formatClock(now)} ${author}${tag}\n${neutralizeNotes(neutralizeHeadings(text.trim()))}\n`;
 }
 
 /** Record another independent member on an existing finding's heading. */
@@ -493,6 +493,96 @@ export async function verifyFinding(
     writeFileAtomic(findingsPath, lines.join("\n"));
     return { finding: { ...entry, verifiedBy: entry.verifiedBy ?? member, verifiedSupport: entry.verifiedSupport ?? support }, alreadyBy: entry.verifiedBy };
   });
+}
+
+interface AmendFindingInput {
+  id: number;
+  /** The whole replacement text: title line first, as for `finding`. */
+  text: string | undefined;
+  /** Why the prose changed; recorded in the body so the revision carries its own errata note. */
+  note: string | undefined;
+}
+
+/**
+ * Rewrite a finding's prose in place at its current revision. Evidence appends cannot fix a
+ * sentence and `supersedes` replaces whole findings, so a refuted sentence stayed in FINDINGS.md
+ * at freeze. The subject hash changes, reviews of the old revision stay pinned to it, and
+ * reviewers reattest when what they checked is unchanged. Verification notes are kept.
+ */
+export async function amendFinding(
+  hordeDir: string,
+  runId: string,
+  member: string,
+  { id, text, note }: AmendFindingInput,
+): Promise<{ finding: FindingEntry; previous: string; titleChanged: boolean }> {
+  const body = stripLeadingId(requireText(text, "amend")).trim();
+  const reason = oneLineReason(note);
+  return withHordeLock(hordeDir, member, () => {
+    const findingsPath = hordePaths(hordeDir).findings;
+    const content = readStampedFindings(findingsPath);
+    const all = parseFindings(content);
+    const entry = all.find((f) => f.runId === runId && f.id === id);
+    if (!entry) throw new Error(`horde: finding F${id} is not in run ${runId}; amend only this run's findings`);
+    if (entry.author !== member) throw new Error(`horde: F${id} belongs to ${entry.author}; a correction by another member is a finding with supersedes: ${id}`);
+    if (entry.supersededBy !== undefined) throw new Error(`horde: F${id} was superseded by F${entry.supersededBy}; amend the successor`);
+    const scoped = all.filter((f) => f.runId === runId && f.id !== id);
+    checkBodyReferences(scoped, { runId, author: member, body, meta: { supersedes: entry.supersedes, deltaOf: entry.deltaOf } });
+    const previous = findingRevision(entry);
+    const subjectEnd = entry.body.search(/\n(?:Verified|Reviewed) by /);
+    // Verification notes were written against the previous subject; they stay as history, labelled
+    // as such, and the heading's legacy verified label goes so the new text reads as unreviewed.
+    const notes = subjectEnd === -1 ? "" : `\n${entry.body.slice(subjectEnd)}`;
+    const predate = notes ? ` (verification notes below were recorded against revision ${previous.slice(0, 12)})` : "";
+    const amended = `${neutralizeNotes(neutralizeHeadings(body))}\nAmended ${formatClock(new Date())} by ${member}: ${reason}${predate}${notes}`;
+    const lines = content.split("\n");
+    // Corroborators and the legacy verifier confirmed the previous text; they confirm the new one again.
+    lines[entry.headingLine] = (lines[entry.headingLine] ?? "").replace(/\s+(?:verified|vsupport|corr)=[^\s]+/g, "");
+    lines.splice(entry.headingLine + 1, entry.body.split("\n").length, ...amended.split("\n"));
+    writeFileAtomic(findingsPath, lines.join("\n"));
+    const title = amended.split("\n")[0] ?? "";
+    const finding = { ...entry, body: amended, title, verifiedBy: undefined, verifiedSupport: undefined, corroborators: [] };
+    return { finding, previous, titleChanged: title.trim() !== entry.title.trim() };
+  });
+}
+
+function oneLineReason(note: string | undefined): string {
+  const reason = (note ?? "").replace(/\s+/g, " ").trim();
+  if (!reason) throw new Error("horde: amend needs note=<why the prose changed>, so the revision carries its errata");
+  return reason.slice(0, 300);
+}
+
+/** Superseded findings a text still cites, each with its successor. */
+export function supersededCitations(text: string, findings: FindingEntry[]): string[] {
+  return findings
+    .filter((finding) => finding.supersededBy !== undefined && new RegExp(`\\bF${finding.id}\\b`).test(text))
+    .map((finding) => `F${finding.id} (now F${finding.supersededBy})`);
+}
+
+/** The current revision of every live finding a text cites, pinned so a later amend is visible. */
+export function answerCitations(findings: FindingEntry[], text: string): Record<string, string> {
+  const cites: Record<string, string> = {};
+  for (const finding of findings) {
+    if (finding.supersededBy === undefined && new RegExp(`\\bF${finding.id}\\b`).test(text)) cites[`F${finding.id}`] = findingRevision(finding);
+  }
+  return cites;
+}
+
+/**
+ * Citations an answer can no longer stand on: findings superseded since it was written, and
+ * findings amended since the revisions it pinned. Both ship a stale reading as the result.
+ */
+export function staleAnswerCitations(findings: FindingEntry[], text: string, cites: Record<string, string> = {}): string[] {
+  const stale = supersededCitations(text, findings).map((citation) => `superseded ${citation}`);
+  for (const [target, revision] of Object.entries(cites)) {
+    const finding = findings.find((entry) => `F${entry.id}` === target);
+    if (finding && finding.supersededBy === undefined && findingRevision(finding) !== revision) stale.push(`amended ${target}`);
+  }
+  return stale;
+}
+
+/** A body line that reads as a verification note would move the subject boundary the revision hashes. */
+function neutralizeNotes(text: string): string {
+  return text.replace(/^((?:Verified|Reviewed) by )/gm, "\\$1");
 }
 
 export function listFindingsForRun(hordeDir: string, runId: string): FindingEntry[] {

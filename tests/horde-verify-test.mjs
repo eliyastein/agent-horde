@@ -112,7 +112,7 @@ if (process.argv.includes("--mode")) {
   const summary = prompt.summaryMarkdown({
     id: "R1", prompt: "verify probe", count: 3, members: [member("member-2")], startedAt: 0, stopped: false, findings, ideas: [],
   });
-  assert.match(summary, /1 findings filed, 0 independently reviewed \(scoped\), 1 legacy verification labels, 0 claimed idea\(s\) closed/);
+  assert.match(summary, /1 findings filed, 0 independently reviewed \(scoped: 0 full, 0 with unchecked scope\), 1 legacy verification labels, 0 claimed idea\(s\) closed/);
 
   // ---- tool level: verify, and a non-owner correction via supersedes ------------
   const runAction = (name, params, runId = "R1") => actions.runHordeAction(hordeDir, name, params, runId);

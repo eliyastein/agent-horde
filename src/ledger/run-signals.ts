@@ -81,6 +81,8 @@ export interface SolvedSignal {
   member: string;
   text: string;
   at: string;
+  /** Revision of each finding the text cited when it was proposed, so a later amend is visible. */
+  cites?: Record<string, string>;
 }
 
 function solvedPath(runDir: string): string {
@@ -127,7 +129,8 @@ function readSignal(file: string): SolvedSignal | undefined {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SolvedSignal>;
     if (typeof parsed?.member === "string" && typeof parsed?.text === "string") {
-      return { member: parsed.member, text: parsed.text, at: parsed.at ?? "", revision: parsed.revision };
+      const cites = parsed.cites && typeof parsed.cites === "object" ? parsed.cites : undefined;
+      return { member: parsed.member, text: parsed.text, at: parsed.at ?? "", revision: parsed.revision, ...(cites ? { cites } : {}) };
     }
   } catch {
     // No signal, or a torn write; treat as none.
@@ -195,6 +198,7 @@ export async function markSolved(
   runId: string,
   member: string,
   text: string | undefined,
+  cites?: Record<string, string>,
 ): Promise<{ signal: SolvedSignal; alreadySolved: boolean }> {
   // The full answer is stored untruncated; only the board line is shortened.
   const full = requireText(text, "solved").trim();
@@ -203,7 +207,7 @@ export async function markSolved(
   return withHordeLock(hordeDir, member, () => {
     const existing = readSolved(runDir);
     if (existing) return { signal: existing, alreadySolved: true };
-    const signal: SolvedSignal = { member, text: full, at: new Date().toISOString(), revision: randomUUID() };
+    const signal: SolvedSignal = { member, text: full, at: new Date().toISOString(), revision: randomUUID(), ...(cites ? { cites } : {}) };
     writeFileAtomic(solvedPath(runDir), `${JSON.stringify(signal)}\n`);
     // Capture the answer immediately so it survives even if the run is killed
     // before finalize; the status is upgraded on validation and at finalize.
@@ -211,6 +215,17 @@ export async function markSolved(
     appendEntry(hordePaths(hordeDir).board, boardEntry(member, `SOLVED proposed by ${member}: ${line}`));
     return { signal, alreadySolved: false };
   });
+}
+
+/**
+ * Put a withdrawn or contested proposal back before the members, under a new revision so a
+ * confirmation of the old one cannot validate it. Call under the horde lock.
+ */
+export function reopenSolved(runDir: string, runId: string, proposal: SolvedSignal, status: string, cites?: Record<string, string>): SolvedSignal {
+  const signal: SolvedSignal = { member: proposal.member, text: proposal.text, at: new Date().toISOString(), revision: randomUUID(), ...(cites ? { cites } : {}) };
+  writeFileAtomic(solvedPath(runDir), `${JSON.stringify(signal)}\n`);
+  writeAnswer(runDir, runId, signal, status);
+  return signal;
 }
 
 interface SolvedAnswer {

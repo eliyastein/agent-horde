@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { cleanStopRequestedFor, writeHeartbeat } from "../ledger/run-signals.js";
 import { envNumber } from "../format.js";
 import { ReminderGate, goalReminder } from "../reminder.js";
-import { runHordeAction } from "./actions.js";
+import { isVerifierRole, runHordeAction } from "./actions.js";
 import { pendingVerificationHint, solvedHint } from "./hints.js";
 import { HordeParams } from "./params.js";
 import { compactReceipt } from "./collaboration-view.js";
@@ -18,8 +18,11 @@ const REMIND_MS = envNumber("PI_HORDE_REMIND_MS", 600_000);
 const MUTATING_ACTIONS = new Set([
   "post", "idea", "claim", "done", "drop", "rule-out", "finding", "fact", "assert", "confirm",
   "contest", "retract", "supersede", "resource", "solved", "confirm-solved", "contest-solved",
-  "verify", "message", "ack", "respond", "resolve", "defer", "attach", "review", "artifact", "resource-state",
+  "verify", "amend", "message", "ack", "respond", "resolve", "defer", "attach", "review", "reattest", "artifact", "resource-state",
 ]);
+
+/** After these, a verifier is shown what it still has to review. */
+const VERIFIER_QUEUE_ACTIONS = new Set(["verify", "review", "reattest", "post", "findings"]);
 
 export function registerMemberTool(pi: ExtensionAPI): void {
   const hordeDir = process.env.PI_HORDE_DIR;
@@ -60,13 +63,15 @@ export function registerMemberTool(pi: ExtensionAPI): void {
     parameters: HordeParams,
     async execute(toolCallId, params) {
       const runId = process.env.PI_HORDE_RUN;
-      const result = await runHordeAction(hordeDir, member, params, runId, { attempt, requestId: toolCallId });
+      const role = process.env.PI_HORDE_ROLE;
+      const result = await runHordeAction(hordeDir, member, params, runId, { attempt, requestId: toolCallId, role });
       const runDir = runId ? path.join(hordeDir, "runs", runId) : undefined;
       if (runDir && MUTATING_ACTIONS.has(params.action)) touchHeartbeat(runDir, member);
       let text = compactReceipt(result.text, params) + solvedHint(hordeDir, runId, member, params.action);
-      // A verifier's coverage claim is only a snapshot. Append the live pending queue
-      // after every verify so a finding filed later cannot read as already checked.
-      if (runId && params.action === "verify" && /verifier/i.test(process.env.PI_HORDE_ROLE ?? "")) {
+      // A verifier's coverage claim is only a snapshot. Append the live pending queue after every
+      // review and every board update, so the unreviewed F# are named before wind-down and a
+      // finding filed later cannot read as already checked.
+      if (runId && VERIFIER_QUEUE_ACTIONS.has(params.action) && isVerifierRole(role)) {
         text += pendingVerificationHint(hordeDir, runId, member);
       }
       const winding = Boolean(runId && cleanStopRequestedFor(hordeDir, runId, member));
