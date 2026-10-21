@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as http from "node:http";
 import { createJiti, DEPS, PI } from "./harness.mjs";
 
@@ -33,6 +34,7 @@ const expectHtml = async (path, ...needles) => {
   assert.equal(res.headers.get("cache-control"), "no-store");
   assert.ok(text.startsWith("<!doctype html>"), path);
   for (const needle of needles) assert.ok(text.includes(needle), `${path} lacks ${needle}`);
+  assert.ok(FOOTER.test(text), `${path} lacks the version footer`);
   const api = await get(`/api${path}`);
   assert.equal(api.res.status, 200, `/api${path}`);
   assert.equal(api.res.headers.get("content-type"), "application/json; charset=utf-8");
@@ -40,6 +42,9 @@ const expectHtml = async (path, ...needles) => {
   return text;
 };
 
+// The footer names the package version and, in a checkout, links the commit.
+const PKG = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const FOOTER = new RegExp(`<footer>agent-horde ${PKG.version.replaceAll(".", "\\.")}( at <a href="https://github\\.com/eliyastein/agent-horde/commit/[0-9a-f]{7,40}">[0-9a-f]{7,40}(-dirty)?</a>)?</footer></body>`);
 const sessions = data.listRunSessions(source, RUN);
 const file = sessions.files[0].name;
 await expectHtml("/", RUN, "20260913-010151", "finished", "evaluate the implementation");

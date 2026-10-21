@@ -6,6 +6,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Added
 
+- Every dashboard page ends with a footer naming the agent-horde version and, from a git
+  checkout, the commit it runs at (#24).
 - `review` takes `limits` for disclosures outside the target's criteria; they are recorded on the
   acceptance (`Accepted with limits` in ACCEPTANCE.md and COLLABORATION.md) instead of blocking
   it, and `unchecked` is judged against the stated claim or criteria (#12).

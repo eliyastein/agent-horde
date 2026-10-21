@@ -117,11 +117,16 @@ for (const [name, data] of files) {
   assert.ok(!text.includes("http-equiv"), `${rel} auto-refreshes`);
   assert.ok(!text.includes('id="export"') && !text.includes("export dashboard"), `${rel} shows the export control`);
   assert.ok(!text.includes("data-expand"), `${rel} keeps URL-backed disclosure`);
+  assert.ok(text.includes("<footer>agent-horde "), `${rel} lacks the version footer`);
   assert.ok(!text.includes("[show body]") && !text.includes("[hide body]"), `${rel} keeps finding toggles`);
   assert.ok(!text.includes("auto-refresh"), `${rel} shows the refresh line`);
   for (const match of text.matchAll(/href="([^"#]*)(#[^"]*)?"/g)) {
     const target = match[1];
     if (target === "") continue;
+    if (target.startsWith("https://")) {
+      assert.ok(target.startsWith("https://github.com/eliyastein/agent-horde/commit/"), `${rel} links off the archive to ${target}`);
+      continue;
+    }
     const resolved = path.posix.join(path.posix.dirname(name), target);
     assert.ok(files.has(resolved), `${rel} links to missing ${target}`);
   }

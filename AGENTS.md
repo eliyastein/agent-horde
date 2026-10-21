@@ -1,5 +1,6 @@
 # agent-horde repository guidelines
 - Never initiate a PR after doing work on an issue unless prompted, or ask before opening a PR.
+- When reviewing an issue, always add missing tags if they're missing.
 
 # POSTMORTEM Guidelines
 - When doing a POSTMORTEM review, consider only feedback related to the mechanics of the run, not run specific failures/pitfalls if the postmortem isn't already anonymized.
