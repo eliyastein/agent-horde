@@ -337,10 +337,12 @@ function runContext(src: DashboardSource, url: URL, params: string[]): Pick<Rend
   return { runId, navRun };
 }
 
-function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderContext): DashboardResponse {
+/** The export costs seconds of work per request, so pages from other sites may not start one. */
+function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderContext, crossSite: boolean): DashboardResponse {
   const pathname = json ? url.pathname.slice("/api".length) || "/" : url.pathname;
-  if (!json && pathname === EXPORT_PATH) return exportResponse(src);
-  if (!json && pathname === EXPORT_PAGE) {
+  if (!json && (pathname === EXPORT_PATH || pathname === EXPORT_PAGE)) {
+    if (crossSite) return errorResponse(403, "the export can only be started from the dashboard itself", url, json, ctx);
+    if (pathname === EXPORT_PATH) return exportResponse(src, url, ctx);
     return respond(200, "text/html; charset=utf-8", renderExportStart(EXPORT_PATH, backPath(url.searchParams), ctx));
   }
   const matched = routeMatch(pathname);
@@ -389,14 +391,27 @@ export async function exportDashboardBuffer(src: DashboardSource, now = new Date
   return { filename, zip: await collect(zip) };
 }
 
-/** Headers go out at once so the browser shows the download while the pages are still being packed. */
-function exportResponse(src: DashboardSource): DashboardResponse {
-  const { filename, zip } = exportDashboardArchive(src);
-  return { ...respond(200, "application/zip", "", { "Content-Disposition": `attachment; filename="${filename}"` }), stream: zip };
+let exporting = false;
+
+/** Marks the export busy from its first chunk until the stream ends or its reader goes away. */
+async function* exclusive(stream: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
+  exporting = true;
+  try {
+    yield* stream;
+  } finally {
+    exporting = false;
+  }
 }
 
-/** Pure request handler: validates method and host, dispatches, maps errors to responses. */
-export function routeRequest(src: DashboardSource, method: string, url: URL, host: string | undefined): DashboardResponse {
+/** Headers go out at once so the browser shows the download while the pages are still being packed; one at a time. */
+function exportResponse(src: DashboardSource, url: URL, ctx: RenderContext): DashboardResponse {
+  if (exporting) return errorResponse(503, "an export is already in progress; wait for it to finish", url, false, ctx);
+  const { filename, zip } = exportDashboardArchive(src);
+  return { ...respond(200, "application/zip", "", { "Content-Disposition": `attachment; filename="${filename}"` }), stream: exclusive(zip) };
+}
+
+/** Pure request handler: validates method and host, dispatches, maps errors to responses. `fetchSite` is the Sec-Fetch-Site header. */
+export function routeRequest(src: DashboardSource, method: string, url: URL, host: string | undefined, fetchSite?: string): DashboardResponse {
   const json = url.pathname === "/api" || url.pathname.startsWith("/api/");
   const ctx: RenderContext = {
     activeId: src.getActive()?.id,
@@ -409,7 +424,7 @@ export function routeRequest(src: DashboardSource, method: string, url: URL, hos
     }
     if (!host || !HOST_RE.test(host)) return errorResponse(403, "host must be 127.0.0.1 or localhost", url, json, ctx);
     if (url.href.length > MAX_URL_LENGTH) return errorResponse(414, "url too long", url, json, ctx);
-    return handleRoute(src, url, json, ctx);
+    return handleRoute(src, url, json, ctx, fetchSite === "cross-site");
   } catch (error) {
     if (error instanceof DashboardError) return errorResponse(error.status, error.message, url, json, ctx);
     const message = error instanceof Error ? error.message : String(error);
@@ -469,7 +484,8 @@ function serve(src: DashboardSource, req: http.IncomingMessage, res: http.Server
   req.resume();
   res.on("error", () => {});
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
-  const response = routeRequest(src, req.method ?? "GET", url, req.headers.host);
+  const fetchSite = req.headers["sec-fetch-site"];
+  const response = routeRequest(src, req.method ?? "GET", url, req.headers.host, Array.isArray(fetchSite) ? fetchSite[0] : fetchSite);
   res.writeHead(response.status, { ...response.headers, "Content-Type": response.contentType });
   if (response.stream && req.method !== "HEAD") {
     void streamBody(res, response.stream);
