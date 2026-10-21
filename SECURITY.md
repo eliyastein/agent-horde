@@ -32,6 +32,11 @@ writes, rejects requests whose `Host` header is not localhost, sends a `default-
 security policy, and renders no scripts. It still exposes everything under `.horde/` to any process
 or browser tab on the machine, member transcripts included. Do not forward or proxy the port.
 
+`/export.zip` packs every dashboard page, transcripts and logs included, into one archive meant
+to be shared. The export control warns before the download, but the archive carries whatever the
+members read or produced: file contents, command output, paths, and any credentials they met.
+Review it before passing it on.
+
 ## Supply chain
 
 The package has no runtime dependencies beyond the packages pi itself provides to extensions.

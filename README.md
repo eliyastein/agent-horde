@@ -192,7 +192,8 @@ ledgers, the collaboration threads with their review scope and acceptance state,
 audit, and a graph of the run. The graph is a swimlane, one lane per member, with every event
 linked to the page that shows it, so a run reads left to right: who claimed what, which findings
 landed under which ideas, who reviewed whom, and where actions were rejected. It is server-rendered
-SVG/HTML with no scripts.
+SVG/HTML with no scripts. The download icon on every page exports the whole dashboard as a zip of
+static pages that opens from disk, after a warning that it may carry sensitive data from the machine.
 
 ## Benchmark: FinanceBench
 
