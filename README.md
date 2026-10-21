@@ -88,7 +88,7 @@ pi install npm:agent-horde
 Or from the repository, pinned to a tag:
 
 ```
-pi install git:github.com/eliyastein/agent-horde@v0.1.4
+pi install git:github.com/eliyastein/agent-horde@v0.1.5
 ```
 
 To hack on it, clone and install in place. pi loads the files from the clone, so edits take effect
