@@ -4,6 +4,20 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Added
+
+- `/export.zip` packs the whole dashboard into a zip of static HTML whose `index.html` opens from
+  disk: every run, transcript, log, document, graph and ledger, with links rewritten relative to
+  each other. A download icon in the top-right corner of every page opens a warning modal, built
+  with CSS alone so the dashboard still runs no scripts; confirming leads to `/export`, which
+  starts the download and explains the wait. The zip is streamed as it is packed, one page per
+  event-loop turn, so the browser shows the download at once and the run is not held up (#20).
+
+### Changed
+
+- The member page's `transcript (tail)` link shows fifty entries instead of forty, the same page
+  size as `transcript (start)`.
+
 ## [0.1.4] - 2026-10-20
 
 ### Added

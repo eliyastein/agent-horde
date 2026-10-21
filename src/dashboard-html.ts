@@ -39,6 +39,8 @@ export interface RenderContext {
   origin?: string | undefined;
   /** The run the collaboration and graph links target: this page's run, else the newest. */
   navRun?: string | undefined;
+  /** Rendering for the static export: no refresh, no export control, native disclosure. */
+  export?: boolean | undefined;
 }
 
 interface Crumb {
@@ -53,7 +55,24 @@ const CSS =
   "th{background:#eee}pre{white-space:pre-wrap;word-break:break-word;margin:0}" +
   "nav a{margin-right:8px}.r{text-align:right}h1,h2{font-size:13px;margin:8px 0 4px}" +
   "details>summary{cursor:pointer}a{color:#000}" +
+  ".export{position:absolute;top:8px;right:8px;line-height:0}" +
+  ".modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7)}" +
+  ".modal:target{display:flex;align-items:center;justify-content:center}" +
+  ".modal-box{background:#fff;border:3px solid #000;padding:32px;width:min(90vw,760px);font-size:18px;line-height:1.5}" +
+  ".modal-box h2{font-size:24px;margin:0 0 16px}" +
+  ".modal-box .btn{display:inline-block;border:2px solid #000;padding:8px 16px;margin-right:12px}" +
   GRAPH_CSS;
+
+const EXPORT_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">' +
+  '<path d="M12 3v12m0 0l-5-5m5 5l5-5M4 17v3h16v-3" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+const EXPORT_WARNING =
+  "The zip holds every page of this dashboard as static HTML: every run, every member transcript and log, " +
+  "the run documents, the shared ledgers and the event audit. Transcripts include everything members read " +
+  "and produced on this machine: file contents, command output, paths, and any secrets or credentials they " +
+  "encountered. Review the export before sharing it with anyone who should not see all of that.";
 
 const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -182,12 +201,41 @@ function persistentDetails(body: string, href = "/"): string {
   });
 }
 
-export function page(title: string, crumbs: Crumb[], body: string, ctx: RenderContext): string {
-  body = persistentDetails(body, ctx.href);
-  const meta = ctx.refresh?.on ? `<meta http-equiv="refresh" content="${ctx.refresh.seconds}">` : "";
+/** The export opens the modal on the paused page, so a refresh cannot close it; cancel restores the page. */
+function exportControl(ctx: RenderContext): string {
+  if (ctx.export) return "";
+  const current = ctx.href ?? "/";
+  const paused = ctx.refresh?.on ? ctx.refresh.toggleHref : current;
+  return (
+    `<a class="export" href="${e(`${paused}#export`)}" title="export dashboard" aria-label="export dashboard">${EXPORT_ICON}</a>` +
+    `<div id="export" class="modal"><div class="modal-box"><h2>Export this dashboard?</h2><p>${EXPORT_WARNING}</p>` +
+    `<p><a class="btn" href="${e(`/export${query({ back: current })}`)}">download zip</a><a class="btn" href="${e(current)}">cancel</a></p></div></div>`
+  );
+}
+
+/** Shown once the download is confirmed; it starts the download itself and says what the wait is. */
+export function renderExportStart(zipHref: string, backHref: string, ctx: RenderContext): string {
+  const body =
+    "<p>The archive is being packed one page at a time and streamed to your browser, so it appears in the " +
+    "browser's download list right away and grows until it is complete. A dashboard with long transcripts takes " +
+    "a while; the dashboard stays usable meanwhile.</p>" +
+    `<p>If no download appears, ${link(zipHref, "download it directly")}.</p>` +
+    `<p>${link(backHref, "back to the dashboard")}</p>`;
+  const start = `<meta http-equiv="refresh" content="0;url=${e(zipHref)}">`;
+  return page("exporting dashboard", [{ text: "runs", href: "/" }, { text: "export" }], body, { ...ctx, refresh: undefined }, start);
+}
+
+/** The static export has no server, so disclosure falls back to the browser's own details element. */
+function nativeDetails(body: string): string {
+  return body.replace(/<details data-expand="[a-f0-9]+">/g, "<details>");
+}
+
+export function page(title: string, crumbs: Crumb[], body: string, ctx: RenderContext, head = ""): string {
+  body = ctx.export ? nativeDetails(body) : persistentDetails(body, ctx.href);
+  const meta = ctx.refresh?.on ? `<meta http-equiv="refresh" content="${ctx.refresh.seconds}">` : head;
   return (
     `<!doctype html><html><head><meta charset="utf-8"><title>${e(title)}</title>${meta}` +
-    `<style>${CSS}</style></head><body>${nav(ctx)}${crumbLine(crumbs)}${refreshLine(ctx)}` +
+    `<style>${CSS}</style></head><body>${exportControl(ctx)}${nav(ctx)}${crumbLine(crumbs)}${refreshLine(ctx)}` +
     `<h1>${e(title)}</h1>${body}</body></html>`
   );
 }
@@ -331,7 +379,7 @@ export function renderMemberDetail(vm: MemberDetailVm, ctx: RenderContext): stri
     ["session file", vm.sessionFile ? e(vm.sessionFile) : "none mapped; see " + link(`${runHref(vm.runId)}/sessions`, "session files")],
   ];
   const transcript = vm.sessionFile
-    ? `<p>${link(`${base}/transcript?from=last&n=40`, "transcript (tail)")} | ${link(`${base}/transcript?from=0&n=50`, "transcript (start)")}</p>`
+    ? `<p>${link(`${base}/transcript?from=last&n=${TRANSCRIPT_PAGE}`, "transcript (tail)")} | ${link(`${base}/transcript?from=0&n=${TRANSCRIPT_PAGE}`, "transcript (start)")}</p>`
     : "";
   const last = vm.lastText ? `<h2>last text</h2>${pre(vm.lastText)}` : "";
   const final = vm.finalText
@@ -358,6 +406,8 @@ export function renderMemberLog(vm: MemberLogVm, ctx: RenderContext): string {
 // ---------------------------------------------------------------------------
 // Transcript
 // ---------------------------------------------------------------------------
+
+const TRANSCRIPT_PAGE = 50;
 
 function transcriptBase(vm: { runId: string; member?: string | undefined; file: string }): string {
   return vm.member
@@ -409,16 +459,25 @@ function entryRow(entry: TranscriptEntry, base: string, full: boolean, file: str
   return [link(href, `#${entry.index}`), clock(entry.timestamp), entryRole(entry), content, entryUsage(entry)];
 }
 
-function pagingBar(vm: TranscriptVm, base: string): string {
+/** The export crawls one page size, so it offers no size links. */
+function pagingBar(vm: TranscriptVm, base: string, ctx: RenderContext): string {
   const to = Math.min(vm.total, vm.from + vm.n);
   const go = (from: number | "last", n = vm.n): string => `${base}${query({ from: String(from), n: String(n) })}`;
   const prev = vm.from > 0 ? link(go(Math.max(0, vm.from - vm.n)), "prev") : "prev";
   const next = vm.hasMore ? link(go(vm.from + vm.n), "next") : "next";
-  const sizes = [20, 50, 100].map((n) => (n === vm.n ? `n=${n}` : link(go(vm.from, n), `n=${n}`))).join(" ");
+  const sizes = ctx.export
+    ? ""
+    : ` | ${[20, 50, 100].map((n) => (n === vm.n ? `n=${n}` : link(go(vm.from, n), `n=${n}`))).join(" ")}`;
   return (
     `<p>entries ${vm.from}..${to} of ${vm.total} | ${link(go(0), "first")} ${prev} ${next} ` +
-    `${link(go("last"), "last")} | ${sizes}</p>`
+    `${link(go("last"), "last")}${sizes}</p>`
   );
+}
+
+/** Live pages centre the entry in a short window; the export returns to the crawled page holding it. */
+function transcriptPageHref(base: string, index: number, ctx: RenderContext): string {
+  if (ctx.export) return `${base}?from=${Math.floor(index / TRANSCRIPT_PAGE) * TRANSCRIPT_PAGE}&n=${TRANSCRIPT_PAGE}`;
+  return `${base}?from=${Math.max(0, index - 10)}&n=20`;
 }
 
 function transcriptCrumbs(vm: { runId: string; member?: string | undefined; file: string }, leaf: string): Crumb[] {
@@ -433,18 +492,17 @@ export function renderTranscript(vm: TranscriptVm, ctx: RenderContext): string {
   const base = transcriptBase(vm);
   const body =
     `<p>file ${e(vm.file)}${vm.sessionId ? `, session ${e(vm.sessionId)}` : ""}${vm.cwd ? `, cwd ${e(vm.cwd)}` : ""}</p>` +
-    pagingBar(vm, base) +
+    pagingBar(vm, base, ctx) +
     table(["#", "time", "role", "content", "in/out"], vm.entries.map((entry) => entryRow(entry, base, false, vm.file)), "no entries") +
-    pagingBar(vm, base);
+    pagingBar(vm, base, ctx);
   const title = `${vm.member ?? vm.file} transcript`;
   return page(title, transcriptCrumbs(vm, "transcript"), body, ctx);
 }
 
 export function renderTranscriptEntry(vm: TranscriptEntryVm, ctx: RenderContext): string {
   const base = transcriptBase(vm);
-  const from = Math.max(0, vm.entry.index - 10);
   const body =
-    `<p>${link(`${base}?from=${from}&n=20`, "back to transcript")}</p>` +
+    `<p>${link(transcriptPageHref(base, vm.entry.index, ctx), "back to transcript")}</p>` +
     table(["#", "time", "role", "content", "in/out"], [entryRow(vm.entry, base, true, vm.file)]) +
     details("raw json", pre(vm.raw), `${base}:${vm.file}:${vm.entry.index}:raw`);
   return page(`entry #${vm.entry.index}`, transcriptCrumbs(vm, `#${vm.entry.index}`), body, ctx);
@@ -529,16 +587,17 @@ function findingsHref(vm: FindingsVm, open: number[]): string {
   return `/findings${query({ run: vm.run, view: vm.view, open: open.length > 0 ? open.join(",") : undefined })}`;
 }
 
-/** The body is expanded when its id is in the URL, so the state survives auto-refresh. */
-function findingBody(f: FindingEntry, vm: FindingsVm): string {
+/** The body is expanded when its id is in the URL, so the state survives auto-refresh; the export shows it inline. */
+function findingBody(f: FindingEntry, vm: FindingsVm, ctx: RenderContext): string {
   if (!f.body) return "";
+  if (ctx.export) return pre(f.body);
   if (vm.open.includes(f.id)) {
     return pre(f.body) + link(findingsHref(vm, vm.open.filter((id) => id !== f.id)), "[hide body]");
   }
   return ` ${link(findingsHref(vm, [...vm.open, f.id]), "[show body]")}`;
 }
 
-function findingRow(f: FindingEntry, vm: FindingsVm): string[] {
+function findingRow(f: FindingEntry, vm: FindingsVm, ctx: RenderContext): string[] {
   const idea = f.ideaId === undefined ? "" : link(`/ideas#idea-${f.ideaId}`, `#${f.ideaId}`);
   const authors = [f.author, ...f.corroborators].map((a) => authorLink(a, f.runId)).join(", ");
   const title = (f.supersededBy !== undefined ? "<b>SUPERSEDED</b> " : "") + e(f.title);
@@ -555,7 +614,7 @@ function findingRow(f: FindingEntry, vm: FindingsVm): string[] {
     f.supersedes === undefined ? "" : link(`#F${f.supersedes}`, `F${f.supersedes}`),
     f.supersededBy === undefined ? "" : link(`#F${f.supersededBy}`, `F${f.supersededBy}`),
     e(vm.reviewStates?.[f.id] ?? (f.verifiedBy ? `legacy (${f.verifiedBy})` : "unreviewed")),
-    title + findingBody(f, vm),
+    title + findingBody(f, vm, ctx),
   ];
 }
 
@@ -577,13 +636,13 @@ export function renderFindings(vm: FindingsVm, ctx: RenderContext): string {
         const deltas = cluster.deltaMembers.length > 0 ? `; deltas ${cluster.deltaMembers.join(", ")}` : "";
         return (
           `<h2>cluster ${i + 1}: F${cluster.representative}, members ${e(members)}${e(deltas)}</h2>` +
-          table(FINDING_HEADERS, cluster.findings.map((f) => findingRow(f, vm)))
+          table(FINDING_HEADERS, cluster.findings.map((f) => findingRow(f, vm, ctx)))
         );
       })
       .join("");
     if (vm.clusters.length === 0) body += "<p>no findings</p>";
   } else {
-    body += table(FINDING_HEADERS, vm.findings.map((f) => findingRow(f, vm)), "no findings");
+    body += table(FINDING_HEADERS, vm.findings.map((f) => findingRow(f, vm, ctx)), "no findings");
   }
   return page("findings", [{ text: "findings" }], body, ctx);
 }

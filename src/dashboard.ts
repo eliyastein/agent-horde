@@ -29,6 +29,7 @@ import {
   renderClaims,
   renderCollaboration,
   renderError,
+  renderExportStart,
   renderFacts,
   renderFile,
   renderFindings,
@@ -45,8 +46,12 @@ import {
   renderTranscriptEntry,
 } from "./dashboard-html.js";
 import type { RenderContext } from "./dashboard-html.js";
+import { collect, exportDashboard } from "./dashboard-export.js";
+import type { ExportPage } from "./dashboard-export.js";
 
 const DEFAULT_PORT = 7433;
+const EXPORT_PAGE = "/export";
+const EXPORT_PATH = "/export.zip";
 const REFRESH_SECONDS = 3;
 const MAX_URL_LENGTH = 4096;
 const CLOSE_GUARD_MS = 2_000;
@@ -57,6 +62,8 @@ interface DashboardResponse {
   contentType: string;
   body: string;
   headers: Record<string, string>;
+  /** Written after the headers in place of `body`, as it is produced. */
+  stream?: AsyncIterable<Buffer> | undefined;
 }
 
 interface Route {
@@ -282,6 +289,12 @@ function respond(status: number, contentType: string, body: string, extra: Recor
   return { status, contentType, body, headers: { ...baseHeaders(), ...extra } };
 }
 
+/** A same-origin dashboard path, else `/`; the export page returns here. */
+function backPath(query: URLSearchParams): string {
+  const back = query.get("back") ?? "/";
+  return /^\/(?![/\\])[^\s]{0,2000}$/.test(back) ? back : "/";
+}
+
 function parentPath(pathname: string): string {
   const trimmed = pathname.replace(/\/+$/, "");
   const parent = trimmed.slice(0, trimmed.lastIndexOf("/"));
@@ -316,24 +329,31 @@ function routeMatch(pathname: string): { route: Route; params: string[] } | unde
   return undefined;
 }
 
+/** The run this page belongs to, and the run the nav's collaboration and graph links target. */
+function runContext(src: DashboardSource, url: URL, params: string[]): Pick<RenderContext, "runId" | "navRun"> {
+  const runId = RUN_ID_RE.test(params[0] ?? "") ? params[0] : undefined;
+  const filterRun = url.searchParams.get("run");
+  const navRun = runId ?? (filterRun && RUN_ID_RE.test(filterRun) ? filterRun : undefined) ?? latestRunId(src);
+  return { runId, navRun };
+}
+
 function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderContext): DashboardResponse {
   const pathname = json ? url.pathname.slice("/api".length) || "/" : url.pathname;
+  if (!json && pathname === EXPORT_PATH) return exportResponse(src);
+  if (!json && pathname === EXPORT_PAGE) {
+    return respond(200, "text/html; charset=utf-8", renderExportStart(EXPORT_PATH, backPath(url.searchParams), ctx));
+  }
   const matched = routeMatch(pathname);
   if (!matched) throw new DashboardError(404, `no such page: ${pathname}`);
   const { route, params } = matched;
   const refreshParam = queryEnum(url.searchParams, "refresh", ["0", String(REFRESH_SECONDS)] as const, String(REFRESH_SECONDS));
   const vm = route.load(src, params, url.searchParams);
   if (json) return respond(200, "application/json; charset=utf-8", JSON.stringify(vm));
-  const runId = RUN_ID_RE.test(params[0] ?? "") ? params[0] : undefined;
-  const filterRun = url.searchParams.get("run");
-  const navRun = runId ?? (filterRun && RUN_ID_RE.test(filterRun) ? filterRun : undefined) ?? latestRunId(src);
   const live = route.live(vm, src, params, url.searchParams);
   const on = live && refreshParam !== "0";
   const pageCtx: RenderContext = {
     ...ctx,
-    runId,
-    navRun,
-    href: url.pathname + url.search,
+    ...runContext(src, url, params),
     refresh: live ? { on, toggleHref: refreshToggle(url, on), seconds: REFRESH_SECONDS } : undefined,
   };
   const body = route.render(vm as never, pageCtx);
@@ -341,10 +361,48 @@ function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderC
   return respond(200, "text/html; charset=utf-8", body);
 }
 
+/** One page of the static export; errors become pages so no exported link dangles. */
+function exportPage(src: DashboardSource, url: URL): ExportPage {
+  const ctx: RenderContext = { activeId: src.getActive()?.id, href: url.pathname + url.search, export: true };
+  try {
+    const matched = routeMatch(url.pathname);
+    if (!matched) throw new DashboardError(404, `no such page: ${url.pathname}`);
+    const { route, params } = matched;
+    const vm = route.load(src, params, url.searchParams);
+    return { body: route.render(vm as never, { ...ctx, ...runContext(src, url, params) }), text: route.text };
+  } catch (error) {
+    const status = error instanceof DashboardError ? error.status : 500;
+    const message = error instanceof DashboardError ? error.message : `dashboard error: ${error instanceof Error ? error.message : String(error)}`;
+    return { body: renderError(status, message, parentPath(url.pathname), ctx) };
+  }
+}
+
+/** The whole dashboard as a zip of static pages, streamed as it is built, named for the moment it was taken. */
+export function exportDashboardArchive(src: DashboardSource, now = new Date()): { filename: string; zip: AsyncGenerator<Buffer> } {
+  const folder = `horde-dashboard-${now.toISOString().slice(0, 19).replace(/[T:]/g, "-")}`;
+  return { filename: `${folder}.zip`, zip: exportDashboard((url) => exportPage(src, url), folder, now) };
+}
+
+/** The finished archive in one buffer. */
+export async function exportDashboardBuffer(src: DashboardSource, now = new Date()): Promise<{ filename: string; zip: Buffer }> {
+  const { filename, zip } = exportDashboardArchive(src, now);
+  return { filename, zip: await collect(zip) };
+}
+
+/** Headers go out at once so the browser shows the download while the pages are still being packed. */
+function exportResponse(src: DashboardSource): DashboardResponse {
+  const { filename, zip } = exportDashboardArchive(src);
+  return { ...respond(200, "application/zip", "", { "Content-Disposition": `attachment; filename="${filename}"` }), stream: zip };
+}
+
 /** Pure request handler: validates method and host, dispatches, maps errors to responses. */
 export function routeRequest(src: DashboardSource, method: string, url: URL, host: string | undefined): DashboardResponse {
   const json = url.pathname === "/api" || url.pathname.startsWith("/api/");
-  const ctx: RenderContext = { activeId: src.getActive()?.id, origin: host ? `http://${host}` : undefined };
+  const ctx: RenderContext = {
+    activeId: src.getActive()?.id,
+    origin: host ? `http://${host}` : undefined,
+    href: url.pathname + url.search,
+  };
   try {
     if (method !== "GET" && method !== "HEAD") {
       return { ...errorResponse(405, `method ${method} not allowed`, url, json, ctx), headers: { ...baseHeaders(), Allow: "GET, HEAD" } };
@@ -383,12 +441,40 @@ function listenError(error: NodeJS.ErrnoException, port: number): Error {
   return new Error(`dashboard could not listen on ${port}: ${error.message}`);
 }
 
+const drained = (res: http.ServerResponse): Promise<void> =>
+  new Promise((resolve) => {
+    const done = (): void => {
+      res.off("drain", done);
+      res.off("close", done);
+      resolve();
+    };
+    res.once("drain", done);
+    res.once("close", done);
+  });
+
+/** Writes the chunks as they come, pausing for the client; a failure mid-stream cuts the connection. */
+async function streamBody(res: http.ServerResponse, stream: AsyncIterable<Buffer>): Promise<void> {
+  try {
+    for await (const chunk of stream) {
+      if (res.destroyed) return;
+      if (!res.write(chunk)) await drained(res);
+    }
+    res.end();
+  } catch (error) {
+    res.destroy(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
 function serve(src: DashboardSource, req: http.IncomingMessage, res: http.ServerResponse): void {
   req.resume();
   res.on("error", () => {});
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const response = routeRequest(src, req.method ?? "GET", url, req.headers.host);
   res.writeHead(response.status, { ...response.headers, "Content-Type": response.contentType });
+  if (response.stream && req.method !== "HEAD") {
+    void streamBody(res, response.stream);
+    return;
+  }
   res.end(response.body);
 }
 

@@ -87,6 +87,22 @@ Every page has a JSON twin under `/api/<same path>`.
 | `/runs/<id>/graph` | the run as a swimlane: one lane per member plus the parent, phase bands, every event a link to its ledger entry (`?w=<px>`, `?from=<s>&to=<s>`); the axis is real time until the last member exits, then the synthesis phases share a compressed tail |
 | `/runs/<id>/graph.mmd` | the same run as a Mermaid flowchart with absolute dashboard links (text/plain) |
 | `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them; `/resources` also lists who cited each resource in the active run, as REPORT.md counts reuse |
+| `/export` | confirms the export and starts the download of `/export.zip` (`?back=<path>` names the page to return to); no JSON twin |
+| `/export.zip` | the whole dashboard as static HTML (`application/zip`, streamed, no JSON twin); see below |
+
+The download icon in the top-right corner of every page opens a warning that the export may
+leak sensitive data from this machine. Its download link goes to `/export`, which closes the
+warning, explains the wait, and starts the download of `/export.zip`. The zip holds one
+folder, `horde-dashboard-<timestamp>/`, whose `index.html` opens the dashboard from disk: every
+run, member, transcript page and entry, log, run document, collaboration page, graph (each width,
+plus the Mermaid file), and the ledgers under each run filter, with links rewritten relative to
+each other. Exported pages do not refresh, expandable entries use the browser's own disclosure,
+finding bodies are shown inline, transcripts are paged fifty entries at a time, and the export
+control itself is absent. Pages that fail to load are exported as their error page, so no link
+dangles. The export is built when requested and has no cache. It is streamed one page per
+event-loop turn, so the download appears in the browser at once and grows while the pages are
+packed, and the run is not held up; a dashboard with many long transcripts takes a few seconds
+and the archive can run to hundreds of megabytes.
 
 Only the active run has live member state. Historical runs are rebuilt from `member-N.log` and
 the session files, so they show end cause, turns, and usage but no activity.
