@@ -173,10 +173,11 @@ const fileFinding = async (runId, author, text, n) =>
   const absorbed = await act("member-2", { action: "idea", text: "probe the login form for symlink handling" });
   assert.match(absorbed.text, /already exists as/);
   const f1 = await fileFinding(runId, "member-1", "Root reads a config path from a writable file", 5);
-  const f2 = (await findings.addFinding(hordeDir, runId, "member-1", "Correction: the config path read needs no symlink at all", { concern: "concern-5", supersedes: f1.id })).finding;
-  await act("member-1", { action: "solved", text: `Chain: F${f1.id} gives the read, F${f2.id} removes the symlink requirement.` });
+  await act("member-1", { action: "solved", text: `Chain: F${f1.id} gives the read via the symlink.` });
   await act("member-2", { action: "confirm-solved", text: "reproduced" });
   const additional = await act("member-3", { action: "confirm-solved", text: "me too" });
+  // The correction lands after the answer was confirmed, so finalize labels the stale citation.
+  const f2 = (await findings.addFinding(hordeDir, runId, "member-1", "Correction: the config path read needs no symlink at all", { concern: "concern-5", supersedes: f1.id })).finding;
   assert.match(additional.text, /already validated by member-2/);
   assert.equal(additional.confirmation, "additional");
   const log = events.readEvents(hordeDir, runId);
@@ -198,7 +199,7 @@ const fileFinding = async (runId, author, text, n) =>
   assert.ok(graph.edges.some((edge) => edge.from === dup.id && edge.to === `I${added.id}` && edge.label === "duplicate"));
   const again = graph.nodes.find((n) => n.action === "confirm-solved" && n.lane === "member-3");
   assert.ok(graph.edges.some((edge) => edge.from === again.id && edge.label === "confirms (additional)"));
-  assert.deepEqual(finalize.supersededCitations(`Uses F${f1.id} and F${f2.id}`, findings.listFindingsForRun(hordeDir, runId)), [`F${f1.id} (now F${f2.id})`]);
+  assert.deepEqual(findings.supersededCitations(`Uses F${f1.id} and F${f2.id}`, findings.listFindingsForRun(hordeDir, runId)), [`F${f1.id} (now F${f2.id})`]);
 
   // Finalize: the answer is labeled, SUMMARY says the solve did not wind the run down, REPORT counts the repeats.
   process.env.PI_HORDE_POSTMORTEM = "off";

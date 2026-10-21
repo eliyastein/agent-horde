@@ -3,15 +3,15 @@ import * as path from "node:path";
 import { listFindingsForRun } from "../ledger/findings.js";
 import { requireParam, requireText } from "../ledger/files.js";
 import { collaborationState, openMessages, projectCollaboration } from "../ledger/collaboration.js";
-import type { CollaborationState, PeerMessage } from "../ledger/collaboration.js";
-import { transactEvent } from "../ledger/events.js";
+import type { ArtifactRecord, CollaborationState, PeerMessage } from "../ledger/collaboration.js";
+import { readEvents, transactEvent } from "../ledger/events.js";
 import type { EventContext, EventDraft } from "../ledger/events.js";
 import { currentTarget, targetInfo, retainArtifact, hashText } from "./collaboration-target.js";
 import { collaborationView, inspectRecord } from "./collaboration-view.js";
 import { resourceTransition } from "./resource-contract.js";
 import type { HordeToolParams } from "./params.js";
 
-export const COLLABORATION_ACTIONS = new Set(["inbox", "message", "ack", "respond", "resolve", "defer", "attach", "review", "artifact", "resource-state", "collaboration", "inspect"]);
+export const COLLABORATION_ACTIONS = new Set(["inbox", "message", "ack", "respond", "resolve", "defer", "attach", "review", "reattest", "artifact", "resource-state", "collaboration", "inspect"]);
 interface CollaborationCommand {
   ctx: EventContext;
   state: CollaborationState;
@@ -144,9 +144,13 @@ function attachEvidence(c: CollaborationCommand): EventDraft {
   if (p.revision && p.revision !== info.revision) throw new Error("horde: target revision changed");
   const file = p.artifactPath ? retainArtifact(ctx, p.artifactPath) : {};
   const text = requireText(p.text, "attach");
+  // Contradicting evidence on an idea is how a lead dies; the record that outlives the run is a rule-out.
+  const ruleOutHint = p.relation === "contradicts" && /^I\d+$/.test(target)
+    ? { note: `${target} has contradicting evidence: a rule-out candidate. If this closes the lead, its owner (${info.owner}) should 'horde rule-out' it with this evidence as the reason so later runs do not retry it.` }
+    : {};
   return { payload: { evidenceRecord: { id: `E${seq}`, actor: ctx.actor, target, revision: info.revision,
     relation: p.relation ?? "extends", text, ...file },
-    ...(p.relation === "contradicts" ? automaticChallenge(c, target, info, text, [`E${seq}`]) : {}) } };
+    ...(p.relation === "contradicts" ? automaticChallenge(c, target, info, text, [`E${seq}`]) : {}), ...ruleOutHint } };
 }
 
 function publishArtifact(c: CollaborationCommand): EventDraft {
@@ -167,8 +171,15 @@ function publishArtifact(c: CollaborationCommand): EventDraft {
   if (existing && existing.hash === retained.hash && (existing.criteria !== criteria || JSON.stringify(existing.dependencies) !== JSON.stringify(dependencies))) {
     throw new Error("horde: changing criteria or dependencies requires a new file revision so prior reviews cannot transfer to a different contract");
   }
+  // A revision other artifacts pin is a frozen contract: re-hashing it goes stale for every
+  // dependent, so the change is announced, and reviewers can reattest when behaviour is unchanged.
+  const dependents = existing ? state.artifacts.filter((a) => a.id !== existing.id && a.dependencies.some((d) => d.target === existing.id)).map((a) => a.id) : [];
+  if (existing && existing.hash !== retained.hash && dependents.length && !p.text?.trim()) {
+    throw new Error(`horde: ${existing.id}@${existing.hash.slice(0, 12)} is pinned by ${dependents.join(", ")}; prefer a follow-up finding or artifact, or republish with text= naming the change and whether behaviour is unchanged so dependents can reattest`);
+  }
+  const changeNote = existing && existing.hash !== retained.hash && p.text?.trim() ? { changeNote: p.text.trim() } : {};
   return { payload: { artifact: { id: existing?.id ?? `A${seq}`, kind, owner: ctx.actor, ...retained,
-    criteria, dependencies } }, parents: evidenceRefs(state, p.refs) };
+    criteria, dependencies, ...changeNote }, ...(dependents.length ? { dependents } : {}) }, parents: evidenceRefs(state, p.refs) };
 }
 
 function recordReview(c: CollaborationCommand): EventDraft {
@@ -192,33 +203,71 @@ function recordReview(c: CollaborationCommand): EventDraft {
     text: requireParam(p.evidenceText, "evidenceText", p.action), ...(p.artifactPath ? retainArtifact(ctx, p.artifactPath) : {}),
   };
   if (evidenceRecord) refs.push(evidenceRecord.id);
+  const limits = p.limits?.trim();
+  // A partial verdict refutes nothing: its unchecked scope is coverage debt that the acceptance
+  // names and a full review settles. Only a refutation is an objection the owner must answer.
   return { payload: { ...(evidenceRecord ? { evidenceRecord } : {}), review: { id: `V${seq}`, actor: ctx.actor, target, revision: info.revision,
-    verdict: p.verdict, support: p.support, checked, unchecked: p.unchecked,
+    verdict: p.verdict, support: p.support, checked, unchecked: p.unchecked, ...(limits ? { limits } : {}),
     text, evidence: refs },
     ...completeAssignedReview(c, target, `V${seq}`, text, refs),
-    ...(["refutes", "partially-supports"].includes(p.verdict) ? automaticChallenge(c, target, info, text, refs) : {}),
-    ...(p.verdict === "supports" && !p.unchecked.trim() ? coverageClearance(c, target, info, `V${seq}`, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
-}
-
-/** The challenge a partially-supports review raised in its own event, as opposed to an objection a member wrote. */
-function coverageChallenge(state: CollaborationState, message: PeerMessage): boolean {
-  return state.reviews.some((r) => r.id === `V${message.id.slice(1)}` && r.actor === message.sender && r.verdict === "partially-supports");
+    ...(p.verdict === "refutes" ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
 }
 
 /**
- * A partial review opens a blocking challenge that only its sender may resolve. When that review
- * contradicted nothing and another member later supports the whole revision, the unchecked scope
- * is covered: the full review clears the challenge, and the resolution names both reviews.
+ * A behaviour-neutral re-hash (a republish against a corrected dependency, an amended finding
+ * body, a spec clarification) would otherwise drop every review of the earlier revision. The
+ * reviewer carries its own latest review forward with evidence that what it checked is unchanged.
  */
-function coverageClearance(c: CollaborationCommand, target: string, info: { revision: string }, reviewId: string, refs: string[]): Record<string, unknown> {
-  const cleared = c.state.messages.filter((m) =>
-    m.target === target && m.revision === info.revision && m.blocking && m.state !== "resolved" && m.sender !== c.ctx.actor && coverageChallenge(c.state, m));
-  if (!cleared.length) return {};
-  return { clearances: cleared.map((m) => ({
-    id: m.id,
-    text: `cleared by ${reviewId}: ${c.ctx.actor}'s full-scope supporting review of ${target}@${info.revision.slice(0, 12)} covers the scope V${m.id.slice(1)} left unchecked`,
-    refs,
-  })) };
+/**
+ * What changed between the reviewed revision and the current one, as the ledger recorded it. A
+ * review carries forward only across prose: a new acceptance contract or a new claim line is a
+ * different subject and needs a fresh review.
+ */
+function reattestBlocker(ctx: EventContext, state: CollaborationState, target: string, previousRevision: string): string | undefined {
+  const events = readEvents(ctx.hordeDir, ctx.runId).filter((e) => e.outcome === "applied");
+  if (target.startsWith("A")) {
+    const current = state.artifacts.find((a) => a.id === target);
+    const earlier = events.map((e) => e.payload.artifact as ArtifactRecord | undefined).find((a) => a?.id === target && a.hash === previousRevision);
+    if (!current || !earlier) return `the reviewed revision ${previousRevision.slice(0, 12)} of ${target} is not on record`;
+    if (earlier.criteria !== current.criteria) return `${target}'s criteria changed since the reviewed revision; review the new contract`;
+    if ((earlier.kind ?? "runnable") !== (current.kind ?? "runnable")) return `${target}'s kind changed since the reviewed revision`;
+    return undefined;
+  }
+  const amends = events.filter((e) => e.action === "amend").map((e) => e.payload.result as { id?: number; previousRevision?: string; titleChanged?: boolean } | undefined);
+  const start = amends.findIndex((a) => a?.id === Number(target.slice(1)) && a.previousRevision === previousRevision);
+  if (start === -1) return `the reviewed revision ${previousRevision.slice(0, 12)} of ${target} is not the revision an amend started from; review the current text`;
+  if (amends.slice(start).some((a) => a?.id === Number(target.slice(1)) && a.titleChanged)) return `${target}'s claim line changed since the reviewed revision; review the new claim`;
+  return undefined;
+}
+
+function reattestReview(c: CollaborationCommand): EventDraft {
+  const { ctx, state, params: p, seq } = c;
+  const target = requireParam(p.target, "target", p.action);
+  if (!/^[FA]\d+$/.test(target)) throw new Error("horde: reattest targets an F# or A#");
+  const info = targetInfo(ctx, state, target);
+  if (info.owner === ctx.actor) throw new Error("horde: an independent review needs another member");
+  if (p.revision !== info.revision) throw new Error("horde: reattest must name the current revision from inspect");
+  const previous = state.reviews.findLast((r) => r.target === target && r.actor === ctx.actor && r.revision !== info.revision);
+  if (!previous) throw new Error(`horde: no earlier review of ${target} by ${ctx.actor} to carry forward; record a review instead`);
+  const blocker = reattestBlocker(ctx, state, target, previous.revision);
+  if (blocker) throw new Error(`horde: cannot reattest: ${blocker}`);
+  if (state.reviews.some((r) => r.target === target && r.actor === ctx.actor && r.revision === info.revision)) {
+    throw new Error(`horde: ${ctx.actor} already reviewed ${target}@${info.revision.slice(0, 12)}`);
+  }
+  const refs = [...evidenceRefs(state, p.refs)];
+  if (!refs.length && !p.evidenceText) throw new Error("horde: reattest needs evidence that the checked behaviour is unchanged: refs or evidenceText");
+  const stale = staleEvidence(state, refs, target, info.revision);
+  if (stale) throw new Error(`horde: reattest evidence must address the current revision: ${stale}`);
+  const text = requireText(p.text, "reattest");
+  const evidenceRecord = p.evidenceText === undefined ? undefined : {
+    id: `E${seq}`, actor: ctx.actor, target, revision: info.revision, relation: "extends" as const,
+    text: p.evidenceText, ...(p.artifactPath ? retainArtifact(ctx, p.artifactPath) : {}),
+  };
+  if (evidenceRecord) refs.push(evidenceRecord.id);
+  const review = { ...previous, id: `V${seq}`, revision: info.revision, text, evidence: refs, reattests: previous.id };
+  return { payload: { ...(evidenceRecord ? { evidenceRecord } : {}), review,
+    ...completeAssignedReview(c, target, `V${seq}`, text, refs),
+    ...(review.verdict === "refutes" ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: [previous.id, ...refs.filter((id) => id !== evidenceRecord?.id)] };
 }
 
 /** The parent's assignment closes with the review id and its evidence, so the thread shows what decided it. */
@@ -239,6 +288,7 @@ function decide(c: CollaborationCommand): EventDraft {
     case "message": return newMessage(c);
     case "attach": return attachEvidence(c);
     case "review": return recordReview(c);
+    case "reattest": return reattestReview(c);
     case "artifact": return publishArtifact(c);
     case "resource-state": return resourceTransition(c);
     default: return transition(c);

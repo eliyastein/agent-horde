@@ -74,29 +74,30 @@ const review = (runId, actor, target, revision, { verdict, unchecked, evidenceTe
   const runDir = await makeRun(runId);
   fs.writeFileSync(path.join(runDir, "artifacts/poc.md"), "# POC\n\nload the manifest; preload=none does not fetch\n");
   const artifact = (await command(runId, "member-1", { action: "artifact", artifactPath: "artifacts/poc.md", artifactKind: "document", criteria: "manifest NAME renders; preload=none does not fetch" })).artifact;
-  const doubt = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "partially-supports", unchecked: "preload=none appeared to fetch", evidenceText: "a request fired with preload=none" });
-  assert.ok(doubt.message?.blocking, "a partial review raises a blocking challenge");
+  const doubt = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "refutes", unchecked: "", evidenceText: "a request fired with preload=none" });
+  assert.ok(doubt.message?.blocking, "a refuting review raises a blocking challenge");
   const retraction = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "supports", unchecked: "deployed origin not exercised", evidenceText: "window.state().presentation shows no fetch with preload=none" });
   await command(runId, "member-2", { action: "resolve", target: doubt.message.id, refs: [retraction.evidenceRecord.id], text: "withdrawn: my measurement was wrong" });
   let summary = report.loadCollaborationReport(hordeDir, runId);
   assert.equal(summary.metrics.blocking, 0, "the artifact is no longer disputed");
-  assert.deepEqual(summary.acceptedArtifacts, [], "the disclosed limit stays acceptance debt");
+  assert.deepEqual(summary.acceptedArtifacts, [], "the disclosed in-criteria gap stays acceptance debt");
 
   // With a response in hand the resolver still needs full coverage before the artifact is accepted.
-  const second = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "partially-supports", unchecked: "text-track branch", evidenceText: "only the audio branch was rerun" });
-  await command(runId, "member-1", { action: "respond", target: second.message.id, revision: artifact.hash, text: "the text-track branch uses the same renderer" });
+  const second = (await command(runId, "member-2", { action: "message", target: artifact.id, kind: "challenge", text: "only the audio branch was rerun; the text-track branch is unproven" })).message;
+  const partialRerun = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "partially-supports", unchecked: "text-track branch", evidenceText: "only the audio branch was rerun" });
+  await command(runId, "member-1", { action: "respond", target: second.id, revision: artifact.hash, text: "the text-track branch uses the same renderer" });
   await assert.rejects(
-    command(runId, "member-2", { action: "resolve", target: second.message.id, refs: [second.evidenceRecord.id], text: "fine" }),
+    command(runId, "member-2", { action: "resolve", target: second.id, refs: [partialRerun.evidenceRecord.id], text: "fine" }),
     /resolve requires your supporting review/,
   );
   const limited = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "supports", unchecked: "text-track branch", evidenceText: "audio branch rerun" });
   await assert.rejects(
-    command(runId, "member-2", { action: "resolve", target: second.message.id, refs: [limited.evidenceRecord.id], text: "fine" }),
+    command(runId, "member-2", { action: "resolve", target: second.id, refs: [limited.evidenceRecord.id], text: "fine" }),
     /finding limitations remain acceptance debt/,
     "a responded artifact challenge still needs a full-coverage review",
   );
   const full = await review(runId, "member-2", artifact.id, artifact.hash, { verdict: "supports", unchecked: "", evidenceText: "both branches rerun" });
-  await command(runId, "member-2", { action: "resolve", target: second.message.id, refs: [full.evidenceRecord.id], text: "both branches hold" });
+  await command(runId, "member-2", { action: "resolve", target: second.id, refs: [full.evidenceRecord.id], text: "both branches hold" });
   summary = report.loadCollaborationReport(hordeDir, runId);
   assert.deepEqual(summary.acceptedArtifacts, [artifact.id]);
 }

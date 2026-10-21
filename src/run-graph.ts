@@ -360,10 +360,13 @@ function addReview(draft: Draft, event: HordeEvent, review: Payload): void {
   if (!id) return;
   const verdict = str(review.verdict) ?? "review";
   const support = str(review.support) ?? "";
-  const scope = `checked: ${str(review.checked) ?? ""}; unchecked: ${str(review.unchecked) || "none declared"}`;
+  const limits = str(review.limits) ? `; limits: ${str(review.limits)}` : "";
+  const scope = `checked: ${str(review.checked) ?? ""}; unchecked: ${str(review.unchecked) || "none declared"}${limits}`;
   const title = oneLine(`[${support}] ${scope}. ${str(review.text) ?? ""}`, TITLE_MAX);
   if (!addEntity(draft, event, { id, kind: "review", label: `${id} ${verdict}`, title })) return;
   addEdge(draft, id, str(review.target), verdict, relationTone(verdict));
+  const reattests = str(review.reattests);
+  if (reattests && draft.nodes.has(reattests)) draft.edges.push({ from: reattests, to: id, label: "reattested", tone: "collaboration" });
   for (const ref of strings(review.evidence)) {
     if (draft.nodes.has(ref)) draft.edges.push({ from: ref, to: id, label: "cited", tone: "collaboration" });
   }
@@ -436,6 +439,8 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "stop-hard": return [`stop-hard (${str(p.by) ?? "user"})`, members || "all members"];
     case "solved-proposed": return ["solved proposed", `${str(p.member) ?? ""}: ${oneLine(str(p.text) ?? "", 120)}`];
     case "solved-contested": return ["solved contested", `by ${str(p.member) ?? ""}`];
+    case "solved-withdrawn": return ["solved withdrawn", oneLine(str(p.reason) ?? "", 120)];
+    case "solved-reopened": return ["solved reopened", oneLine(str(p.reason) ?? "", 120)];
     case "solved-validated": return ["solved validated", str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
     case "acceptance": return [`acceptance ${str(p.status) ?? ""}`.trim(), `${num(p.issues) ?? 0} issues, snapshot ${(str(p.hash) ?? "").slice(0, 12)}`];
     case "repair-start": return ["repair start", `queue ${strings(p.messages).join(", ")}`];

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { envNumber, errorMessage } from "../format.js";
 import { postBoard } from "../ledger/board.js";
+import { pendingReviewsForMember } from "../ledger/findings.js";
 import { reconcileOwnedIdeas } from "../ledger/ideas.js";
 import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/run-signals.js";
 import { resetMemberState, spawnMember } from "../member.js";
@@ -80,6 +81,23 @@ export async function spawnOne(
  * stop all mean the run is ending; the cap keeps a broken provider from being
  * retried forever.
  */
+/**
+ * A verifier that closes its session with high-importance findings by other members unreviewed
+ * has not done its job, whatever its summary says. Its exit is answered with a fresh session
+ * that is told which F# it owes, within the same reset cap as a crash.
+ */
+export function verificationBacklog(run: HordeRun, member: MemberState): string | undefined {
+  if (member.name !== run.verifier || member.endCause !== "completed") return undefined;
+  try {
+    const owed = pendingReviewsForMember(run.hordeDir, run.id, member.name)
+      .filter((finding) => ["critical", "high"].includes((finding.importance ?? "").toLowerCase()));
+    if (!owed.length) return undefined;
+    return `verification backlog: ${owed.map((finding) => `F${finding.id}`).join(", ")} unreviewed at close`;
+  } catch {
+    return undefined;
+  }
+}
+
 function resetReasonForExit(launch: RunLaunch, member: MemberState): string | undefined {
   const { state, run } = launch;
   if (state.disposed || run.stopped || run.userStop || run.solved || run.canary !== "ok") {
@@ -88,7 +106,8 @@ function resetReasonForExit(launch: RunLaunch, member: MemberState): string | un
   if (cleanStopRequestedFor(run.hordeDir, run.id, member.name)) return undefined;
   const reason =
     member.resetPending ??
-    (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined);
+    (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined) ??
+    verificationBacklog(run, member);
   if (!reason) return undefined;
   if ((member.resets ?? 0) >= RESET_CAP) {
     fs.appendFileSync(
@@ -157,7 +176,8 @@ async function performReset(run: HordeRun, member: MemberState, reason: string):
   await recordLifecycle(run, "member-reset", { member: member.name, reason, released, closed, resets: member.resets });
   member.resetNote =
     `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
-    "its ideas were released. Read BOARD.md and FINDINGS.md before claiming.";
+    "its ideas were released. Read BOARD.md and FINDINGS.md before claiming." +
+    (reason.startsWith("verification backlog") ? " Review the findings named above, with any verdict and an honest unchecked scope, before anything else." : "");
   clearHeartbeat(run.runDir, member.name);
   resetMemberState(member);
   safeNotify(run, `horde ${run.id}: reset ${member.name} (${reason})`, "warning");

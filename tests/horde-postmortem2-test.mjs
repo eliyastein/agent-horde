@@ -114,8 +114,8 @@ if (process.argv.includes("--mode")) {
     findings: [{ id: 1, author: "member-1", corroborators: [] }, { id: 2, author: "member-1", corroborators: [] }],
     ideas: [{ id: 1, mark: "x", owner: "member-1", text: "a" }, { id: 2, mark: "x", owner: "member-2", text: "b" }],
   });
-  assert.match(summary, /## member-1[\s\S]*?2 findings filed, 0 independently reviewed \(scoped\), 0 legacy verification labels, 1 claimed idea\(s\) closed/, "member-1 metrics are reported");
-  assert.match(summary, /## member-2[\s\S]*?0 findings filed, 0 independently reviewed \(scoped\), 0 legacy verification labels, 1 claimed idea\(s\) closed/, "member-2 produced no findings");
+  assert.match(summary, /## member-1[\s\S]*?2 findings filed, 0 independently reviewed \(scoped: 0 full, 0 with unchecked scope\), 0 legacy verification labels, 1 claimed idea\(s\) closed/, "member-1 metrics are reported");
+  assert.match(summary, /## member-2[\s\S]*?0 findings filed, 0 independently reviewed \(scoped: 0 full, 0 with unchecked scope\), 0 legacy verification labels, 1 claimed idea\(s\) closed/, "member-2 produced no findings");
 
   // ---- B. unvalidated solve is its own terminal state (live run) -----------
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "horde-pm2-b-"));

@@ -4,6 +4,48 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Added
+
+- `review` takes `limits` for disclosures outside the target's criteria; they are recorded on the
+  acceptance (`Accepted with limits` in ACCEPTANCE.md and COLLABORATION.md) instead of blocking
+  it, and `unchecked` is judged against the stated claim or criteria (#12).
+- `reattest` carries a reviewer's earlier review forward to a target's current revision with
+  evidence that the checked behaviour is unchanged, so an amended sentence, a republish against a
+  corrected dependency or a spec clarification no longer drops every review; the parent prefers
+  prior reviewers when assigning a re-review and hands dependents a repin request when a pinned
+  dependency is re-hashed, not only when it is superseded (#12, #19).
+- `amend` rewrites the body prose of the author's own finding at its current revision with a
+  note saying why; reviews stay pinned to the revision they checked (#12).
+- A fact about what an open idea or contested claim is still auditing is recorded as provisional
+  on it; `solved` and `confirm-solved` refuse an answer that quotes one until the subject closes (#12).
+- A contest that names idea ids reopens the proposal under a new revision once every named idea
+  is done or ruled out, and a pending proposal whose cited finding is superseded later is
+  withdrawn for re-proposal (#12).
+
+### Changed
+
+- A `partially-supports` review refutes nothing and opens no challenge: the acceptance names the
+  review and what it left unchecked, and another member's full-scope review settles it. The
+  clearance rule that resolved such challenges is gone with them (#12).
+- `solved` and `confirm-solved` refuse an answer that cites a superseded finding or one amended
+  since the proposal pinned its revision; a request about the pending answer ranks with the
+  blockers in repair (#12).
+- The verifier's idea claims are refused while other members' findings await its review, the
+  pending F# list follows every review and board post, a verifier that closes with critical or
+  high-importance findings unreviewed is reset into a session that owes them, and SUMMARY.md
+  derives its coverage sentence from the review records (#12).
+- `done` with a confirmed-negative result line is refused in favour of `rule-out`; contradicting
+  evidence attached to an idea names it as a rule-out candidate (#12).
+- A claim whose text overlaps a finding that already has a corroborator or a full-scope review
+  is told to bring a new vector; a finding citing a runnable under `artifacts/` that no R# or A#
+  covers is told to register it; republishing an artifact revision other artifacts pin needs
+  `text` naming the change (#12).
+
+### Fixed
+
+- A repair attempt's recorded time allowance is the share it was given; a second clock read
+  could record it one millisecond under the floor the share had been raised to.
+
 ## [0.1.5] - 2026-10-21
 
 ### Added

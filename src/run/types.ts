@@ -67,6 +67,8 @@ export interface HordeRun extends MemberRunInfo {
   solvedCommitted?: boolean | undefined;
   /** True when the last SOLVED proposal was contested and no validated answer replaced it. */
   solvedContested?: boolean | undefined;
+  /** The contested proposal and the idea ids its contest named; it reopens once they all close. */
+  solvedContest?: { proposal: SolvedSignal; blockers: number[] } | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */
   solvedVerificationNotice?: boolean | undefined;
   solvedTimer?: ReturnType<typeof setInterval> | undefined;

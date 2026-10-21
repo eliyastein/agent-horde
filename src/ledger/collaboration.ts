@@ -46,6 +46,8 @@ export interface ArtifactRecord {
   snapshot: string;
   criteria: string;
   dependencies: Array<{ target: string; revision: string }>;
+  /** The owner's statement of what a republish changed, required once other artifacts pin it. */
+  changeNote?: string;
   /** Projected from the publishing event; absent in hand-built records. */
   publishedAt?: string;
 }
@@ -57,9 +59,14 @@ export interface ReviewRecord {
   verdict: "supports" | "partially-supports" | "refutes" | "inconclusive";
   support: string;
   checked: string;
+  /** Gaps inside the target's stated claim or criteria; non-empty keeps acceptance open. */
   unchecked: string;
+  /** Disclosures outside the criteria; recorded on the acceptance as limits, never blockers. */
+  limits?: string;
   text: string;
   evidence: string[];
+  /** The reviewer's earlier review of a previous revision that this one carries forward. */
+  reattests?: string;
 }
 export interface ResourceContract {
   target: string;
@@ -153,12 +160,35 @@ export function blockingMessages(state: CollaborationState): PeerMessage[] {
   return state.messages.filter((m) => m.blocking && m.state !== "resolved");
 }
 
+/** Each non-owner's latest review of the artifact's current revision. */
+export function latestArtifactReviews(state: CollaborationState, artifact: ArtifactRecord): ReviewRecord[] {
+  const latest = new Map<string, ReviewRecord>();
+  for (const review of state.reviews) {
+    if (review.target === artifact.id && review.revision === artifact.hash && review.actor !== artifact.owner) latest.set(review.actor, review);
+  }
+  return [...latest.values()];
+}
+
+function acceptingReview(artifact: ArtifactRecord, review: ReviewRecord): boolean {
+  const methods = artifact.kind === "document" ? ["sourced", "derived", "tested", "reproduced"] : ["tested", "reproduced"];
+  return review.verdict === "supports" && !review.unchecked && methods.includes(review.support);
+}
+
 export function artifactAccepted(state: CollaborationState, artifact: ArtifactRecord): boolean {
   if (blockingMessages(state).some((m) => m.target === artifact.id)) return false;
-  const reviews = state.reviews.filter((r) => r.target === artifact.id && r.revision === artifact.hash);
-  const latest = new Map<string, ReviewRecord>();
-  for (const review of reviews) latest.set(review.actor, review);
-  if ([...latest.values()].some((r) => r.verdict === "refutes")) return false;
-  const methods = artifact.kind === "document" ? ["sourced", "derived", "tested", "reproduced"] : ["tested", "reproduced"];
-  return [...latest.values()].some((r) => r.actor !== artifact.owner && r.verdict === "supports" && !r.unchecked && methods.includes(r.support));
+  const latest = latestArtifactReviews(state, artifact);
+  if (latest.some((r) => r.verdict === "refutes")) return false;
+  return latest.some((r) => acceptingReview(artifact, r));
+}
+
+/** Limits the accepting reviews disclosed outside the criteria, each named with its review. */
+export function artifactLimits(state: CollaborationState, artifact: ArtifactRecord): string[] {
+  return latestArtifactReviews(state, artifact)
+    .filter((r) => acceptingReview(artifact, r) && r.limits?.trim())
+    .map((r) => `${r.id} (${r.actor}): ${r.limits?.trim()}`);
+}
+
+/** Reviews of the current revision that left in-criteria scope unchecked: coverage debt, named. */
+export function partialArtifactReviews(state: CollaborationState, artifact: ArtifactRecord): ReviewRecord[] {
+  return latestArtifactReviews(state, artifact).filter((r) => r.verdict !== "refutes" && r.unchecked.trim());
 }
