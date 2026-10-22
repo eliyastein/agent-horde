@@ -112,6 +112,7 @@ export function createRun(
     model,
     plan,
     verifier,
+    untilStop: parsed.untilStop === true ? true : undefined,
     resets: [],
     dashboardUrl,
   };

@@ -7,7 +7,7 @@ at one problem beat a single linear one: research, audits, design exploration, R
 ## Usage
 
 ```
-/agent-horde [--dashboard[=<port>]] [--no-verifier] <count> <prompt>
+/agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] <count> <prompt>
 /agent-horde plan [--dashboard] <count> <layer; layer; ...>
 /agent-horde status [target]
 /agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
@@ -251,6 +251,12 @@ An unpartitioned run of three or more members makes its last member the verifier
 highest-importance unchecked assertions first with `horde review`, contest or supersede what does
 not reproduce, and claim ideas only when nothing is left to review. `--no-verifier` turns this
 off.
+
+`--until-stop` runs the horde until you stop it. When a solve is validated, the answer is banked in
+ANSWER.md and one member (the proposer when live) is reset into a fresh session told to generate
+new ideas, instead of the run winding down. `stop-clean` and `stop-hard` end the run as usual;
+`stop-clean` produces the report, deliverable, and postmortem, with the last banked answer standing
+unless a later proposal replaces it.
 
 ## Finding metadata
 

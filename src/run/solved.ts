@@ -6,10 +6,10 @@ import { postBoard } from "../ledger/board.js";
 import { unsettledFactCitations } from "../ledger/facts.js";
 import { listFindingsForRun, staleAnswerCitations, unverifiedFindings } from "../ledger/findings.js";
 import { listIdeas } from "../ledger/ideas.js";
-import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState } from "../ledger/run-signals.js";
+import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
-import { requestCleanStop } from "./controls.js";
-import { recordLifecycle } from "./lifecycle.js";
+import { hardStopMembers, requestCleanStop } from "./controls.js";
+import { recordLifecycle, UNTIL_STOP_REASON } from "./lifecycle.js";
 import type { HordeRun } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
@@ -189,11 +189,47 @@ function verificationPending(run: HordeRun, othersRunning: boolean): boolean {
   return true;
 }
 
+/**
+ * `--until-stop`: bank the validated answer and put one member back on ideation instead of
+ * winding down. The proposer is preferred; the verifier keeps its role unless it is all that is left.
+ */
+function continueAfterSolve(run: HordeRun, proposal: SolvedSignal, validator: string | undefined): void {
+  run.solveRounds = (run.solveRounds ?? 0) + 1;
+  run.lastRound = { proposal, validator };
+  const status = validator ? `validated by ${validator}` : "committed without a separate validator";
+  try {
+    writeAnswer(run.runDir, run.id, proposal, `${status} (round ${run.solveRounds}; run continues until stopped)`);
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not write ANSWER.md (${oneLine(String(error), 200)})`, "error");
+  }
+  clearProposal(run);
+  run.solvedContest = undefined;
+  const live = run.members.filter((m) => (m.status === "running" || m.status === "starting") && !m.paused);
+  const member = live.find((m) => m.name === proposal.member) ?? live.find((m) => m.name !== run.verifier) ?? live[0];
+  void recordLifecycle(run, "solved-round", { round: run.solveRounds, member: proposal.member, validator, reactivated: member?.name });
+  safeNotify(run, `horde ${run.id}: solve #${run.solveRounds} banked; continuing until stopped`, "info");
+  void postBoard(
+    run.hordeDir,
+    "parent",
+    `SOLVED ${status} (round ${run.solveRounds}); this run continues until the user stops it. ` +
+      `${member ? `${member.name} is reactivated to generate new ideas: ` : ""}extend, stress-test, or deepen the work and propose SOLVED again when a materially better answer exists.`,
+  );
+  if (member) {
+    member.resetPending = `${UNTIL_STOP_REASON}: solve round ${run.solveRounds} banked`;
+    hardStopMembers(run, [member.name]);
+  }
+  refreshRun(run);
+}
+
 function commitSolved(
   run: HordeRun,
   ctx: ExtensionCommandContext,
   validator: string | undefined,
 ): void {
+  if (run.untilStop && run.solved && !run.stopped) {
+    continueAfterSolve(run, run.solved, validator);
+    return;
+  }
   run.solvedValidatedBy = validator;
   run.solvedCommitted = true;
   void recordLifecycle(run, "solved-validated", { validator });

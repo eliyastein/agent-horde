@@ -1,7 +1,7 @@
 export const MAX_MEMBERS = 12;
 
 export const USAGE = [
-  "usage: /agent-horde [--dashboard[=<port>]] [--no-verifier] <count> <prompt>",
+  "usage: /agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] <count> <prompt>",
   "                                          spawn <count> members with the same prompt",
   "       /agent-horde status [target]       show the active run",
   "       /agent-horde stop-hard [target]    terminate members now (SIGTERM, then SIGKILL)",
@@ -20,6 +20,8 @@ export const USAGE = [
   "PI_HORDE_DASHBOARD_PORT); --dashboard=<port> picks the port.",
   "--no-verifier skips the default verifier role that runs of 3 or more members assign",
   "to their last member.",
+  "--until-stop keeps the horde working after a validated solve: one member is reactivated",
+  "to generate new ideas until you run stop-hard or stop-clean.",
 ].join("\n");
 
 /** Which members a control command applies to. */
@@ -49,6 +51,8 @@ type HordeArgs =
       dashboard?: DashboardOption | undefined;
       /** Present (true) only when `--no-verifier` was given. */
       noVerifier?: boolean | undefined;
+      /** Present (true) only when `--until-stop` was given. */
+      untilStop?: boolean | undefined;
     };
 
 export type HordeRunArgs = Extract<HordeArgs, { kind: "run" }>;
@@ -102,6 +106,7 @@ function parseStopRest(
 
 const DASHBOARD_FLAG = /^--dashboard(?:=(\S*))?(?=\s|$)/;
 const NO_VERIFIER_FLAG = /^--no-verifier(?=\s|$)/;
+const UNTIL_STOP_FLAG = /^--until-stop(?=\s|$)/;
 const DASHBOARD_ERROR = "invalid --dashboard; use --dashboard or --dashboard=<port 1-65535>";
 
 /** Launch flags found at one position of the command; `rest` is the remaining text. */
@@ -109,6 +114,7 @@ interface LaunchFlags {
   rest: string;
   dashboard?: DashboardOption | undefined;
   noVerifier?: boolean | undefined;
+  untilStop?: boolean | undefined;
   error?: string | undefined;
 }
 
@@ -120,7 +126,7 @@ function parseDashboardFlag(port: string | undefined): DashboardOption | { error
   return { port: value };
 }
 
-/** Strip leading `--dashboard[=<port>]` and `--no-verifier` tokens, in any order. */
+/** Strip leading `--dashboard[=<port>]`, `--no-verifier`, and `--until-stop` tokens, in any order. */
 function takeLaunchFlags(text: string): LaunchFlags {
   const flags: LaunchFlags = { rest: text.trim() };
   for (;;) {
@@ -138,6 +144,12 @@ function takeLaunchFlags(text: string): LaunchFlags {
       flags.rest = flags.rest.slice(noVerifier[0].length).trim();
       continue;
     }
+    const untilStop = UNTIL_STOP_FLAG.exec(flags.rest);
+    if (untilStop) {
+      flags.untilStop = true;
+      flags.rest = flags.rest.slice(untilStop[0].length).trim();
+      continue;
+    }
     return flags;
   }
 }
@@ -148,6 +160,7 @@ function mergeLaunchFlags(leading: LaunchFlags, trailing: LaunchFlags): LaunchFl
     rest: trailing.rest,
     dashboard: leading.dashboard ?? trailing.dashboard,
     noVerifier: leading.noVerifier === true || trailing.noVerifier === true ? true : undefined,
+    untilStop: leading.untilStop === true || trailing.untilStop === true ? true : undefined,
     error: leading.error ?? trailing.error,
   };
 }
@@ -173,6 +186,7 @@ function runArgs(count: number, prompt: string, flags: LaunchFlags, plan?: strin
   if (plan) args.plan = plan;
   if (flags.dashboard) args.dashboard = flags.dashboard;
   if (flags.noVerifier) args.noVerifier = true;
+  if (flags.untilStop) args.untilStop = true;
   return args;
 }
 
@@ -180,7 +194,7 @@ export function parseHordeArgs(raw: string): HordeArgs {
   const leading = takeLaunchFlags(raw);
   if (leading.error) return { kind: "usage", error: leading.error };
   const trimmed = leading.rest;
-  const hasFlags = leading.dashboard !== undefined || leading.noVerifier === true;
+  const hasFlags = leading.dashboard !== undefined || leading.noVerifier === true || leading.untilStop === true;
   if (trimmed === "") {
     return hasFlags ? { kind: "usage", error: "count is required" } : { kind: "usage" };
   }

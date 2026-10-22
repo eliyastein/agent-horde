@@ -71,6 +71,12 @@ export interface HordeRun extends MemberRunInfo {
   solvedContest?: { proposal: SolvedSignal; blockers: number[] } | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */
   solvedVerificationNotice?: boolean | undefined;
+  /** True when started with `--until-stop`: a validated solve restarts ideation instead of winding down. */
+  untilStop?: boolean | undefined;
+  /** Validated solves absorbed so far in an `--until-stop` run. */
+  solveRounds?: number | undefined;
+  /** The latest validated solve of an `--until-stop` run; the answer if no later proposal lands. */
+  lastRound?: { proposal: SolvedSignal; validator: string | undefined } | undefined;
   solvedTimer?: ReturnType<typeof setInterval> | undefined;
   solvedCoverageNotice?: boolean | undefined;
   postmortemAbort?: AbortController | undefined;

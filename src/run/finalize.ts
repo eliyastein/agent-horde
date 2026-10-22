@@ -101,6 +101,11 @@ function settleSolved(run: HordeRun): SettledAnswer | undefined {
     return { proposal: solvedState.proposal, status };
   }
   if (!run.solved) run.solved = solvedState.proposal;
+  if (!run.solved && run.lastRound) {
+    // `--until-stop`: no later proposal landed, so the last banked answer stands.
+    run.solved = run.lastRound.proposal;
+    run.solvedValidatedBy = run.lastRound.validator;
+  }
   if (
     run.solved &&
     !run.solvedValidatedBy &&

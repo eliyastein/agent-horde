@@ -10,7 +10,7 @@ import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/
 import { resetMemberState, spawnMember } from "../member.js";
 import type { MemberState } from "../member.js";
 import { hardStopMembers } from "./controls.js";
-import { recordLifecycle } from "./lifecycle.js";
+import { recordLifecycle, UNTIL_STOP_REASON } from "./lifecycle.js";
 import type { HordeRun, HordeState } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
@@ -109,7 +109,7 @@ function resetReasonForExit(launch: RunLaunch, member: MemberState): string | un
     (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined) ??
     verificationBacklog(run, member);
   if (!reason) return undefined;
-  if ((member.resets ?? 0) >= RESET_CAP) {
+  if ((member.resets ?? 0) >= RESET_CAP && !reason.startsWith(UNTIL_STOP_REASON)) {
     fs.appendFileSync(
       path.join(run.runDir, `${member.name}.log`),
       `[horde] reset cap reached (${reason})\n`,
@@ -174,8 +174,10 @@ async function performReset(run: HordeRun, member: MemberState, reason: string):
     tokens: member.usage.input + member.usage.output,
   });
   await recordLifecycle(run, "member-reset", { member: member.name, reason, released, closed, resets: member.resets });
-  member.resetNote =
-    `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
+  member.resetNote = reason.startsWith(UNTIL_STOP_REASON)
+    ? `The horde's answer was validated and banked, but this run continues until the user stops it. You are ${member.name}, reactivated to generate new ideas. ` +
+      "Read BOARD.md, FINDINGS.md and ANSWER.md, then add ideas that extend, stress-test, or deepen the work, and claim and pursue them. Propose SOLVED again only when a materially better answer exists."
+    : `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
     "its ideas were released. Read BOARD.md and FINDINGS.md before claiming." +
     (reason.startsWith("verification backlog") ? " Review the findings named above, with any verdict and an honest unchecked scope, before anything else." : "");
   clearHeartbeat(run.runDir, member.name);

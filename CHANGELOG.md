@@ -6,6 +6,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Added
 
+- `--until-stop` launch flag: a validated solve banks the answer and reactivates one member to keep
+  generating ideas until `stop-clean` or `stop-hard` (#29).
 - Every dashboard page ends with a footer naming the agent-horde version and, from a git
   checkout, the commit it runs at (#24).
 - `review` takes `limits` for disclosures outside the target's criteria; they are recorded on the
