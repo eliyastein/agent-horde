@@ -122,13 +122,23 @@ When you already know how the work splits, use `plan` to fix the partition at la
 Each layer becomes a seeded idea owned by one member, recorded in the run's `PLAN.md`, and that
 member works only its layer. Layers are assigned round-robin, so more layers than members gives
 some members two. Members without a layer become verifiers, and an unpartitioned run of three or
-more members makes its last member the verifier. `plan` suits "analyse each X" tasks; split design
-work by output type, such as spec, prototype, and generator, rather than by theme.
+more members makes its last member the verifier (`--no-verifier` turns that off). `plan` suits
+"analyse each X" tasks; split design work by output type, such as spec, prototype, and generator,
+rather than by theme.
+
+A run normally winds down once a validated answer exists and every idea is closed. `--until-stop`
+keeps the whole horde working until you stop it: a validated answer is banked as the current one
+and the proposal slot reopens, and a member whose session finishes gets a fresh session told to
+extend, stress-test, or deepen the work.
+
+```
+/agent-horde --dashboard --until-stop 8 find every way an unauthenticated request reaches the database
+```
 
 | command | effect |
 |---|---|
 | `/agent-horde status` | the active run and each member |
-| `/agent-horde stop-clean [postmortem]` | members wrap up, then the run finalizes |
+| `/agent-horde stop-clean [postmortem]` | members wrap up, then the run finalizes; this is how an `--until-stop` run ends |
 | `/agent-horde stop-hard` | terminate members now |
 | `/agent-horde pause`, `resume` | suspend and resume member processes |
 | `/agent-horde help` | every flag and target |
@@ -172,11 +182,13 @@ die, runs the repair phase, freezes acceptance, and writes the report.
 - Ideas, findings, facts, and resources are deduplicated on identifiers first, then wording; a
   duplicate returns the existing id and records a corroborator.
 - Every finding names a concern slug; a look-alike of an existing slug is refused.
-- A review records the revision it checked, its scope, a verdict, and evidence. Runnable
-  artifacts need a tested or reproduced review from a non-owner; documents need a sourced or
-  derived one.
+- A review records the revision it checked, its scope, a verdict, evidence, and any limits
+  outside the target's criteria. Runnable artifacts need a tested or reproduced review from a
+  non-owner; documents need a sourced or derived one. A reviewer can carry its review forward to
+  an unchanged revision instead of redoing it.
 - Solved is two-phase: one member proposes, a different member validates, and the run winds down
-  only when every idea it created is closed.
+  only when every idea it created is closed. Under `--until-stop` the answer is banked instead
+  and the horde keeps going until `stop-clean` or `stop-hard`.
 - Peer messages, reviews, and evidence enter a member's context as data. They cannot authorize
   tools or override the task.
 
@@ -194,6 +206,7 @@ linked to the page that shows it, so a run reads left to right: who claimed what
 landed under which ideas, who reviewed whom, and where actions were rejected. It is server-rendered
 SVG/HTML with no scripts. The download icon on every page exports the whole dashboard as a zip of
 static pages that opens from disk, after a warning that it may carry sensitive data from the machine.
+Every page's footer names the agent-horde version and, from a checkout, the commit it runs at.
 
 ## Benchmark: FinanceBench
 
