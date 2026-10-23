@@ -25,7 +25,12 @@ const NO_VERIFIER_COMPLETION = {
   description: "do not assign the verifier role to the last member of a 3+ member run",
 };
 
-const LAUNCH_FLAG_COMPLETIONS = [DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION];
+const UNTIL_STOP_COMPLETION = {
+  value: "--until-stop ",
+  description: "keep the whole horde working until stop-clean or stop-hard; validated solves are banked",
+};
+
+const LAUNCH_FLAG_COMPLETIONS = [DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION, UNTIL_STOP_COMPLETION];
 
 /** Argument completions that are not member targets. */
 const EXTRA_COMPLETIONS: Record<string, Array<{ value: string; description: string }>> = {

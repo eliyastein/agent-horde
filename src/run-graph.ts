@@ -430,7 +430,7 @@ const COLLABORATION: Record<string, Handler> = {
 function lifecycleText(action: string, p: Payload): [string, string] {
   const members = strings(p.members).join(", ");
   switch (action) {
-    case "run-start": return ["run start", `${num(p.count) ?? "?"} members${str(p.model) ? `, model ${str(p.model)}` : ""}`];
+    case "run-start": return ["run start", `${num(p.count) ?? "?"} members${str(p.model) ? `, model ${str(p.model)}` : ""}${p.untilStop === true ? ", until stop" : ""}`];
     case "run-end": return ["run end", `outcome ${str(p.outcome) ?? "unknown"}`];
     case "member-spawn": return ["spawn", str(p.role) ? `role: ${oneLine(str(p.role) ?? "", 120)}` : "spawned"];
     case "member-exit": return [`exit ${str(p.endCause) ?? ""}`.trim(), `status ${str(p.status) ?? "?"}, ${num(p.turns) ?? 0} turns, ${num(p.tokens) ?? 0} tokens`];

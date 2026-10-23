@@ -194,7 +194,7 @@ async function launchRun(
   try {
     await seedRun(run);
     await recordLifecycle(run, "run-start", {
-      count: run.count, model: run.model, verifier: run.verifier, plan: run.plan,
+      count: run.count, model: run.model, verifier: run.verifier, plan: run.plan, untilStop: run.untilStop,
       roles: roles.map((role) => oneLine(role, 120)), dashboardUrl: run.dashboardUrl,
     });
     await recordPhase(run, "discovery", "start");

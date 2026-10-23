@@ -85,6 +85,9 @@ if (process.argv.includes("--mode")) {
     assert.match(lines[1], new RegExp(`You are a fresh session of ${name}; its earlier session finished`));
   }
   assert.match(board(), /member-1 finished and continues in a fresh session/);
+  assert.match(fs.readFileSync(path.join(dir, "TASK.md"), "utf-8"), /^Until stop: yes/m, "TASK.md records the flag");
+  const runStart = fs.readFileSync(path.join(dir, "events.jsonl"), "utf-8").split("\n").map((l) => l && JSON.parse(l)).find((e) => e && e.action === "run-start");
+  assert.equal(runStart.payload.untilStop, true, "the run-start event records the flag");
   assert.ok(!fs.existsSync(path.join(dir, "REPORT.md")), "the run did not finalize when every member finished");
 
   // ---- a validated solve is banked and the slot reopens -----------------------
