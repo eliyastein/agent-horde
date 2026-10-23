@@ -101,11 +101,6 @@ function settleSolved(run: HordeRun): SettledAnswer | undefined {
     return { proposal: solvedState.proposal, status };
   }
   if (!run.solved) run.solved = solvedState.proposal;
-  if (!run.solved && run.lastRound) {
-    // `--until-stop`: no later proposal landed, so the last banked answer stands.
-    run.solved = run.lastRound.proposal;
-    run.solvedValidatedBy = run.lastRound.validator;
-  }
   if (
     run.solved &&
     !run.solvedValidatedBy &&
@@ -113,6 +108,11 @@ function settleSolved(run: HordeRun): SettledAnswer | undefined {
     solvedState.confirm.member !== run.solved.member
   ) {
     run.solvedValidatedBy = solvedState.confirm.member;
+  }
+  // `--until-stop`: the last banked answer stands unless a later proposal was validated too.
+  if (run.lastRound && !(run.solved && run.solvedValidatedBy)) {
+    run.solved = run.lastRound.proposal;
+    run.solvedValidatedBy = run.lastRound.validator;
   }
   if (run.solved) {
     const status = run.solvedValidatedBy

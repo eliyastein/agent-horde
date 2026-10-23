@@ -157,7 +157,8 @@ async function releaseForReset(
  * never races a live writer.
  */
 async function performReset(run: HordeRun, member: MemberState, reason: string): Promise<void> {
-  member.resets = (member.resets ?? 0) + 1;
+  // An `--until-stop` reactivation is not a recovery: it leaves the crash and stall caps alone.
+  if (!reason.startsWith(UNTIL_STOP_REASON)) member.resets = (member.resets ?? 0) + 1;
   fs.appendFileSync(
     path.join(run.runDir, `${member.name}.log`),
     `[horde] reset ${member.resets}: ${reason}\n`,
