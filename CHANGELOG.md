@@ -4,6 +4,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-23
+
 ### Added
 
 - `--until-stop` launch flag: the whole horde keeps working until `stop-clean` or `stop-hard`. A
