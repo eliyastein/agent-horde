@@ -55,6 +55,8 @@ export interface MemberState {
   summaryIncomplete?: boolean | undefined;
   /** How many fresh-context sessions replaced this member's earlier ones. */
   resets?: number | undefined;
+  /** Fresh sessions an `--until-stop` run gave this member after an earlier one finished. */
+  continuations?: number | undefined;
   /** Set by the parent before it kills a stalled member, so the exit is treated as a reset. */
   resetPending?: string | undefined;
   /** Extra identity line for a replacement session, naming what was reset and why. */
@@ -81,6 +83,8 @@ export interface MemberRunInfo {
   runDir: string;
   prompt: string;
   count: number;
+  /** True when started with `--until-stop`: the run continues until the user stops it. */
+  untilStop?: boolean | undefined;
 }
 
 interface SpawnMemberInput {
@@ -283,11 +287,19 @@ export function memberSessionDir(runDir: string, member: string): string {
   return path.join(runDir, "sessions", member);
 }
 
-/** The per-member system line: name, assigned role, and a reset note for a replacement. */
-function identityLine(member: MemberState, role: string | undefined): string {
+/** What an `--until-stop` member does instead of stopping when the board runs dry. */
+export const UNTIL_STOP_NOTE =
+  "This run continues until the user stops it. When nothing worthwhile remains on the board, add " +
+  "ideas that extend, stress-test, or deepen the work and pursue them instead of stopping. Propose " +
+  "SOLVED when the task has a complete answer; once an answer is banked, propose again only when a " +
+  "materially better one exists.";
+
+/** The per-member system line: name, assigned role, a reset note for a replacement, the until-stop rule. */
+function identityLine(run: MemberRunInfo, member: MemberState, role: string | undefined): string {
   const parts = [`You are ${member.name}.`];
   if (role) parts.push(role);
   if (member.resetNote) parts.push(member.resetNote);
+  if (run.untilStop) parts.push(UNTIL_STOP_NOTE);
   return parts.join(" ");
 }
 
@@ -297,7 +309,7 @@ export function buildMemberArgs(input: SpawnMemberInput): string[] {
     "--mode", "json", "-p",
     "--session-dir", memberSessionDir(run.runDir, member.name),
     "--append-system-prompt", path.join(run.runDir, "SYSTEM.md"),
-    "--append-system-prompt", identityLine(member, input.role),
+    "--append-system-prompt", identityLine(run, member, input.role),
   ];
   if (input.model) args.push("--model", `${input.model.provider}/${input.model.id}`);
   if (input.thinkingLevel) args.push("--thinking", input.thinkingLevel);

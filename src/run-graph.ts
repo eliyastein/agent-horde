@@ -442,6 +442,8 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "solved-withdrawn": return ["solved withdrawn", oneLine(str(p.reason) ?? "", 120)];
     case "solved-reopened": return ["solved reopened", oneLine(str(p.reason) ?? "", 120)];
     case "solved-validated": return ["solved validated", str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
+    case "solved-banked": return [`solved banked (round ${num(p.round) ?? "?"})`, str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
+    case "member-continue": return ["continue", `fresh session ${num(p.continuations) ?? "?"}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
     case "acceptance": return [`acceptance ${str(p.status) ?? ""}`.trim(), `${num(p.issues) ?? 0} issues, snapshot ${(str(p.hash) ?? "").slice(0, 12)}`];
     case "repair-start": return ["repair start", `queue ${strings(p.messages).join(", ")}`];
     case "repair-end": return ["repair end", `${str(p.cause) ?? ""}${str(p.stopReason) ? ` (${str(p.stopReason)})` : ""}`];

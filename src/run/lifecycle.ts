@@ -34,6 +34,3 @@ export function recordPhase(
 ): Promise<HordeEvent | undefined> {
   return recordLifecycle(run, `phase-${state}`, { phase, ...extra });
 }
-
-/** Reset-reason prefix for the member an `--until-stop` run reactivates after a validated solve. */
-export const UNTIL_STOP_REASON = "until-stop";

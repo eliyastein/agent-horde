@@ -10,7 +10,7 @@ import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/
 import { resetMemberState, spawnMember } from "../member.js";
 import type { MemberState } from "../member.js";
 import { hardStopMembers } from "./controls.js";
-import { recordLifecycle, UNTIL_STOP_REASON } from "./lifecycle.js";
+import { recordLifecycle } from "./lifecycle.js";
 import type { HordeRun, HordeState } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
@@ -22,6 +22,17 @@ const RESET_CAP = envNumber("PI_HORDE_RESET_CAP", 2);
 
 /** Member exits that a fresh session may recover from; a user stop is never one. */
 const RESETTABLE_CAUSES = new Set(["model_error", "no_output", "exit_nonzero"]);
+
+/**
+ * An `--until-stop` session that finished sooner than this is held back until it has been this
+ * long since it started, so a member that keeps finding nothing to do cannot spin through
+ * sessions, each paying the full prompt for nothing.
+ */
+const CONTINUE_COOLDOWN_MS = envNumber("PI_HORDE_CONTINUE_COOLDOWN_MS", 60_000);
+
+const CONTINUE_REASON = "until-stop: earlier session finished";
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
 
 /** What spawning and supervising a run's members needs beyond the run itself. */
 export interface RunLaunch {
@@ -100,16 +111,16 @@ export function verificationBacklog(run: HordeRun, member: MemberState): string 
 
 function resetReasonForExit(launch: RunLaunch, member: MemberState): string | undefined {
   const { state, run } = launch;
-  if (state.disposed || run.stopped || run.userStop || run.solved || run.canary !== "ok") {
-    return undefined;
-  }
+  if (state.disposed || run.stopped || run.userStop || run.canary !== "ok") return undefined;
+  // A pending proposal means the run is about to end, unless it runs until stopped.
+  if (run.solved && !run.untilStop) return undefined;
   if (cleanStopRequestedFor(run.hordeDir, run.id, member.name)) return undefined;
   const reason =
     member.resetPending ??
     (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined) ??
     verificationBacklog(run, member);
-  if (!reason) return undefined;
-  if ((member.resets ?? 0) >= RESET_CAP && !reason.startsWith(UNTIL_STOP_REASON)) {
+  if (!reason) return run.untilStop && member.endCause === "completed" ? CONTINUE_REASON : undefined;
+  if ((member.resets ?? 0) >= RESET_CAP) {
     fs.appendFileSync(
       path.join(run.runDir, `${member.name}.log`),
       `[horde] reset cap reached (${reason})\n`,
@@ -134,10 +145,13 @@ async function releaseForReset(
     const releasedText = released.map((id) => `#${id}`).join(", ") || "none";
     const closedText =
       result.closed.map((item) => `#${item.id} (F${item.findingId})`).join(", ") || "none";
+    const head = reason === CONTINUE_REASON
+      ? `${member.name} finished and continues in a fresh session (${run.id} runs until stopped)`
+      : `reset ${member.name} (${reason})`;
     await postBoard(
       run.hordeDir,
       "parent",
-      `reset ${member.name} (${reason}): released ${releasedText}; closed ${closedText}. ` +
+      `${head}: released ${releasedText}; closed ${closedText}. ` +
         `A fresh session of ${member.name} starts now; earlier claims by ${member.name} ` +
         "are void.",
     );
@@ -157,8 +171,7 @@ async function releaseForReset(
  * never races a live writer.
  */
 async function performReset(run: HordeRun, member: MemberState, reason: string): Promise<void> {
-  // An `--until-stop` reactivation is not a recovery: it leaves the crash and stall caps alone.
-  if (!reason.startsWith(UNTIL_STOP_REASON)) member.resets = (member.resets ?? 0) + 1;
+  member.resets = (member.resets ?? 0) + 1;
   fs.appendFileSync(
     path.join(run.runDir, `${member.name}.log`),
     `[horde] reset ${member.resets}: ${reason}\n`,
@@ -175,16 +188,41 @@ async function performReset(run: HordeRun, member: MemberState, reason: string):
     tokens: member.usage.input + member.usage.output,
   });
   await recordLifecycle(run, "member-reset", { member: member.name, reason, released, closed, resets: member.resets });
-  member.resetNote = reason.startsWith(UNTIL_STOP_REASON)
-    ? `The horde's answer was validated and banked, but this run continues until the user stops it. You are ${member.name}, reactivated to generate new ideas. ` +
-      "Read BOARD.md, FINDINGS.md and ANSWER.md, then add ideas that extend, stress-test, or deepen the work, and claim and pursue them. Propose SOLVED again only when a materially better answer exists."
-    : `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
+  member.resetNote =
+    `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
     "its ideas were released. Read BOARD.md and FINDINGS.md before claiming." +
     (reason.startsWith("verification backlog") ? " Review the findings named above, with any verdict and an honest unchecked scope, before anything else." : "");
   clearHeartbeat(run.runDir, member.name);
   resetMemberState(member);
   safeNotify(run, `horde ${run.id}: reset ${member.name} (${reason})`, "warning");
   refreshRun(run);
+}
+
+/**
+ * `--until-stop`: a member that finished its session gets a fresh one. Not a recovery, so it
+ * counts against no cap and is not a reset in the report; the cooldown keeps a member that
+ * finds nothing to do from spinning.
+ */
+async function performContinue(run: HordeRun, member: MemberState): Promise<boolean> {
+  const elapsed = Date.now() - member.startedAt;
+  if (elapsed < CONTINUE_COOLDOWN_MS) await sleep(CONTINUE_COOLDOWN_MS - elapsed);
+  // A stop during the cooldown leaves the member as it ended: finished, not killed.
+  if (run.stopped) return false;
+  member.continuations = (member.continuations ?? 0) + 1;
+  fs.appendFileSync(
+    path.join(run.runDir, `${member.name}.log`),
+    `[horde] continue ${member.continuations}: ${CONTINUE_REASON}\n`,
+  );
+  const { released, closed } = await releaseForReset(run, member, CONTINUE_REASON);
+  await recordLifecycle(run, "member-continue", { member: member.name, released, closed, continuations: member.continuations });
+  member.resetNote =
+    `You are a fresh session of ${member.name}; its earlier session finished and its claims were released. ` +
+    "Read BOARD.md, FINDINGS.md and ANSWER.md if present, then add ideas that extend, stress-test, or deepen the work, claim them, and pursue them.";
+  clearHeartbeat(run.runDir, member.name);
+  resetMemberState(member);
+  safeNotify(run, `horde ${run.id}: ${member.name} finished; continuing in a fresh session`, "info");
+  refreshRun(run);
+  return true;
 }
 
 /**
@@ -202,7 +240,11 @@ export async function superviseMember(
     await exited;
     const reason = resetReasonForExit(launch, member);
     if (!reason || state.disposed) return;
-    await performReset(run, member, reason);
+    if (reason === CONTINUE_REASON) {
+      if (!(await performContinue(run, member))) return;
+    } else {
+      await performReset(run, member, reason);
+    }
     if (run.stopped || state.disposed) {
       // A stop landed during the reset: leave the member down, not "starting".
       member.status = "stopped";
@@ -219,7 +261,7 @@ export async function superviseMember(
  * hung. Mark it and kill it; the supervise loop turns the kill into a reset.
  */
 function checkStalls(run: HordeRun): void {
-  if (run.stopped || run.solved) return;
+  if (run.stopped || (run.solved && !run.untilStop)) return;
   const now = Date.now();
   for (const member of run.members) {
     if (member.status !== "running" || member.paused || member.resetPending) continue;

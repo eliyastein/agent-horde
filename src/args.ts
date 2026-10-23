@@ -20,8 +20,9 @@ export const USAGE = [
   "PI_HORDE_DASHBOARD_PORT); --dashboard=<port> picks the port.",
   "--no-verifier skips the default verifier role that runs of 3 or more members assign",
   "to their last member.",
-  "--until-stop keeps the horde working after a validated solve: one member is reactivated",
-  "to generate new ideas until you run stop-hard or stop-clean.",
+  "--until-stop keeps the whole horde working until you run stop-clean or stop-hard: a",
+  "validated solve is banked as the current answer and a member that finishes gets a fresh",
+  "session told to add new ideas.",
 ].join("\n");
 
 /** Which members a control command applies to. */

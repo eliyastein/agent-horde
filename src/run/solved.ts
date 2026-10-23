@@ -8,8 +8,8 @@ import { listFindingsForRun, staleAnswerCitations, unverifiedFindings } from "..
 import { listIdeas } from "../ledger/ideas.js";
 import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
-import { hardStopMembers, requestCleanStop } from "./controls.js";
-import { recordLifecycle, UNTIL_STOP_REASON } from "./lifecycle.js";
+import { requestCleanStop } from "./controls.js";
+import { recordLifecycle } from "./lifecycle.js";
 import type { HordeRun } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
@@ -190,34 +190,30 @@ function verificationPending(run: HordeRun, othersRunning: boolean): boolean {
 }
 
 /**
- * `--until-stop`: bank the validated answer and put one member back on ideation instead of
- * winding down. The proposer is preferred; the verifier keeps its role unless it is all that is left.
+ * `--until-stop`: bank the answer as the run's current one and reopen the proposal slot, so a
+ * materially better answer can be proposed later. Nobody is stopped; the supervisor gives every
+ * member that finishes a fresh session.
  */
-function continueAfterSolve(run: HordeRun, proposal: SolvedSignal, validator: string | undefined): void {
+function bankSolved(run: HordeRun, proposal: SolvedSignal, validator: string | undefined): void {
   run.solveRounds = (run.solveRounds ?? 0) + 1;
   run.lastRound = { proposal, validator };
   const status = validator ? `validated by ${validator}` : "committed without a separate validator";
   try {
-    writeAnswer(run.runDir, run.id, proposal, `${status} (round ${run.solveRounds}; run continues until stopped)`);
+    writeAnswer(run.runDir, run.id, proposal, `${status} (banked as round ${run.solveRounds}; the run continues until stopped)`);
   } catch (error) {
     safeNotify(run, `horde ${run.id}: could not write ANSWER.md (${oneLine(String(error), 200)})`, "error");
   }
   clearProposal(run);
   run.solvedContest = undefined;
-  const live = run.members.filter((m) => (m.status === "running" || m.status === "starting") && !m.paused);
-  const member = live.find((m) => m.name === proposal.member) ?? live.find((m) => m.name !== run.verifier) ?? live[0];
-  void recordLifecycle(run, "solved-round", { round: run.solveRounds, member: proposal.member, validator, reactivated: member?.name });
-  safeNotify(run, `horde ${run.id}: solve #${run.solveRounds} banked; continuing until stopped`, "info");
+  void recordLifecycle(run, "solved-banked", { round: run.solveRounds, member: proposal.member, validator });
+  safeNotify(run, `horde ${run.id}: solve banked as round ${run.solveRounds}; the run continues until stopped`, "info");
   void postBoard(
     run.hordeDir,
     "parent",
-    `SOLVED ${status} (round ${run.solveRounds}); this run continues until the user stops it. ` +
-      `${member ? `${member.name} is reactivated to generate new ideas: ` : ""}extend, stress-test, or deepen the work and propose SOLVED again when a materially better answer exists.`,
+    `SOLVED ${status}, banked as round ${run.solveRounds}: ${oneLine(proposal.text, 200)}. ` +
+      "This run continues until the user stops it. Keep working: extend, stress-test, or deepen the work, " +
+      "add ideas for what is still unexplored, and propose SOLVED again only when a materially better answer exists.",
   );
-  if (member) {
-    member.resetPending = `${UNTIL_STOP_REASON}: solve round ${run.solveRounds} banked`;
-    hardStopMembers(run, [member.name]);
-  }
   refreshRun(run);
 }
 
@@ -227,7 +223,7 @@ function commitSolved(
   validator: string | undefined,
 ): void {
   if (run.untilStop && run.solved && !run.stopped) {
-    continueAfterSolve(run, run.solved, validator);
+    bankSolved(run, run.solved, validator);
     return;
   }
   run.solvedValidatedBy = validator;
@@ -279,7 +275,9 @@ export function checkSolved(run: HordeRun, ctx: ExtensionCommandContext): void {
   if (coveragePending(run, validator)) return;
   const collaboration = loadCollaborationReport(run.hordeDir, run.id);
   if (collaboration.issues.length || openMessages(collaboration.state).length) return;
-  const othersRunning = run.members.some(
+  // Members of an `--until-stop` run are always coming back, so a lull between sessions is not
+  // the absence of a validator; the proposal waits for one or for the timeout.
+  const othersRunning = run.untilStop === true || run.members.some(
     (member) =>
       (member.status === "running" || member.status === "starting") &&
       member.name !== solved.member,
