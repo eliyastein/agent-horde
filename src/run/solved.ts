@@ -6,7 +6,7 @@ import { postBoard } from "../ledger/board.js";
 import { unsettledFactCitations } from "../ledger/facts.js";
 import { listFindingsForRun, staleAnswerCitations, unverifiedFindings } from "../ledger/findings.js";
 import { listIdeas } from "../ledger/ideas.js";
-import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState } from "../ledger/run-signals.js";
+import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
 import { requestCleanStop } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
@@ -189,11 +189,43 @@ function verificationPending(run: HordeRun, othersRunning: boolean): boolean {
   return true;
 }
 
+/**
+ * `--until-stop`: bank the answer as the run's current one and reopen the proposal slot, so a
+ * materially better answer can be proposed later. Nobody is stopped; the supervisor gives every
+ * member that finishes a fresh session.
+ */
+function bankSolved(run: HordeRun, proposal: SolvedSignal, validator: string | undefined): void {
+  run.solveRounds = (run.solveRounds ?? 0) + 1;
+  run.lastRound = { proposal, validator };
+  const status = validator ? `validated by ${validator}` : "committed without a separate validator";
+  try {
+    writeAnswer(run.runDir, run.id, proposal, `${status} (banked as round ${run.solveRounds}; the run continues until stopped)`);
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not write ANSWER.md (${oneLine(String(error), 200)})`, "error");
+  }
+  clearProposal(run);
+  run.solvedContest = undefined;
+  void recordLifecycle(run, "solved-banked", { round: run.solveRounds, member: proposal.member, validator });
+  safeNotify(run, `horde ${run.id}: solve banked as round ${run.solveRounds}; the run continues until stopped`, "info");
+  void postBoard(
+    run.hordeDir,
+    "parent",
+    `SOLVED ${status}, banked as round ${run.solveRounds}: ${oneLine(proposal.text, 200)}. ` +
+      "This run continues until the user stops it. Keep working: extend, stress-test, or deepen the work, " +
+      "add ideas for what is still unexplored, and propose SOLVED again only when a materially better answer exists.",
+  );
+  refreshRun(run);
+}
+
 function commitSolved(
   run: HordeRun,
   ctx: ExtensionCommandContext,
   validator: string | undefined,
 ): void {
+  if (run.untilStop && run.solved && !run.stopped) {
+    bankSolved(run, run.solved, validator);
+    return;
+  }
   run.solvedValidatedBy = validator;
   run.solvedCommitted = true;
   void recordLifecycle(run, "solved-validated", { validator });
@@ -243,7 +275,9 @@ export function checkSolved(run: HordeRun, ctx: ExtensionCommandContext): void {
   if (coveragePending(run, validator)) return;
   const collaboration = loadCollaborationReport(run.hordeDir, run.id);
   if (collaboration.issues.length || openMessages(collaboration.state).length) return;
-  const othersRunning = run.members.some(
+  // Members of an `--until-stop` run are always coming back, so a lull between sessions is not
+  // the absence of a validator; the proposal waits for one or for the timeout.
+  const othersRunning = run.untilStop === true || run.members.some(
     (member) =>
       (member.status === "running" || member.status === "starting") &&
       member.name !== solved.member,

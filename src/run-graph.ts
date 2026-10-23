@@ -430,7 +430,7 @@ const COLLABORATION: Record<string, Handler> = {
 function lifecycleText(action: string, p: Payload): [string, string] {
   const members = strings(p.members).join(", ");
   switch (action) {
-    case "run-start": return ["run start", `${num(p.count) ?? "?"} members${str(p.model) ? `, model ${str(p.model)}` : ""}`];
+    case "run-start": return ["run start", `${num(p.count) ?? "?"} members${str(p.model) ? `, model ${str(p.model)}` : ""}${p.untilStop === true ? ", until stop" : ""}`];
     case "run-end": return ["run end", `outcome ${str(p.outcome) ?? "unknown"}`];
     case "member-spawn": return ["spawn", str(p.role) ? `role: ${oneLine(str(p.role) ?? "", 120)}` : "spawned"];
     case "member-exit": return [`exit ${str(p.endCause) ?? ""}`.trim(), `status ${str(p.status) ?? "?"}, ${num(p.turns) ?? 0} turns, ${num(p.tokens) ?? 0} tokens`];
@@ -442,6 +442,8 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "solved-withdrawn": return ["solved withdrawn", oneLine(str(p.reason) ?? "", 120)];
     case "solved-reopened": return ["solved reopened", oneLine(str(p.reason) ?? "", 120)];
     case "solved-validated": return ["solved validated", str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
+    case "solved-banked": return [`solved banked (round ${num(p.round) ?? "?"})`, str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
+    case "member-continue": return ["continue", `fresh session ${num(p.continuations) ?? "?"}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
     case "acceptance": return [`acceptance ${str(p.status) ?? ""}`.trim(), `${num(p.issues) ?? 0} issues, snapshot ${(str(p.hash) ?? "").slice(0, 12)}`];
     case "repair-start": return ["repair start", `queue ${strings(p.messages).join(", ")}`];
     case "repair-end": return ["repair end", `${str(p.cause) ?? ""}${str(p.stopReason) ? ` (${str(p.stopReason)})` : ""}`];

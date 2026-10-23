@@ -7,7 +7,7 @@ at one problem beat a single linear one: research, audits, design exploration, R
 ## Usage
 
 ```
-/agent-horde [--dashboard[=<port>]] [--no-verifier] <count> <prompt>
+/agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] <count> <prompt>
 /agent-horde plan [--dashboard] <count> <layer; layer; ...>
 /agent-horde status [target]
 /agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
@@ -252,6 +252,17 @@ highest-importance unchecked assertions first with `horde review`, contest or su
 not reproduce, and claim ideas only when nothing is left to review. `--no-verifier` turns this
 off.
 
+`--until-stop` keeps the whole horde working until you stop it. A validated solve does not wind
+the run down: the answer is banked in ANSWER.md (and under `answers/`) as round N and the proposal
+slot reopens, so a materially better answer can be proposed later. A member whose session finishes
+is given a fresh session that reads the board, findings, and answer and adds ideas that extend,
+stress-test, or deepen the work; these continuations count against no reset cap and are not
+resets in the report. A session that finished within `PI_HORDE_CONTINUE_COOLDOWN_MS` (default
+60000) of starting waits out the remainder first, so a member that finds nothing to do cannot spin.
+Crash and stall resets apply as usual. `stop-clean` and `stop-hard` end the run as usual and
+`stop-clean` produces the report, deliverable, and postmortem; the last banked answer stands unless
+a later proposal was validated too.
+
 ## Finding metadata
 
 `importance` (critical, high, medium, low, info), `confidence` (high, medium, low), and
@@ -279,6 +290,7 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | variable | default | effect |
 |----------|---------|--------|
 | `PI_HORDE_DASHBOARD_PORT` | 7433 | dashboard port when `--dashboard` names none |
+| `PI_HORDE_CONTINUE_COOLDOWN_MS` | 60000 | `--until-stop`: a finished session younger than this waits out the remainder before its fresh session starts |
 | `PI_HORDE_MAX_MINUTES` | off | clean stop at a wall-clock deadline |
 | `PI_HORDE_CANARY_MS` | 60000 | time for member-1 to produce output before a retry |
 | `PI_HORDE_STALL_MS` | 1800000 | reset a member with no ledger write for this long; `0` disables |

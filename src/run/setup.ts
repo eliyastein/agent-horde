@@ -91,7 +91,7 @@ export function createRun(
   fs.writeFileSync(
     path.join(runDir, "TASK.md"),
     taskMarkdown({
-      id, prompt, count, model, thinkingLevel: ctx.thinkingLevel, startedAt, verifier,
+      id, prompt, count, model, thinkingLevel: ctx.thinkingLevel, startedAt, verifier, untilStop: parsed.untilStop,
     }),
     "utf-8",
   );
@@ -112,6 +112,7 @@ export function createRun(
     model,
     plan,
     verifier,
+    untilStop: parsed.untilStop === true ? true : undefined,
     resets: [],
     dashboardUrl,
   };

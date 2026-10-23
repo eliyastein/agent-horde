@@ -274,6 +274,7 @@ export function taskMarkdown(input: {
   thinkingLevel?: string | undefined;
   startedAt: number;
   verifier?: string | undefined;
+  untilStop?: boolean | undefined;
 }): string {
   return [
     `# Horde run ${input.id}`,
@@ -283,6 +284,7 @@ export function taskMarkdown(input: {
     `Model: ${input.model ?? "parent default"}`,
     `Thinking: ${input.thinkingLevel ?? "parent default"}`,
     `Verifier: ${input.verifier ?? "none"}`,
+    `Until stop: ${input.untilStop ? "yes (the run continues until stop-clean or stop-hard)" : "no"}`,
     `Task-SHA256: ${taskHash(input.prompt)}`,
     "",
     "## Prompt",

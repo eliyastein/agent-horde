@@ -144,3 +144,11 @@ assert.deepEqual(parseHordeArgs("3 find --no-verifier bugs"), {
 assert.match(parseHordeArgs("--no-verifier").error, /count is required/);
 assert.equal(parseHordeArgs("--no-verifier status").kind, "usage");
 console.log("PASS: horde-args-test no-verifier flag");
+
+// --until-stop launch flag, in any position, combinable with the other flags.
+const untilStop = { kind: "run", count: 3, prompt: "x", untilStop: true };
+assert.deepEqual(parseHordeArgs("--until-stop 3 x"), untilStop);
+assert.deepEqual(parseHordeArgs("3 --until-stop x"), untilStop);
+assert.deepEqual(parseHordeArgs("--no-verifier --until-stop 3 x"), { ...untilStop, noVerifier: true });
+assert.equal(parseHordeArgs("--until-stop status").kind, "usage");
+console.log("PASS: horde-args-test until-stop flag");
