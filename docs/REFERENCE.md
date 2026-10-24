@@ -310,8 +310,11 @@ pass over the merged deliverable is not built.
 **Dashboard and widget.** The index lists swarms above runs and tags each swarm run; `/swarms/<id>`
 has one row per horde linking to the run pages, the partition and the merge state, and
 `/swarms/<id>/graph` draws one lane per horde with its phase marks and the merge step in a swarm
-lane. Run pages resolve swarm run ids to their horde directory, and every ledger page reads a
-horde's ledgers when `run=<swarm-run-id>` is given. The widget shows one line per horde.
+lane. From a swarm page the nav's ledger links point at `/swarms/<id>/<ledger>` (ideas, board,
+findings, claims, facts, resources), which shows every horde's ledger on one page under a per-horde
+heading, since the hordes keep separate ledgers and reuse ids. Run pages resolve swarm run ids to
+their horde directory, and every ledger page reads a horde's ledgers when `run=<swarm-run-id>` is
+given. The widget shows one line per horde.
 
 ## Finding metadata
 

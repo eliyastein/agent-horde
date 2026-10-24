@@ -21,6 +21,7 @@ import type {
   RunOverviewVm,
   SessionsVm,
   SwarmGraphVm,
+  SwarmLedgerVm,
   SwarmVm,
   TranscriptEntryVm,
   TranscriptVm,
@@ -137,17 +138,22 @@ function swarmHref(swarmId: string): string {
 }
 
 /**
- * The ledger links carry `run` when a run is in context: board, findings and facts filter by it,
- * and every ledger page reads a swarm horde's own ledgers through it.
+ * On a swarm page (a swarm is in context and no single run is) the ledger links point at the
+ * swarm-wide aggregate `/swarms/<id>/<ledger>`, which shows every horde's ledger under its own
+ * heading. Elsewhere they carry `run` when a run is in context, so board, findings and facts
+ * filter by it and every ledger page reads that run's (or horde's) own ledgers.
  */
 function nav(ctx: RenderContext): string {
+  const swarmScope = ctx.swarmId !== undefined && ctx.runId === undefined;
+  const base = swarmScope ? swarmHref(ctx.swarmId!) : "";
   const run = ctx.runId ?? ctx.activeId;
-  const q = run ? query({ run }) : "";
+  const q = swarmScope || !run ? "" : query({ run });
+  const ledger = (name: string): string => link(`${base}/${name}${q}`, name);
   const swarm = ctx.swarmId ? link(swarmHref(ctx.swarmId), "swarm") : "";
   return (
-    `<nav>${link("/", "runs")}${swarm}${link(`/ideas${q}`, "ideas")}${link(`/board${q}`, "board")}` +
-    `${link(`/findings${q}`, "findings")}${link(`/claims${q}`, "claims")}${link(`/facts${q}`, "facts")}` +
-    `${link(`/resources${q}`, "resources")}${runLinks(ctx.navRun ?? run)}</nav>`
+    `<nav>${link("/", "runs")}${swarm}${ledger("ideas")}${ledger("board")}` +
+    `${ledger("findings")}${ledger("claims")}${ledger("facts")}` +
+    `${ledger("resources")}${runLinks(ctx.navRun ?? run)}</nav>`
   );
 }
 
@@ -583,20 +589,21 @@ function ideaRows(ideas: Idea[], ctx: RenderContext): string[][] {
   ]);
 }
 
+function ideasBody(vm: IdeasVm, ctx: RenderContext): string {
+  const sections: Array<[string, Idea[]]> = [
+    ["in progress", vm.inProgress], ["open", vm.open], ["done", vm.done], ["ruled out", vm.ruledOut],
+  ];
+  return sections
+    .map(([title, ideas]) => `<h2>${e(title)} (${ideas.length})</h2>${table(["id", "idea", "owner", "note"], ideaRows(ideas, ctx))}`)
+    .join("");
+}
+
 export function renderIdeas(vm: IdeasVm, ctx: RenderContext): string {
   const filters = [
     vm.owner ? link("/ideas", "all") : "all",
     ...vm.owners.map((o) => (o === vm.owner ? e(o) : link(`/ideas${query({ owner: o })}`, o))),
   ];
-  const sections: Array<[string, Idea[]]> = [
-    ["in progress", vm.inProgress], ["open", vm.open], ["done", vm.done], ["ruled out", vm.ruledOut],
-  ];
-  const body =
-    `<p>owner: ${filters.join(" ")}</p>` +
-    sections
-      .map(([title, ideas]) => `<h2>${e(title)} (${ideas.length})</h2>${table(["id", "idea", "owner", "note"], ideaRows(ideas, ctx))}`)
-      .join("");
-  return page("ideas", [{ text: "ideas" }], body, ctx);
+  return page("ideas", [{ text: "ideas" }], `<p>owner: ${filters.join(" ")}</p>${ideasBody(vm, ctx)}`, ctx);
 }
 
 function runPicker(base: string, current: string, runs: string[], extra: Record<string, string | undefined>): string {
@@ -606,18 +613,22 @@ function runPicker(base: string, current: string, runs: string[], extra: Record<
   return `<p>run: ${items.join(" ")}</p>`;
 }
 
-export function renderBoard(vm: BoardVm, ctx: RenderContext): string {
-  const other = vm.order === "newest" ? "oldest" : "newest";
+function boardBody(vm: BoardVm, ctx: RenderContext): string {
   const rows = vm.entries.map((entry: BoardEntry) => [
     entry.runId ? link(runHref(entry.runId), entry.runId) : "",
     e(entry.time),
     authorLink(entry.author, entry.runId || ctx.activeId),
     pre(entry.text),
   ]);
+  return table(["run", "time", "author", "message"], rows, "no posts");
+}
+
+export function renderBoard(vm: BoardVm, ctx: RenderContext): string {
+  const other = vm.order === "newest" ? "oldest" : "newest";
   const body =
     runPicker("/board", vm.run, vm.runs, { order: vm.order }) +
     `<p>order: ${vm.order} ${link(`/board${query({ run: vm.run, order: other })}`, `[${other} first]`)}</p>` +
-    table(["run", "time", "author", "message"], rows, "no posts");
+    boardBody(vm, ctx);
   return page("board", [{ text: "board" }], body, ctx);
 }
 
@@ -661,31 +672,32 @@ const FINDING_HEADERS = [
   "superseded by", "review status", "title",
 ];
 
+function findingsBody(vm: FindingsVm, ctx: RenderContext): string {
+  if (!vm.clusters) return table(FINDING_HEADERS, vm.findings.map((f) => findingRow(f, vm, ctx)), "no findings");
+  if (vm.clusters.length === 0) return "<p>no findings</p>";
+  return vm.clusters
+    .map((cluster, i) => {
+      const members = cluster.members.join(", ") || "none";
+      const deltas = cluster.deltaMembers.length > 0 ? `; deltas ${cluster.deltaMembers.join(", ")}` : "";
+      return (
+        `<h2>cluster ${i + 1}: F${cluster.representative}, members ${e(members)}${e(deltas)}</h2>` +
+        table(FINDING_HEADERS, cluster.findings.map((f) => findingRow(f, vm, ctx)))
+      );
+    })
+    .join("");
+}
+
 export function renderFindings(vm: FindingsVm, ctx: RenderContext): string {
   const other = vm.view === "list" ? "clusters" : "list";
   const open = vm.open.length > 0 ? vm.open.join(",") : undefined;
-  let body =
+  const body =
     runPicker("/findings", vm.run, vm.runs, { view: vm.view, open }) +
-    `<p>view: ${vm.view} ${link(`/findings${query({ run: vm.run, view: other, open })}`, `[${other}]`)}</p>`;
-  if (vm.clusters) {
-    body += vm.clusters
-      .map((cluster, i) => {
-        const members = cluster.members.join(", ") || "none";
-        const deltas = cluster.deltaMembers.length > 0 ? `; deltas ${cluster.deltaMembers.join(", ")}` : "";
-        return (
-          `<h2>cluster ${i + 1}: F${cluster.representative}, members ${e(members)}${e(deltas)}</h2>` +
-          table(FINDING_HEADERS, cluster.findings.map((f) => findingRow(f, vm, ctx)))
-        );
-      })
-      .join("");
-    if (vm.clusters.length === 0) body += "<p>no findings</p>";
-  } else {
-    body += table(FINDING_HEADERS, vm.findings.map((f) => findingRow(f, vm, ctx)), "no findings");
-  }
+    `<p>view: ${vm.view} ${link(`/findings${query({ run: vm.run, view: other, open })}`, `[${other}]`)}</p>` +
+    findingsBody(vm, ctx);
   return page("findings", [{ text: "findings" }], body, ctx);
 }
 
-export function renderClaims(vm: ClaimsVm, ctx: RenderContext): string {
+function claimsBody(vm: ClaimsVm, ctx: RenderContext): string {
   const body = vm.groups
     .map(
       (group) =>
@@ -696,7 +708,11 @@ export function renderClaims(vm: ClaimsVm, ctx: RenderContext): string {
         ),
     )
     .join("");
-  return page("claims", [{ text: "claims" }], body || "<p>no claims</p>", ctx);
+  return body || "<p>no claims</p>";
+}
+
+export function renderClaims(vm: ClaimsVm, ctx: RenderContext): string {
+  return page("claims", [{ text: "claims" }], claimsBody(vm, ctx), ctx);
 }
 
 function factRows(facts: FactEntry[], ctx: RenderContext): string[][] {
@@ -708,18 +724,20 @@ function factRows(facts: FactEntry[], ctx: RenderContext): string[][] {
   ]);
 }
 
-export function renderFacts(vm: FactsVm, ctx: RenderContext): string {
+function factsBody(vm: FactsVm, ctx: RenderContext): string {
   const headers = ["id", "fact", "author", "delta of"];
-  const body =
-    vm.attribution === "split"
-      ? `<h2>this run (${vm.thisRun.length})</h2>${table(headers, factRows(vm.thisRun, ctx))}` +
-        `<h2>carried from earlier runs (${vm.carried.length})</h2>${table(headers, factRows(vm.carried, ctx))}`
-      : `<p>${vm.run ? "per-run attribution is only available for the active run; " : ""}all facts:</p>` +
-        table(headers, factRows(vm.all, ctx), "no facts");
-  return page("facts", [{ text: "facts" }], body, ctx);
+  return vm.attribution === "split"
+    ? `<h2>this run (${vm.thisRun.length})</h2>${table(headers, factRows(vm.thisRun, ctx))}` +
+      `<h2>carried from earlier runs (${vm.carried.length})</h2>${table(headers, factRows(vm.carried, ctx))}`
+    : `<p>${vm.run ? "per-run attribution is only available for the active run; " : ""}all facts:</p>` +
+      table(headers, factRows(vm.all, ctx), "no facts");
 }
 
-export function renderResources(vm: ResourcesVm, ctx: RenderContext): string {
+export function renderFacts(vm: FactsVm, ctx: RenderContext): string {
+  return page("facts", [{ text: "facts" }], factsBody(vm, ctx), ctx);
+}
+
+function resourcesBody(vm: ResourcesVm, ctx: RenderContext): string {
   const rows = vm.resources.map((resource) => [
     anchor(`R${resource.id}`),
     e(resource.name),
@@ -732,12 +750,57 @@ export function renderResources(vm: ResourcesVm, ctx: RenderContext): string {
   const scope = vm.run
     ? `<p>cited by: non-owners whose findings, evidence, reviews or leases name the resource in run ${e(vm.run)}</p>`
     : "<p>cited by: needs an active run; only explicit reclaims are shown</p>";
-  return page(
-    "resources",
-    [{ text: "resources" }],
-    scope + table(["id", "name", "owner", "note", "reused by", "cited by", "cleanup"], rows, "no shared resources claimed"),
-    ctx,
-  );
+  return scope + table(["id", "name", "owner", "note", "reused by", "cited by", "cleanup"], rows, "no shared resources claimed");
+}
+
+export function renderResources(vm: ResourcesVm, ctx: RenderContext): string {
+  return page("resources", [{ text: "resources" }], resourcesBody(vm, ctx), ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Swarm ledgers: every horde's ledger on one page, under per-horde headings
+// ---------------------------------------------------------------------------
+
+/** Render a ledger aggregated across a swarm: one `<h2>hN</h2>` section per horde, ids stay unambiguous. */
+function swarmLedgerPage<T>(
+  kind: string,
+  vm: SwarmLedgerVm<T>,
+  body: (sectionVm: T, ctx: RenderContext) => string,
+  ctx: RenderContext,
+): string {
+  const crumbs: Crumb[] = [{ text: "runs", href: "/" }, { text: `swarm ${vm.swarmId}`, href: swarmHref(vm.swarmId) }, { text: kind }];
+  const inner =
+    vm.sections.length === 0
+      ? "<p>this swarm has no hordes</p>"
+      : `<p>${kind} across ${vm.sections.length} hordes; ids repeat per horde, so each section is one horde's ledger</p>` +
+        vm.sections
+          .map((section) => `<h2>${e(section.label)} &mdash; ${link(runHref(section.runId), section.runId)}</h2>${body(section.vm, ctx)}`)
+          .join("");
+  return page(kind, crumbs, inner, ctx);
+}
+
+export function renderSwarmIdeas(vm: SwarmLedgerVm<IdeasVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("ideas", vm, ideasBody, ctx);
+}
+
+export function renderSwarmBoard(vm: SwarmLedgerVm<BoardVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("board", vm, boardBody, ctx);
+}
+
+export function renderSwarmFindings(vm: SwarmLedgerVm<FindingsVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("findings", vm, findingsBody, ctx);
+}
+
+export function renderSwarmClaims(vm: SwarmLedgerVm<ClaimsVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("claims", vm, claimsBody, ctx);
+}
+
+export function renderSwarmFacts(vm: SwarmLedgerVm<FactsVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("facts", vm, factsBody, ctx);
+}
+
+export function renderSwarmResources(vm: SwarmLedgerVm<ResourcesVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("resources", vm, resourcesBody, ctx);
 }
 
 // ---------------------------------------------------------------------------

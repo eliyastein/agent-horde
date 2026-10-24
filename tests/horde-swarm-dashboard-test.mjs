@@ -171,6 +171,42 @@ assert.ok(livePage.body.includes("<b>ACTIVE</b>"));
 assert.ok(livePage.body.includes("refresh"), "a live swarm page auto-refreshes");
 assert.ok(data.loadSwarmGraph(liveSrc, layout.id, { width: 1200, from: 0, to: 0 }).graph.end >= startedAt + 120_000, "a live graph runs to now");
 
+// ---- swarm-wide ledgers: every horde on one page ----------------------------
+// The swarm page's nav points ledger links at the swarm aggregate, not the empty project root.
+const swarmNav = get(`/swarms/${layout.id}`).body.match(/<nav>.*?<\/nav>/)[0];
+for (const k of ["ideas", "board", "findings", "claims", "facts", "resources"]) {
+  assert.ok(swarmNav.includes(`href="/swarms/${layout.id}/${k}"`), `swarm nav links ${k} to the aggregate: ${swarmNav}`);
+}
+// A horde run page keeps run-scoped ledger links, not the swarm aggregate.
+const runNav = get(`/runs/${layout.runIds[1]}`).body.match(/<nav>.*?<\/nav>/)[0];
+assert.ok(runNav.includes(`href="/findings?run=${layout.runIds[1]}"`), `a horde run page filters ledgers to that horde: ${runNav}`);
+
+for (const k of ["ideas", "board", "findings", "claims", "facts", "resources"]) {
+  assert.equal(get(`/swarms/${layout.id}/${k}`).status, 200, `/swarms/<id>/${k} serves`);
+}
+assert.equal(get(`/swarms/nope/findings`).status, 400);
+assert.equal(get(`/swarms/20990101-000000/findings`).status, 404);
+
+// The aggregate shows one section per horde, each linking to its run, with that horde's own ledger.
+const factsAgg = json(`/swarms/${layout.id}/facts`);
+assert.deepEqual(factsAgg.sections.map((s) => s.label), ["h1", "h2"]);
+assert.deepEqual(factsAgg.sections.map((s) => s.runId), layout.runIds);
+assert.equal(factsAgg.sections[0].vm.all.length, 0, "h1 has no facts");
+assert.equal(factsAgg.sections[1].vm.all.length, 1, "h2's fact is read from h2's ledger");
+assert.equal(factsAgg.sections[1].vm.all[0].text, "a fact only h2 knows");
+const factsPage = get(`/swarms/${layout.id}/facts`);
+assert.ok(factsPage.body.includes(`href="/runs/${layout.runIds[0]}"`) && factsPage.body.includes(`href="/runs/${layout.runIds[1]}"`), "each section links to its horde run");
+assert.ok(factsPage.body.includes("a fact only h2 knows"), "the h2 fact shows on the swarm-wide facts page");
+assert.ok(factsPage.body.includes("ids repeat per horde"), "the page says ids are per horde");
+
+// A swarm with no hordes on disk still renders rather than 500ing.
+fs.mkdirSync(path.join(hordeDir, "swarms", "20261024-070000"));
+const emptySwarm = get("/swarms/20261024-070000/findings");
+assert.equal(emptySwarm.status, 200);
+assert.ok(emptySwarm.body.includes("no hordes"), emptySwarm.body.slice(0, 200));
+
+console.log("PASS: horde-swarm-dashboard-test ledgers");
+
 // ---- the graph builder on its own -------------------------------------------
 const empty = graphMod.buildSwarmGraph({ swarmId: "x", startedAt: 1_000, hordes: [{ label: "h1", runId: "r-h1", events: [] }] });
 assert.equal(empty.end, 2_000, "an empty graph still has a time axis");

@@ -1135,6 +1135,55 @@ export function loadSwarm(src: DashboardSource, swarmId: string): SwarmVm {
   };
 }
 
+/** One horde of a swarm, for aggregating its ledgers on one page. */
+interface SwarmLedger {
+  label: string;
+  runId: string;
+}
+
+/** The swarm's hordes in order, `h1` first; throws when the swarm does not exist. */
+function swarmLedgers(src: DashboardSource, swarmId: string): SwarmLedger[] {
+  validSwarmId(swarmId);
+  const live = liveSwarmIf(src, swarmId);
+  if (!live && !fs.existsSync(swarmDir(src, swarmId))) throw new DashboardError(404, `no swarm ${swarmId}`);
+  const runIds = swarmRunIds(src, swarmId, live, readSwarmRecord(swarmDir(src, swarmId)));
+  return runIds.map((runId) => ({ label: `h${swarmOfRun(runId)?.horde ?? "?"}`, runId }));
+}
+
+/** A ledger page aggregated across a swarm: one section per horde, each the normal per-horde view. */
+export interface SwarmLedgerVm<T> {
+  swarmId: string;
+  sections: Array<SwarmLedger & { vm: T }>;
+}
+
+function swarmSections<T>(src: DashboardSource, swarmId: string, perHorde: (runId: string) => T): SwarmLedgerVm<T> {
+  return { swarmId, sections: swarmLedgers(src, swarmId).map((l) => ({ ...l, vm: perHorde(l.runId) })) };
+}
+
+export function loadSwarmIdeas(src: DashboardSource, swarmId: string, owner?: string): SwarmLedgerVm<IdeasVm> {
+  return swarmSections(src, swarmId, (runId) => loadIdeas(src, owner, runId));
+}
+
+export function loadSwarmBoard(src: DashboardSource, swarmId: string, order: "newest" | "oldest"): SwarmLedgerVm<BoardVm> {
+  return swarmSections(src, swarmId, (runId) => loadBoard(src, runId, order));
+}
+
+export function loadSwarmFindings(src: DashboardSource, swarmId: string, view: "list" | "clusters", open: number[]): SwarmLedgerVm<FindingsVm> {
+  return swarmSections(src, swarmId, (runId) => loadFindings(src, runId, view, open));
+}
+
+export function loadSwarmClaims(src: DashboardSource, swarmId: string): SwarmLedgerVm<ClaimsVm> {
+  return swarmSections(src, swarmId, (runId) => loadClaims(src, runId));
+}
+
+export function loadSwarmFacts(src: DashboardSource, swarmId: string): SwarmLedgerVm<FactsVm> {
+  return swarmSections(src, swarmId, (runId) => loadFacts(src, runId));
+}
+
+export function loadSwarmResources(src: DashboardSource, swarmId: string): SwarmLedgerVm<ResourcesVm> {
+  return swarmSections(src, swarmId, (runId) => loadResources(src, runId));
+}
+
 export interface SwarmGraphVm {
   swarmId: string;
   graph: RunGraph;

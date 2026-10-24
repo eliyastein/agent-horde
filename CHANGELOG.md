@@ -18,7 +18,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   to its horde, and one swarm report replaces the per-horde reports. The dashboard lists swarms,
   resolves swarm run ids, reads a horde's ledgers through `run=`, and adds `/swarms/<id>` with one
   row per horde and a graph with one lane per horde and the merge step; the widget shows one line
-  per horde. `--until-stop` applies to every horde (#18).
+  per horde. From a swarm page the ledger nav links lead to `/swarms/<id>/<ledger>`, which shows
+  every horde's ideas, board, findings, claims, facts or resources on one page under a per-horde
+  heading. `--until-stop` applies to every horde (#18).
 
 ## [0.1.6] - 2026-10-23
 
