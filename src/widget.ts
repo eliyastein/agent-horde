@@ -1,16 +1,29 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { formatElapsed } from "./format.js";
+import { formatElapsed, formatTokens } from "./format.js";
 import type { MemberState } from "./member.js";
-import { memberActivity, statusCounts } from "./prompt.js";
+import { memberActivity, statusCounts, totalUsage } from "./prompt.js";
 
 interface WidgetRun {
   id: string;
+  horde: number;
   members: MemberState[];
   startedAt: number;
   cleanStopUntil?: number | undefined;
   dashboardUrl?: string | undefined;
   /** Steps still running after members finished, e.g. ["deliverable", "post-mortem"]. */
+  finalizing?: string[] | undefined;
+  reported?: boolean | undefined;
+  finalized?: boolean | undefined;
+  outcome?: string | undefined;
+}
+
+interface WidgetSwarm {
+  id: string;
+  runs: WidgetRun[];
+  startedAt: number;
+  dashboardUrl?: string | undefined;
+  /** The swarm step still running after every horde finalized, e.g. ["merge"]. */
   finalizing?: string[] | undefined;
 }
 
@@ -65,8 +78,8 @@ function memberLine(m: MemberState, now: number, frame: number, theme: Theme): s
   );
 }
 
-export function widgetLines(run: WidgetRun, now: number, width: number, theme: Theme): string[] {
-  const frame = Math.floor(now / 100) % SPINNER.length;
+/** The widget for one horde: a header, then a line per member (a glyph strip past eight). */
+function runLines(run: WidgetRun, now: number, frame: number, theme: Theme): string[] {
   const lines = [headerLine(run, now, theme)];
   if (run.members.length > COLLAPSE_ABOVE) {
     lines.push(` ${run.members.map((m) => statusGlyph(m, frame, theme)).join(" ")}`);
@@ -77,22 +90,81 @@ export function widgetLines(run: WidgetRun, now: number, width: number, theme: T
   } else {
     for (const m of run.members) lines.push(memberLine(m, now, frame, theme));
   }
+  return lines;
+}
+
+/** What one horde of a swarm is doing, in a word. */
+function hordeActivity(run: WidgetRun, c: ReturnType<typeof statusCounts>): string {
+  if (run.finalized) return run.outcome ?? "finished";
+  if (run.finalizing && run.finalizing.length > 0) return `synthesizing ${run.finalizing.join(", ")}`;
+  if (run.reported) return "finalizing";
+  if (run.cleanStopUntil !== undefined) return "stopping";
+  return c.running + c.starting > 0 ? "running" : "finishing";
+}
+
+/** One line per horde: `h2  11/12 running  1 done  t120  45.2k tok  $1.20  running`. */
+export function hordeLine(run: WidgetRun, now: number, frame: number, theme: Theme): string {
+  const c = statusCounts(run.members);
+  const usage = totalUsage(run.members);
+  const live = run.members.find((m) => m.status === "running");
+  const glyph = run.finalized
+    ? theme.fg("success", "✓")
+    : live
+      ? theme.fg("accent", SPINNER[frame % SPINNER.length] ?? "⠋")
+      : theme.fg("dim", "·");
+  const parts = [
+    `${c.running + c.starting}/${run.members.length} running`,
+    `${c.done} done`,
+  ];
+  if (c.failed) parts.push(theme.fg("error", `${c.failed} failed`));
+  if (c.stopped) parts.push(theme.fg("warning", `${c.stopped} stopped`));
+  parts.push(theme.fg("dim", `t${usage.turns}  ${formatTokens(usage.input + usage.output)} tok  $${usage.cost.toFixed(2)}`));
+  parts.push(theme.fg("muted", hordeActivity(run, c)));
+  return ` ${glyph} ${`h${run.horde}`.padEnd(3)} ${parts.join("  ")}`;
+}
+
+function swarmHeader(swarm: WidgetSwarm, now: number, theme: Theme): string {
+  const members = swarm.runs.flatMap((run) => run.members);
+  const c = statusCounts(members);
+  const parts = [
+    theme.bold(theme.fg("accent", `swarm ${swarm.id}`)),
+    `${swarm.runs.length} hordes`,
+    `${c.running + c.starting} running`,
+    `${c.done} done`,
+  ];
+  if (c.failed) parts.push(theme.fg("error", `${c.failed} failed`));
+  if (c.stopped) parts.push(theme.fg("warning", `${c.stopped} stopped`));
+  parts.push(formatElapsed(now - swarm.startedAt));
+  if (swarm.finalizing && swarm.finalizing.length > 0) {
+    parts.push(theme.fg("warning", `synthesizing ${swarm.finalizing.join(", ")}`));
+  }
+  if (swarm.dashboardUrl) parts.push(`${swarm.dashboardUrl}swarms/${swarm.id}`);
+  return `${parts.join("  ")}  ${theme.fg("dim", "/agent-horde status | stop-hard | stop-clean [hN]")}`;
+}
+
+/** A swarm of one shows its run as before; a larger swarm shows one line per horde. */
+export function widgetLines(swarm: WidgetSwarm, now: number, width: number, theme: Theme): string[] {
+  const frame = Math.floor(now / 100) % SPINNER.length;
+  const single = swarm.runs.length === 1 ? swarm.runs[0] : undefined;
+  const lines = single
+    ? runLines(single, now, frame, theme)
+    : [swarmHeader(swarm, now, theme), ...swarm.runs.map((run) => hordeLine(run, now, frame, theme))];
   return lines.map((line) => truncateToWidth(line, width));
 }
 
 export class HordeWidget {
-  private readonly run: WidgetRun;
+  private readonly swarm: WidgetSwarm;
   private readonly theme: Theme;
   private readonly now: () => number;
 
-  constructor(run: WidgetRun, theme: Theme, now: () => number = Date.now) {
-    this.run = run;
+  constructor(swarm: WidgetSwarm, theme: Theme, now: () => number = Date.now) {
+    this.swarm = swarm;
     this.theme = theme;
     this.now = now;
   }
 
   render(width: number): string[] {
-    return widgetLines(this.run, this.now(), width, this.theme);
+    return widgetLines(this.swarm, this.now(), width, this.theme);
   }
 
   invalidate(): void {}

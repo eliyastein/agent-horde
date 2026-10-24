@@ -4,14 +4,30 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { HordeRunArgs } from "../args.js";
-import { formatRunId } from "../format.js";
 import { appendRunHeading } from "../ledger/board.js";
 import { listFacts } from "../ledger/facts.js";
 import { ensureFindingIds } from "../ledger/findings.js";
 import { claimIdea, listIdeas, seedPlan } from "../ledger/ideas.js";
 import { newMemberState } from "../member.js";
+import type { SiblingHorde } from "../member.js";
 import { VERIFIER_ROLE, memberSystemPrompt, taskMarkdown } from "../prompt.js";
 import type { HordeRun } from "./types.js";
+
+/** Where one horde of a swarm runs and what it was given. */
+export interface RunSpec {
+  id: string;
+  hordeDir: string;
+  runDir: string;
+  /** 1-based horde index in the swarm. */
+  horde: number;
+  hordes: number;
+  swarmId: string;
+  /** The horde's workstream when the swarm partitioned the task. */
+  slice?: string | undefined;
+  /** The `plan` layers this horde runs as its own plan. */
+  plan?: string[] | undefined;
+  siblings: SiblingHorde[];
+}
 
 function planMarkdown(id: string, layers: string[], count: number): string {
   return [
@@ -55,32 +71,17 @@ function defaultRoles(count: number, noVerifier: boolean): string[] {
   return roles;
 }
 
-function allocateRunDir(hordeDir: string, startedAt: number): { id: string; runDir: string } {
-  const base = formatRunId(new Date(startedAt));
-  for (let attempt = 0; ; attempt++) {
-    const id = attempt === 0 ? base : `${base}-${attempt}`;
-    const runDir = path.join(hordeDir, "runs", id);
-    try {
-      fs.mkdirSync(runDir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
-      throw error;
-    }
-    fs.mkdirSync(path.join(runDir, "sessions"), { recursive: true });
-    return { id, runDir };
-  }
-}
-
-/** Allocate the run directory, write TASK.md and SYSTEM.md, and build the run record. */
+/** Write TASK.md and SYSTEM.md into the allocated run directory and build the run record. */
 export function createRun(
   ctx: ExtensionCommandContext,
   parsed: HordeRunArgs,
-  hordeDir: string,
+  spec: RunSpec,
   dashboardUrl: string | undefined,
 ): { run: HordeRun; roles: string[] } {
-  const { count, prompt, plan } = parsed;
+  const { count, prompt } = parsed;
+  const { id, hordeDir, runDir, plan } = spec;
   const startedAt = Date.now();
-  const { id, runDir } = allocateRunDir(hordeDir, startedAt);
+  fs.mkdirSync(path.join(runDir, "sessions"), { recursive: true });
   const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
   const roles =
     plan && plan.length > 0
@@ -88,18 +89,27 @@ export function createRun(
       : defaultRoles(count, parsed.noVerifier === true);
   const verifierIndex = roles.indexOf(VERIFIER_ROLE);
   const verifier = verifierIndex === -1 ? undefined : `member-${verifierIndex + 1}`;
+  const swarm = spec.hordes > 1 ? { id: spec.swarmId, horde: spec.horde, hordes: spec.hordes, slice: spec.slice } : undefined;
   fs.writeFileSync(
     path.join(runDir, "TASK.md"),
     taskMarkdown({
-      id, prompt, count, model, thinkingLevel: ctx.thinkingLevel, startedAt, verifier, untilStop: parsed.untilStop,
+      id, prompt, count, model, thinkingLevel: ctx.thinkingLevel, startedAt, verifier, untilStop: parsed.untilStop, swarm,
     }),
     "utf-8",
   );
-  fs.writeFileSync(path.join(runDir, "SYSTEM.md"), memberSystemPrompt({ hordeDir, count }), "utf-8");
+  fs.writeFileSync(
+    path.join(runDir, "SYSTEM.md"),
+    memberSystemPrompt({ hordeDir, count, siblings: spec.siblings }),
+    "utf-8",
+  );
   fs.mkdirSync(path.join(runDir, "artifacts"), { recursive: true });
-  writeManifest(runDir, { model, thinking: ctx.thinkingLevel, roles, prompt });
+  writeManifest(runDir, { model, thinking: ctx.thinkingLevel, roles, prompt, swarm });
   const run: HordeRun = {
     id, hordeDir, runDir, prompt, count, startedAt,
+    horde: spec.horde,
+    hordes: spec.hordes,
+    slice: spec.slice,
+    siblings: spec.siblings,
     members: Array.from({ length: count }, (_, i) => newMemberState(i + 1)),
     controller: new AbortController(),
     controllers: new Map(),
@@ -131,7 +141,7 @@ function writeManifest(runDir: string, settings: Record<string, unknown>): void 
     }
   };
   visit(root);
-  const config = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^PI_HORDE_(?:REPAIR|REMIND|STALL|RESET|MAX|ALLOW|SOLVED|INBOX|CANARY|DELIVERABLE|POSTMORTEM|CLEANUP)/.test(key)));
+  const config = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^PI_HORDE_(?:REPAIR|REMIND|STALL|RESET|MAX|ALLOW|SOLVED|INBOX|CANARY|DELIVERABLE|POSTMORTEM|CLEANUP|SWARM|PLANNER)/.test(key)));
   fs.writeFileSync(path.join(runDir, "MANIFEST.json"), JSON.stringify({ protocol: 1, codeHash: code.digest("hex"),
     promptHash: createHash("sha256").update(String(settings.prompt)).digest("hex"),
     systemHash: createHash("sha256").update(fs.readFileSync(path.join(runDir, "SYSTEM.md"))).digest("hex"), settings, config }, null, 2));

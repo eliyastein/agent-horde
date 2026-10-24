@@ -16,8 +16,10 @@ at one problem beat a single linear one: research, audits, design exploration, R
 /agent-horde help
 ```
 
-`target` is `all` (default), `member-N`, `N`, or a comma or space separated list. Subcommands and
-member targets tab-complete.
+`count` is `M` members (1 to 12) or `H/M`: H hordes of M members, H at most 4; a plain `M` is a
+swarm of one. `target` is `all` (default), `member-N`, `N`, `hN` (one horde of a swarm),
+`hN:member-M`, `hN:M`, or a comma or space separated list; a bare member names that member in
+every horde. Subcommands and targets tab-complete.
 
 The command returns immediately. A widget above the editor shows each member's status, current
 tool, elapsed time, turns, and resets. Members inherit the parent session's model and thinking
@@ -134,11 +136,17 @@ the session files, so they show end cause, turns, and usage but no activity.
     SUMMARY.md REPORT.md            per-member status and usage; the reconciled run report
     ANSWER.md DELIVERABLE.md POSTMORTEM.md   solved answer; synthesis output; reviewer critique
     GRAPH.md                        Mermaid graph of the run, written last at finalize
+  swarms/<swarm-id>/
+    SWARM.md SWARM.json             prompt, partition, horde list; the swarm's timeline for the dashboard
+    planner-sessions/ deliverable-sessions/   planner and merge helper sessions
+    REPORT.md DELIVERABLE.md        per-horde totals and file list; the merged deliverable
+    h1/ h2/ ...                     one complete horde directory per horde: its own ledgers,
+                                    .lock and runs/<swarm-id>-hN/ with everything a run has
 ```
 
 Each run appends a `## Run <id>` heading to BOARD.md and FINDINGS.md that cites `TASK.md` by
-sha256. `runs/` is gitignored inside `.horde/`; add `.horde/` to the project `.gitignore` to keep
-the ledgers out of git too.
+sha256. `runs/` and `swarms/` are gitignored inside `.horde/`; add `.horde/` to the project
+`.gitignore` to keep the ledgers out of git too.
 
 ## The `horde` tool
 
@@ -263,6 +271,48 @@ Crash and stall resets apply as usual. `stop-clean` and `stop-hard` end the run 
 `stop-clean` produces the report, deliverable, and postmortem; the last banked answer stands unless
 a later proposal was validated too.
 
+## Horde of hordes
+
+`H/M` launches a swarm: H concurrent hordes of M members on one task, H at most 4. A plain `M` is
+a swarm of one and keeps the layout above; a larger swarm gets `.horde/swarms/<swarm-id>/` with one
+complete horde directory per horde (`h1/`, `h2/`, ...), each with its own ledgers, lock and
+`runs/<swarm-id>-hN/`. Hordes therefore never share a lock, a dedup pass or a coverage watermark,
+and run ids stay unique across the swarm.
+
+**Partition.** A plain prompt is split before launch by a read-only planner helper (`pi -p`, the
+parent's model, `PI_HORDE_PLANNER_MS` timeout) into exactly H disjoint workstreams with one
+acceptance criterion each, recorded in `SWARM.md` and in each horde's `TASK.md`; every member of a
+horde is told its workstream and to work only on it. If the planner cannot produce H distinct
+workstreams the launch stops with that message, the swarm directory keeps the planner session and
+a `SWARM.md` saying why, and the slot stays free. `plan H/M a; b; c; ...` skips the planner: the
+layers are dealt round-robin to the hordes (layer 1 to h1, layer 2 to h2, ...) and each horde runs
+its share as its own plan, so there must be at least H layers.
+
+**Sharing.** Shared read, local write. Each member's system prompt lists the sibling horde
+directories; `horde facts` and `horde resources` append every sibling's entries tagged `[hN]`, and
+`horde list` appends their done and ruled-out ideas, so a fact, a rule-out or a lab another horde
+recorded is not re-derived. Open sibling ideas are not shown and nothing is written to a sibling:
+the lock, dedup and coverage rules keep their per-horde scope. Members reuse a sibling's resource
+by its path, not its R#.
+
+**Lifecycle.** The hordes start `PI_HORDE_SWARM_STAGGER_MS` (default 5000) apart so H canaries do
+not hit the provider at once; each then runs the lifecycle above unchanged, with its own canary,
+resets, repair, acceptance, deliverable and post-mortem. `--until-stop` applies to every horde.
+Controls take horde targets: `stop-clean h2` winds one horde down, `pause h2:member-3` one member,
+`stop-hard` every horde, and `status` prints one block per horde. The swarm slot frees once every
+horde has written its REPORT.md; after the last horde's finalize a synthesis helper reads the
+hordes' DELIVERABLE.md, REPORT.md and ACCEPTANCE.md and writes the swarm `DELIVERABLE.md`, keeping
+each claim attributed to its horde and to that horde's acceptance label, and the swarm `REPORT.md`
+with per-horde members, turns, tokens, cost, findings and outcome. One swarm report is injected into
+the parent conversation instead of one per horde. No horde reviews another's work; a verification
+pass over the merged deliverable is not built.
+
+**Dashboard and widget.** The index lists swarms above runs and tags each swarm run; `/swarms/<id>`
+has one row per horde linking to the run pages, the partition and the merge state, and
+`/swarms/<id>/graph` draws one lane per horde with its phase marks and the merge step in a swarm
+lane. Run pages resolve swarm run ids to their horde directory, and every ledger page reads a
+horde's ledgers when `run=<swarm-run-id>` is given. The widget shows one line per horde.
+
 ## Finding metadata
 
 `importance` (critical, high, medium, low, info), `confidence` (high, medium, low), and
@@ -295,6 +345,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_CANARY_MS` | 60000 | time for member-1 to produce output before a retry |
 | `PI_HORDE_STALL_MS` | 1800000 | reset a member with no ledger write for this long; `0` disables |
 | `PI_HORDE_RESET_CAP` | 2 | resets per member |
+| `PI_HORDE_SWARM_STAGGER_MS` | 5000 | pause between one horde's launch and the next in a swarm |
+| `PI_HORDE_PLANNER_MS` | 300000 | planner helper timeout when a swarm partitions a plain prompt |
 | `PI_HORDE_ACTIVE_GRACE_MS` | 15000 | one clean-stop extension for a member still producing output |
 | `PI_HORDE_SOLVED_CONFIRM_MS` | 120000 | wait for a second member to validate a solve |
 | `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
@@ -337,6 +389,7 @@ build-info.ts         the running package's version and checkout commit, for the
 collaboration-report.ts  acceptance checks, frozen snapshots, collaboration metrics
 run-graph.ts          events.jsonl projected into lanes, phases, nodes, and edges with dashboard links
 run-graph-svg.ts      the swimlane SVG and its legend; run-graph-mermaid.ts the Mermaid export and GRAPH.md
+swarm-graph.ts        a swarm's hordes as lanes of lifecycle marks, plus the merge step
 
 ledger/               one module per .horde/ document, all writes under the .horde lock
   files.ts            paths, init, atomic writes, shared entry formatting
@@ -361,10 +414,13 @@ tool/                 the member-side `horde` tool
   resource-contract.ts      resource generations, readiness, leases, and port coordination
 
 run/                  the parent-side run lifecycle, sharing one HordeState
-  types.ts            HordeRun, HordeState, ReportDetails
-  command.ts          /agent-horde dispatch and session shutdown
+  types.ts            HordeRun, Swarm, HordeState, ReportDetails
+  command.ts          /agent-horde dispatch, horde-prefixed targets, session shutdown
   setup.ts            run directory, TASK.md, roles, plan seeding
-  launch.ts           dashboard, deadline, canary preflight, fan-out
+  swarm.ts            swarm directories and ids, dealing plan layers, planner output parsing
+  swarm-finalize.ts   the swarm slot, the merge step, SWARM.json
+  swarm-report.ts     per-horde totals: the swarm REPORT.md and the injected message
+  launch.ts           dashboard, deadline, partition, staggered canary preflights, fan-out
   supervise.ts        member spawn, reset on exit, stall detection
   schedule.ts         artifact review assignment and superseded-dependency handoffs
   repair.ts           bounded post-discovery reviews, owner repair, and recheck attempts
@@ -372,7 +428,7 @@ run/                  the parent-side run lifecycle, sharing one HordeState
   controls.ts         stop-hard, pause and resume, clean stop and its deadline
   finalize.ts         reconcile, cleanups, SUMMARY.md and REPORT.md, report message, GRAPH.md
   lifecycle.ts        parent lifecycle events in events.jsonl
-  synthesis.ts        deliverable and post-mortem helper agents
+  synthesis.ts        deliverable, post-mortem, swarm merge and planner helper agents
   diagnosis.ts        one-line run diagnosis
   ui.ts               widget mount, status line, report renderer, notifications
   completions.ts      command argument completions

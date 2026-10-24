@@ -23,7 +23,7 @@ const member = await jiti.import("../src/member.ts");
 
 const HORDE = buildHordeFixture();
 const RUN = "20260913-010341";
-const idle = { hordeDir: HORDE, getActive: () => undefined };
+const idle = { hordeDir: HORDE, getActive: () => [] };
 
 const index = data.listRuns(idle);
 assert.equal(index.activeId, undefined);
@@ -116,7 +116,7 @@ const live = {
     mk(2, { status: "done", turns: 5, endedAt: now - 5_000, usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.5 } }),
   ],
 };
-const activeSrc = { hordeDir: HORDE, getActive: () => live, now: () => now };
+const activeSrc = { hordeDir: HORDE, getActive: () => [live], now: () => now };
 const liveOverview = data.loadRunOverview(activeSrc, RUN);
 assert.equal(liveOverview.active, true);
 assert.equal(liveOverview.outcome, "stopping");
@@ -135,7 +135,7 @@ assert.equal(liveFacts.attribution, "split");
 assert.equal(liveFacts.carried.length, 0);
 assert.equal(liveFacts.thisRun.length, liveFacts.all.length);
 assert.throws(() => data.loadMemberDetail(activeSrc, RUN, "member-3"), /has no member-3/);
-const gone = { ...activeSrc, getActive: () => ({ ...live, runDir: "/nonexistent/run" }) };
+const gone = { ...activeSrc, getActive: () => [{ ...live, runDir: "/nonexistent/run" }] };
 assert.equal(data.loadRunOverview(gone, RUN).runDirMissing, true);
 
 // Validation and not-found paths.

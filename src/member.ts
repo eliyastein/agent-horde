@@ -77,6 +77,15 @@ export interface MemberReset {
   tokens: number;
 }
 
+/** Another horde of the same swarm, whose ledgers a member may read but never write. */
+export interface SiblingHorde {
+  /** `h1`, `h2`, ... */
+  label: string;
+  hordeDir: string;
+  /** That horde's workstream, when the swarm partitioned the task. */
+  slice?: string | undefined;
+}
+
 export interface MemberRunInfo {
   id: string;
   hordeDir: string;
@@ -85,6 +94,13 @@ export interface MemberRunInfo {
   count: number;
   /** True when started with `--until-stop`: the run continues until the user stops it. */
   untilStop?: boolean | undefined;
+  /** 1-based horde index in the swarm and the swarm's size; a single run is horde 1 of 1. */
+  horde?: number | undefined;
+  hordes?: number | undefined;
+  /** This horde's workstream, told to every member, when the swarm partitioned the task. */
+  slice?: string | undefined;
+  /** The other hordes of the swarm. */
+  siblings?: SiblingHorde[] | undefined;
 }
 
 interface SpawnMemberInput {
@@ -294,9 +310,21 @@ export const UNTIL_STOP_NOTE =
   "SOLVED when the task has a complete answer; once an answer is banked, propose again only when a " +
   "materially better one exists.";
 
+/** What a member of a partitioned swarm is told about its horde's workstream. */
+export function sliceNote(run: MemberRunInfo): string | undefined {
+  if (!run.slice || !run.horde || !run.hordes || run.hordes < 2) return undefined;
+  return (
+    `Your horde is h${run.horde} of ${run.hordes} hordes working the same task in parallel, each in its own ` +
+    `ledgers. Your horde owns workstream ${run.horde}: "${run.slice}". Work only on your horde's workstream; ` +
+    "do not duplicate another horde's."
+  );
+}
+
 /** The per-member system line: name, assigned role, a reset note for a replacement, the until-stop rule. */
 function identityLine(run: MemberRunInfo, member: MemberState, role: string | undefined): string {
   const parts = [`You are ${member.name}.`];
+  const slice = sliceNote(run);
+  if (slice) parts.push(slice);
   if (role) parts.push(role);
   if (member.resetNote) parts.push(member.resetNote);
   if (run.untilStop) parts.push(UNTIL_STOP_NOTE);
@@ -319,6 +347,7 @@ export function buildMemberArgs(input: SpawnMemberInput): string[] {
 }
 
 export function memberEnv(input: SpawnMemberInput): NodeJS.ProcessEnv {
+  const siblings = input.run.siblings ?? [];
   return childEnv({
     PI_HORDE_MEMBER: "1",
     PI_HORDE_DIR: input.run.hordeDir,
@@ -326,7 +355,25 @@ export function memberEnv(input: SpawnMemberInput): NodeJS.ProcessEnv {
     PI_HORDE_RUN: input.run.id,
     PI_HORDE_ROLE: input.role ?? "",
     PI_HORDE_ATTEMPT: input.member.attempt ??= randomUUID(),
+    PI_HORDE_SIBLINGS: siblings.length > 0 ? JSON.stringify(siblings.map((s) => ({ label: s.label, hordeDir: s.hordeDir }))) : "",
   });
+}
+
+/** The sibling hordes a member process was given, from `PI_HORDE_SIBLINGS`; empty outside a swarm. */
+export function parseSiblings(raw: string | undefined): SiblingHorde[] {
+  if (!raw) return [];
+  try {
+    const items = JSON.parse(raw) as unknown;
+    if (!Array.isArray(items)) return [];
+    return items
+      .filter((item): item is { label: string; hordeDir: string } =>
+        typeof item === "object" && item !== null &&
+        typeof (item as { label?: unknown }).label === "string" &&
+        typeof (item as { hordeDir?: unknown }).hordeDir === "string")
+      .map((item) => ({ label: item.label, hordeDir: item.hordeDir }));
+  } catch {
+    return [];
+  }
 }
 
 export function splitNdjson(buffer: string, onLine: (line: string) => void): string {

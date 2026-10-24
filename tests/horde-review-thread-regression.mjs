@@ -98,7 +98,7 @@ assert.deepEqual(links(render(second)).map((x) => x.open), [true, true, false], 
 assert.deepEqual(links(render(links(render(second))[0].href)).map((x) => x.open), [false, true, false]);
 assert.ok(!page.includes("<details"), "no native transient toggle remains");
 
-const source = { hordeDir, getActive: () => ({ id: runId }) };
+const source = { hordeDir, getActive: () => [{ id: runId, hordeDir }] };
 const get = (href) => routeRequest(source, "GET", new URL(href, "http://127.0.0.1"), "127.0.0.1");
 const first = get(`/runs/${runId}/collaboration?from=0&refresh=0`);
 assert.equal(first.status, 200);

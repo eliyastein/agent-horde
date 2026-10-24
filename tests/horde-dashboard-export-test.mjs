@@ -92,7 +92,7 @@ assert.deepEqual([...tinyFiles.get("z")], [1]);
 
 // --- The real dashboard exports as a self-contained site --------------------
 const HORDE = buildHordeFixture();
-const source = { hordeDir: HORDE, getActive: () => undefined };
+const source = { hordeDir: HORDE, getActive: () => [] };
 const { filename, zip } = await dash.exportDashboardBuffer(source, new Date("2026-10-20T12:34:56Z"));
 assert.equal(filename, "horde-dashboard-2026-10-20-12-34-56.zip");
 const files = readZip(zip);

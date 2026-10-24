@@ -211,7 +211,8 @@ const fileFinding = async (runId, author, text, n) =>
     startIdeaId: 0, startFactId: 0, startedAt: Date.now() - 60_000, stopped: false, cleanStopNames: [],
     controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [], solvedValidatedBy: "member-2", repairSkipped: ["member-3"],
   };
-  await finalize.finalizeRun({ disposed: false, active: run, pi: { sendMessage: () => {} } }, run);
+  const swarm = { id: runId, dir: undefined, hordeDir, cwd, prompt: run.prompt, hordes: 1, count: 3, startedAt: run.startedAt, runs: [run] };
+  await finalize.finalizeRun({ disposed: false, active: swarm, pi: { sendMessage: () => {} } }, swarm, run);
   const answer = fs.readFileSync(path.join(runDir, "ANSWER.md"), "utf8");
   assert.match(answer, new RegExp(`Status: peer-confirmed by member-2; acceptance incomplete;[^\\n]*cites superseded F${f1.id} \\(now F${f2.id}\\)`));
   const summary = fs.readFileSync(path.join(runDir, "SUMMARY.md"), "utf8");

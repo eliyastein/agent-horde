@@ -20,10 +20,12 @@ import type {
   RunIndexVm,
   RunOverviewVm,
   SessionsVm,
+  SwarmGraphVm,
+  SwarmVm,
   TranscriptEntryVm,
   TranscriptVm,
 } from "./dashboard-data.js";
-import { RUN_FILES } from "./dashboard-data.js";
+import { RUN_FILES, SWARM_FILES } from "./dashboard-data.js";
 import { buildInfo } from "./build-info.js";
 import { detailKey, formatClock, formatElapsed, formatTokens, oneLine } from "./format.js";
 import { renderRunGraphMermaid } from "./run-graph-mermaid.js";
@@ -40,6 +42,8 @@ export interface RenderContext {
   origin?: string | undefined;
   /** The run the collaboration and graph links target: this page's run, else the newest. */
   navRun?: string | undefined;
+  /** The swarm this page's run belongs to, or the live swarm; the nav links to it. */
+  swarmId?: string | undefined;
   /** Rendering for the static export: no refresh, no export control, native disclosure. */
   export?: boolean | undefined;
 }
@@ -128,13 +132,22 @@ function runLinks(run: string | undefined): string {
   return link(`${runHref(run)}/collaboration`, "collaboration") + link(`${runHref(run)}/graph`, "graph");
 }
 
+function swarmHref(swarmId: string): string {
+  return `/swarms/${encodeURIComponent(swarmId)}`;
+}
+
+/**
+ * The ledger links carry `run` when a run is in context: board, findings and facts filter by it,
+ * and every ledger page reads a swarm horde's own ledgers through it.
+ */
 function nav(ctx: RenderContext): string {
   const run = ctx.runId ?? ctx.activeId;
   const q = run ? query({ run }) : "";
+  const swarm = ctx.swarmId ? link(swarmHref(ctx.swarmId), "swarm") : "";
   return (
-    `<nav>${link("/", "runs")}${link("/ideas", "ideas")}${link(`/board${q}`, "board")}` +
-    `${link(`/findings${q}`, "findings")}${link("/claims", "claims")}${link(`/facts${q}`, "facts")}` +
-    `${link("/resources", "resources")}${runLinks(ctx.navRun ?? run)}</nav>`
+    `<nav>${link("/", "runs")}${swarm}${link(`/ideas${q}`, "ideas")}${link(`/board${q}`, "board")}` +
+    `${link(`/findings${q}`, "findings")}${link(`/claims${q}`, "claims")}${link(`/facts${q}`, "facts")}` +
+    `${link(`/resources${q}`, "resources")}${runLinks(ctx.navRun ?? run)}</nav>`
   );
 }
 
@@ -269,9 +282,25 @@ function cost(value: number): string {
   return `$${value.toFixed(4)}`;
 }
 
+function swarmIndexTable(vm: RunIndexVm): string {
+  if (vm.swarms.length === 0) return "";
+  const rows = vm.swarms.map((swarm) => [
+    link(swarmHref(swarm.id), swarm.id),
+    swarm.active ? "<b>ACTIVE</b>" : swarm.finalizing ? "finalizing" : "finished",
+    e(swarm.started ?? ""),
+    `${swarm.hordes} x ${num(swarm.count) || "?"}`,
+    e(swarm.outcomes.map((outcome, index) => `h${index + 1} ${outcome || "?"}`).join(", ")),
+    e(oneLine(swarm.prompt, 100)),
+    ...SWARM_FILES.map((name) => yn(swarm.files[name])),
+  ]);
+  const headers = ["swarm", "state", "started", "hordes", "outcomes", "prompt", ...SWARM_FILES.map((n) => n.toLowerCase())];
+  return `<h2>swarms</h2>${table(headers, rows)}<h2>runs</h2>`;
+}
+
 export function renderRunIndex(vm: RunIndexVm, ctx: RenderContext): string {
   const rows = vm.runs.map((run) => [
     link(runHref(run.id), run.id),
+    run.swarm ? link(swarmHref(run.swarm), run.swarm) : "",
     run.active ? "<b>ACTIVE</b>" : run.finalizing ? "finalizing" : "finished",
     e(run.started ?? ""),
     num(run.count),
@@ -280,8 +309,8 @@ export function renderRunIndex(vm: RunIndexVm, ctx: RenderContext): string {
     e(oneLine(run.prompt, 100)),
     ...RUN_FILES.map((name) => yn(run.files[name])),
   ]);
-  const headers = ["run", "state", "started", "members", "model", "outcome", "prompt", ...RUN_FILES.map((n) => n.toLowerCase())];
-  return page("horde runs", [{ text: "runs" }], table(headers, rows, "no runs in .horde/runs"), ctx);
+  const headers = ["run", "swarm", "state", "started", "members", "model", "outcome", "prompt", ...RUN_FILES.map((n) => n.toLowerCase())];
+  return page("horde runs", [{ text: "runs" }], swarmIndexTable(vm) + table(headers, rows, "no runs in .horde/runs"), ctx);
 }
 
 function memberRow(runId: string, m: MemberRowVm): string[] {
@@ -531,7 +560,8 @@ export function renderSessions(vm: SessionsVm, ctx: RenderContext): string {
 }
 
 export function renderFile(vm: FileVm, ctx: RenderContext): string {
-  const crumbs = [{ text: "runs", href: "/" }, { text: vm.runId, href: runHref(vm.runId) }, { text: `${vm.name}.md` }];
+  const parent = vm.swarm ? swarmHref(vm.runId) : runHref(vm.runId);
+  const crumbs = [{ text: "runs", href: "/" }, { text: vm.runId, href: parent }, { text: `${vm.name}.md` }];
   const note = vm.truncated ? `<p>showing the first ${vm.content.length} of ${vm.bytes} characters</p>` : "";
   return page(`${vm.name}.md`, crumbs, note + pre(vm.content), ctx);
 }
@@ -753,4 +783,105 @@ export function renderGraph(vm: RunGraphVm, ctx: RenderContext): string {
 /** The text/plain Mermaid export; links are absolute so the file works outside the dashboard. */
 export function renderGraphMermaid(vm: RunGraphVm, ctx: RenderContext): string {
   return renderRunGraphMermaid(vm.graph, ctx.origin ?? "");
+}
+
+// ---------------------------------------------------------------------------
+// Swarms
+// ---------------------------------------------------------------------------
+
+const SWARM_HORDE_HEADERS = [
+  "horde", "run", "state", "outcome", "members", "running", "done", "failed", "stopped", "turns", "in", "out",
+  "cost", "findings", "accepted artifacts", "elapsed", "workstream",
+];
+
+function swarmHordeRow(row: SwarmVm["rows"][number]): string[] {
+  return [
+    e(row.label),
+    link(runHref(row.runId), row.runId),
+    row.active ? "<b>ACTIVE</b>" : row.finalizing ? "finalizing" : "finished",
+    e(row.outcome ?? ""),
+    String(row.count),
+    String(row.counts.running + row.counts.starting),
+    String(row.counts.done),
+    String(row.counts.failed),
+    String(row.counts.stopped),
+    String(row.totals.turns),
+    formatTokens(row.totals.input),
+    formatTokens(row.totals.output),
+    cost(row.totals.cost),
+    String(row.findings),
+    String(row.acceptedArtifacts),
+    row.elapsedMs === undefined ? "" : formatElapsed(row.elapsedMs),
+    e(oneLine(row.slice ?? "", 120)),
+  ];
+}
+
+function swarmHeader(vm: SwarmVm): string {
+  const rows: Array<[string, string]> = [
+    ["prompt", pre(vm.prompt)],
+    ["hordes", `${vm.hordes} x ${vm.count ?? "?"} members`],
+    ["started", e(vm.started ?? "")],
+    ["elapsed", vm.elapsedMs === undefined ? "" : formatElapsed(vm.elapsedMs)],
+    ["until stop", vm.untilStop ? "yes" : "no"],
+    ["merge", e(vm.merge)],
+  ];
+  if (vm.notStarted) rows.push(["not started", e(vm.notStarted)]);
+  if (vm.partition.length > 0) {
+    rows.push(["partition", pre(vm.partition.map((slice, index) => `h${index + 1}: ${slice}`).join("\n"))]);
+  }
+  return grid(rows);
+}
+
+function swarmFiles(vm: SwarmVm): string {
+  const cells = SWARM_FILES.map((name) =>
+    vm.files[name] ? link(`${swarmHref(vm.id)}/files/${name}`, `${name}.md`) : `${name}.md: not yet`,
+  );
+  return `<p>${cells.join(" | ")} | ${link(`${swarmHref(vm.id)}/graph`, "swarm graph")}</p>`;
+}
+
+export function renderSwarm(vm: SwarmVm, ctx: RenderContext): string {
+  const totals = [
+    "<b>total</b>", "", "", "",
+    String(vm.rows.reduce((n, r) => n + r.count, 0)),
+    String(vm.rows.reduce((n, r) => n + r.counts.running + r.counts.starting, 0)),
+    String(vm.rows.reduce((n, r) => n + r.counts.done, 0)),
+    String(vm.rows.reduce((n, r) => n + r.counts.failed, 0)),
+    String(vm.rows.reduce((n, r) => n + r.counts.stopped, 0)),
+    String(vm.rows.reduce((n, r) => n + r.totals.turns, 0)),
+    formatTokens(vm.rows.reduce((n, r) => n + r.totals.input, 0)),
+    formatTokens(vm.rows.reduce((n, r) => n + r.totals.output, 0)),
+    cost(vm.rows.reduce((n, r) => n + r.totals.cost, 0)),
+    String(vm.rows.reduce((n, r) => n + r.findings, 0)),
+    String(vm.rows.reduce((n, r) => n + r.acceptedArtifacts, 0)),
+    "", "",
+  ];
+  const body =
+    swarmHeader(vm) +
+    `<h2>hordes</h2>` +
+    table(SWARM_HORDE_HEADERS, [...vm.rows.map(swarmHordeRow), totals], "no hordes started") +
+    `<h2>files</h2>${swarmFiles(vm)}`;
+  return page(`swarm ${vm.id}`, [{ text: "runs", href: "/" }, { text: `swarm ${vm.id}` }], body, ctx);
+}
+
+function swarmGraphHref(swarmId: string, view: SwarmGraphVm["view"]): string {
+  const seconds = (ms: number): string | undefined => (ms > 0 ? String(Math.round(ms / 1000)) : undefined);
+  return `${swarmHref(swarmId)}/graph${query({ w: String(view.width), from: seconds(view.from), to: seconds(view.to) })}`;
+}
+
+/** One lane per horde with its phases, and the merge step in the swarm lane. */
+export function renderSwarmGraph(vm: SwarmGraphVm, ctx: RenderContext): string {
+  const { graph, view } = vm;
+  const crumbs: Crumb[] = [{ text: "runs", href: "/" }, { text: `swarm ${vm.swarmId}`, href: swarmHref(vm.swarmId) }, { text: "graph" }];
+  if (vm.empty) return page(`swarm graph ${vm.swarmId}`, crumbs, "<p>no events recorded for this swarm's hordes</p>", ctx);
+  const widths = GRAPH_WIDTHS.map((width) =>
+    width === view.width ? String(width) : link(swarmGraphHref(vm.swarmId, { ...view, width }), String(width)),
+  );
+  const summary =
+    `${graph.lanes.length - 1} hordes, ${graph.nodes.length} lifecycle marks, ${formatElapsed(graph.end - graph.start)} elapsed; ` +
+    "each horde's own graph is on its run page";
+  const body =
+    `<p>${e(summary)}</p>` +
+    `<p>width: ${widths.join(" ")}</p>` +
+    `<div class="graph">${renderRunGraphSvg(graph, view)}</div>`;
+  return page(`swarm graph ${vm.swarmId}`, crumbs, body, ctx);
 }

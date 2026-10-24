@@ -34,7 +34,7 @@ const parent = fakePi();
 extension(parent);
 assert.deepEqual(Object.keys(parent.commands), ["agent-horde"]);
 assert.deepEqual(Object.keys(parent.tools), []);
-assert.deepEqual(Object.keys(parent.renderers), ["agent-horde-report"]);
+assert.deepEqual(Object.keys(parent.renderers).sort(), ["agent-horde-report", "agent-horde-swarm-report"]);
 assert.ok(parent.events.session_shutdown);
 
 process.env.PI_HORDE_MEMBER = "1";

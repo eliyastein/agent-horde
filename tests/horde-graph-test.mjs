@@ -183,7 +183,7 @@ finalize.writeRunGraph(fakeRun);
 assert.ok(fs.readFileSync(path.join(runDir, "GRAPH.md"), "utf8").includes(`click F${finding.id} "http://127.0.0.1:7433/findings`));
 
 // ---- Dashboard -----------------------------------------------------------------------------------
-const src = { hordeDir, getActive: () => undefined };
+const src = { hordeDir, getActive: () => [] };
 const get = (target) => dashboard.routeRequest(src, "GET", new URL(`http://127.0.0.1:7433${target}`), "127.0.0.1:7433");
 const page = get(`/runs/${runId}/graph?w=800`);
 assert.equal(page.status, 200, page.body.slice(0, 200));
@@ -228,7 +228,7 @@ for (const target of ["/", "/ideas", "/findings", "/claims", "/resources", `/run
 assert.ok(navOf(get(`/findings?run=${olderRun}`).body).includes(`href="/runs/${olderRun}/graph"`), "the ?run= filter picks the nav run");
 assert.ok(navOf(get(`/runs/${olderRun}/graph`).body).includes(`href="/runs/${olderRun}/collaboration"`), "a run page links its own run");
 assert.ok(navOf(get("/findings?run=all").body).includes(`href="/runs/${runId}/graph"`), "run=all falls back to the newest run");
-assert.ok(!navOf(dashboard.routeRequest({ hordeDir: files.initHordeDir(fs.mkdtempSync(path.resolve(".tmp/horde-graph-empty-"))), getActive: () => undefined }, "GET", new URL("http://127.0.0.1:7433/ideas"), "127.0.0.1:7433").body).includes("/graph"), "no runs, no run links");
+assert.ok(!navOf(dashboard.routeRequest({ hordeDir: files.initHordeDir(fs.mkdtempSync(path.resolve(".tmp/horde-graph-empty-"))), getActive: () => [] }, "GET", new URL("http://127.0.0.1:7433/ideas"), "127.0.0.1:7433").body).includes("/graph"), "no runs, no run links");
 
 console.log("horde-graph-test ok");
 

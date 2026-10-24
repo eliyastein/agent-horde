@@ -4,6 +4,22 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Added
+
+- Horde of hordes: a count of `H/M` launches H concurrent hordes of M members on one task, H at
+  most 4. A planner helper splits a plain prompt into H disjoint workstreams with acceptance
+  criteria before launch and stops the launch when it cannot; `plan H/M` deals the layers
+  round-robin to the hordes. Each horde gets its own ledgers, lock and run under
+  `.horde/swarms/<id>/hN/`, so a plain `M` is a swarm of one and keeps `.horde/runs/`. Members read
+  sibling hordes' facts, resources and closed ideas through the `horde` tool, tagged `[hN]`, and
+  write only to their own. Hordes start `PI_HORDE_SWARM_STAGGER_MS` apart; controls take `hN` and
+  `hN:member-M` targets and `status` prints one block per horde. After the last horde finalizes a
+  synthesis helper merges the deliverables into the swarm's `DELIVERABLE.md`, each claim attributed
+  to its horde, and one swarm report replaces the per-horde reports. The dashboard lists swarms,
+  resolves swarm run ids, reads a horde's ledgers through `run=`, and adds `/swarms/<id>` with one
+  row per horde and a graph with one lane per horde and the merge step; the widget shows one line
+  per horde. `--until-stop` applies to every horde (#18).
+
 ## [0.1.6] - 2026-10-23
 
 ### Added

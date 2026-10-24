@@ -14,6 +14,7 @@ import type { Idea } from "../ledger/ideas.js";
 import { claimResource, listResources } from "../ledger/resources.js";
 import { cleanStopRequestedFor, confirmSolved, contestSolved, markSolved, readSolved } from "../ledger/run-signals.js";
 import { oneLine } from "../format.js";
+import type { SiblingHorde } from "../member.js";
 import { validateFindingResourceCitations } from "../citations.js";
 import { idleHint } from "./hints.js";
 import type { HordeToolParams } from "./params.js";
@@ -54,6 +55,29 @@ interface ActionContext {
   cleanStop: boolean;
   /** The member's role instruction, when one was assigned. */
   role: string | undefined;
+  /** Other hordes of the swarm whose ledgers the read actions include, tagged by label. */
+  siblings: SiblingHorde[];
+}
+
+/**
+ * Shared read, local write: the read actions append each sibling horde's entries, tagged `[hN]`,
+ * so a fact, a rule-out or a resource another horde recorded is not re-derived here. A sibling
+ * whose ledger cannot be read is reported, not fatal.
+ */
+function siblingSections(siblings: SiblingHorde[], what: string, lines: (hordeDir: string) => string[]): string {
+  return siblings
+    .map((sibling) => {
+      const tag = `[${sibling.label}]`;
+      let entries: string[];
+      try {
+        entries = lines(sibling.hordeDir).map((line) => `${tag} ${line}`);
+      } catch (error) {
+        entries = [`${tag} unreadable: ${oneLine(error instanceof Error ? error.message : String(error), 120)}`];
+      }
+      const head = `${tag} ${what} of horde ${sibling.label} (read-only; ${sibling.hordeDir}):`;
+      return `\n\n${head}\n${entries.length > 0 ? entries.join("\n") : `${tag} none`}`;
+    })
+    .join("");
 }
 
 export function isVerifierRole(role: string | undefined): boolean {
@@ -108,18 +132,19 @@ function closedIdea(ctx: ActionContext, idea: Idea, text: string): ActionResult 
   return { text: `${text}${hint}`, id: idea.id };
 }
 
-function listAction({ hordeDir }: ActionContext): ActionResult {
+function ideaLine(idea: Idea): string {
+  const owner = idea.owner ? ` @${idea.owner}` : "";
+  const note = idea.note ? `: ${idea.note}` : "";
+  return `#${idea.id} [${idea.mark}]${owner} ${idea.text}${note}`;
+}
+
+function listAction({ hordeDir, siblings }: ActionContext): ActionResult {
   const ideas = listIdeas(hordeDir);
-  if (ideas.length === 0) return { text: "IDEAS.md has no ideas yet" };
-  return {
-    text: ideas
-      .map((idea) => {
-        const owner = idea.owner ? ` @${idea.owner}` : "";
-        const note = idea.note ? `: ${idea.note}` : "";
-        return `#${idea.id} [${idea.mark}]${owner} ${idea.text}${note}`;
-      })
-      .join("\n"),
-  };
+  const own = ideas.length === 0 ? "IDEAS.md has no ideas yet" : ideas.map(ideaLine).join("\n");
+  // Only closed ideas cross hordes: results prevent re-derivation, open ones would invite claims.
+  const shared = siblingSections(siblings, "done and ruled-out ideas", (dir) =>
+    listIdeas(dir).filter((idea) => idea.mark === "x" || idea.mark === "!").map(ideaLine));
+  return { text: `${own}${shared}` };
 }
 
 async function postAction({ hordeDir, member, params }: ActionContext): Promise<ActionResult> {
@@ -282,14 +307,18 @@ async function factAction({ hordeDir, member, params }: ActionContext): Promise<
   return { text: `Recorded fact T${fact.id}: ${fact.text}${provisional}`, id: fact.id };
 }
 
-function factsAction({ hordeDir }: ActionContext): ActionResult {
-  const facts = listFacts(hordeDir);
-  if (facts.length === 0) return { text: "FACTS.md has no facts yet" };
+function factLines(hordeDir: string): string[] {
   const status = (fact: FactEntry): string => {
     if (!fact.provisionalOn) return "";
     return factUnsettled(hordeDir, fact) ? ` [provisional: ${fact.provisionalOn} open]` : ` [was provisional on ${fact.provisionalOn}, now closed]`;
   };
-  return { text: facts.map((fact) => `T${fact.id} ${fact.text} @${fact.author}${status(fact)}`).join("\n") };
+  return listFacts(hordeDir).map((fact) => `T${fact.id} ${fact.text} @${fact.author}${status(fact)}`);
+}
+
+function factsAction({ hordeDir, siblings }: ActionContext): ActionResult {
+  const own = factLines(hordeDir);
+  const shared = siblingSections(siblings, "facts", factLines);
+  return { text: `${own.length === 0 ? "FACTS.md has no facts yet" : own.join("\n")}${shared}` };
 }
 
 /** An answer that quotes a provisional fact as settled asserts what an open idea is still auditing. */
@@ -421,19 +450,19 @@ async function resourceAction(ctx: ActionContext): Promise<ActionResult> {
   };
 }
 
-function resourcesAction({ hordeDir }: ActionContext): ActionResult {
-  const resources = listResources(hordeDir);
-  if (resources.length === 0) return { text: "RESOURCES.md has no resources yet" };
-  return {
-    text: resources
-      .map(
-        (resource) =>
-          `R${resource.id} ${resource.name} @${resource.owner}` +
-          `${resource.note ? `: ${resource.note}` : ""}` +
-          `${resource.reusers.length > 0 ? ` reuse=${resource.reusers.join(",")}` : ""}`,
-      )
-      .join("\n"),
-  };
+function resourceLines(hordeDir: string): string[] {
+  return listResources(hordeDir).map(
+    (resource) =>
+      `R${resource.id} ${resource.name} @${resource.owner}` +
+      `${resource.note ? `: ${resource.note}` : ""}` +
+      `${resource.reusers.length > 0 ? ` reuse=${resource.reusers.join(",")}` : ""}`,
+  );
+}
+
+function resourcesAction({ hordeDir, siblings }: ActionContext): ActionResult {
+  const own = resourceLines(hordeDir);
+  const shared = siblingSections(siblings, "resources (reuse by path; cite the path, not the R#)", resourceLines);
+  return { text: `${own.length === 0 ? "RESOURCES.md has no resources yet" : own.join("\n")}${shared}` };
 }
 
 /**
@@ -564,11 +593,11 @@ export async function runHordeAction(
   member: string,
   params: HordeToolParams,
   runId: string | undefined = process.env.PI_HORDE_RUN,
-  tracking: { attempt?: string; requestId?: string; role?: string | undefined } = {},
+  tracking: { attempt?: string; requestId?: string; role?: string | undefined; siblings?: SiblingHorde[] | undefined } = {},
 ): Promise<ActionResult> {
   const cleanStop = Boolean(runId && cleanStopRequestedFor(hordeDir, runId, member));
-  const role = tracking.role;
-  const ctx: EventContext = { hordeDir, runId: runId ?? "", actor: member, ...tracking, requestId: params.requestId ?? tracking.requestId };
+  const { role, siblings = [], ...eventTracking } = tracking;
+  const ctx: EventContext = { hordeDir, runId: runId ?? "", actor: member, ...eventTracking, requestId: params.requestId ?? tracking.requestId };
   if (COLLABORATION_ACTIONS.has(params.action)) {
     if (!runId) throw new Error("horde: collaboration needs an active run");
     return runCollaborationAction(ctx, params);
@@ -580,7 +609,7 @@ export async function runHordeAction(
   const intent = audit ? await recordEvent({ ...ctx, requestId: ctx.requestId ? `${ctx.requestId}:intent` : undefined }, params.action, { outcome: "intent", payload: { input: params } }) : undefined;
   try {
     const refused = cleanStop && NEW_WORK_ACTIONS.has(params.action);
-    const result = refused ? { text: CLEAN_STOP_NOTICE } : await handler({ hordeDir, member, params, runId, cleanStop, role });
+    const result = refused ? { text: CLEAN_STOP_NOTICE } : await handler({ hordeDir, member, params, runId, cleanStop, role, siblings });
     // A refusal and a no-op both record `noop`; the no-op keeps `result.noop` so the graph and the
     // report can tell an absorbed duplicate from refused work.
     if (audit) await recordEvent(ctx, params.action, { outcome: refused || result.noop ? "noop" : "applied", payload: { input: params, result }, parents: intent ? [intent.eventId] : [] });

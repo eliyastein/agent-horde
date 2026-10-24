@@ -18,10 +18,14 @@ import {
   loadResources,
   loadSessionEntry,
   loadSessionTranscript,
+  loadSwarm,
+  loadSwarmFile,
+  loadSwarmGraph,
   loadTranscript,
   loadTranscriptEntry,
   MEMBER_RE,
   RUN_ID_RE,
+  swarmOfRun,
 } from "./dashboard-data.js";
 import type { DashboardSource, GraphView } from "./dashboard-data.js";
 import {
@@ -42,6 +46,8 @@ import {
   renderRunOverview,
   renderResources,
   renderSessions,
+  renderSwarm,
+  renderSwarmGraph,
   renderTranscript,
   renderTranscriptEntry,
 } from "./dashboard-html.js";
@@ -117,16 +123,27 @@ function queryOwner(query: URLSearchParams): string | undefined {
 }
 
 function isActive(src: DashboardSource, runId: string | undefined): boolean {
-  return runId !== undefined && src.getActive()?.id === runId;
+  return runId !== undefined && src.getActive().some((run) => run.id === runId);
 }
 
 function isFinalizing(src: DashboardSource, runId: string | undefined): boolean {
-  return runId !== undefined && src.getFinalizing?.()?.id === runId;
+  return runId !== undefined && (src.getFinalizing?.() ?? []).some((run) => run.id === runId);
+}
+
+/** A swarm page is live while the swarm is in memory: members running or the merge step pending. */
+function isSwarmLive(src: DashboardSource, swarmId: string | undefined): boolean {
+  return swarmId !== undefined && src.getSwarm?.()?.id === swarmId;
 }
 
 function memberRunning(src: DashboardSource, runId: string, member: string): boolean {
-  const state = src.getActive()?.members.find((m) => m.name === member);
-  return isActive(src, runId) && state !== undefined && (state.status === "running" || state.status === "starting");
+  const state = src.getActive().find((run) => run.id === runId)?.members.find((m) => m.name === member);
+  return state !== undefined && (state.status === "running" || state.status === "starting");
+}
+
+/** An optional `run` on a ledger page: picks a swarm horde's ledgers, else the project's. */
+function queryLedgerRun(query: URLSearchParams): string | undefined {
+  const run = queryRun(query);
+  return run === "all" ? undefined : run;
 }
 
 const p = (params: string[], i: number): string => params[i] ?? "";
@@ -229,9 +246,31 @@ const ROUTES: Route[] = [
     render: renderFile,
   },
   {
+    pattern: /^\/swarms\/([^/]+)$/,
+    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
+    load: (src, params) => loadSwarm(src, p(params, 0)),
+    render: renderSwarm,
+  },
+  {
+    pattern: /^\/swarms\/([^/]+)\/graph$/,
+    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
+    load: (src, params, query) => loadSwarmGraph(src, p(params, 0), graphView(query)),
+    render: renderSwarmGraph,
+  },
+  {
+    pattern: /^\/swarms\/([^/]+)\/files\/([^/]+)$/,
+    live: () => false,
+    load: (src, params) => {
+      const vm = loadSwarmFile(src, p(params, 0), p(params, 1));
+      if (!vm.present) throw new DashboardError(404, `${vm.name}.md has not been written yet`);
+      return vm;
+    },
+    render: renderFile,
+  },
+  {
     pattern: /^\/ideas$/,
     live: () => true,
-    load: (src, _params, query) => loadIdeas(src, queryOwner(query)),
+    load: (src, _params, query) => loadIdeas(src, queryOwner(query), queryLedgerRun(query)),
     render: renderIdeas,
   },
   {
@@ -256,7 +295,7 @@ const ROUTES: Route[] = [
   {
     pattern: /^\/claims$/,
     live: () => true,
-    load: (src) => loadClaims(src),
+    load: (src, _params, query) => loadClaims(src, queryLedgerRun(query)),
     render: renderClaims,
   },
   {
@@ -271,7 +310,7 @@ const ROUTES: Route[] = [
   {
     pattern: /^\/resources$/,
     live: () => true,
-    load: (src) => loadResources(src),
+    load: (src, _params, query) => loadResources(src, queryLedgerRun(query)),
     render: renderResources,
   },
 ];
@@ -329,12 +368,16 @@ function routeMatch(pathname: string): { route: Route; params: string[] } | unde
   return undefined;
 }
 
-/** The run this page belongs to, and the run the nav's collaboration and graph links target. */
-function runContext(src: DashboardSource, url: URL, params: string[]): Pick<RenderContext, "runId" | "navRun"> {
-  const runId = RUN_ID_RE.test(params[0] ?? "") ? params[0] : undefined;
+/** The run this page belongs to, the run the nav's collaboration and graph links target, and its swarm. */
+function runContext(src: DashboardSource, url: URL, params: string[]): Pick<RenderContext, "runId" | "navRun" | "swarmId"> {
+  const swarmPage = url.pathname.startsWith("/swarms/") ? params[0] : undefined;
+  const runId = swarmPage === undefined && RUN_ID_RE.test(params[0] ?? "") ? params[0] : undefined;
   const filterRun = url.searchParams.get("run");
   const navRun = runId ?? (filterRun && RUN_ID_RE.test(filterRun) ? filterRun : undefined) ?? latestRunId(src);
-  return { runId, navRun };
+  // A swarm of one has no swarm directory and no swarm page.
+  const live = src.getSwarm?.();
+  const swarmId = swarmPage ?? (navRun ? swarmOfRun(navRun)?.swarmId : undefined) ?? (live?.dir !== undefined ? live.id : undefined);
+  return { runId, navRun, swarmId };
 }
 
 /** The export costs seconds of work per request, so pages from other sites may not start one. */
@@ -365,7 +408,7 @@ function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderC
 
 /** One page of the static export; errors become pages so no exported link dangles. */
 function exportPage(src: DashboardSource, url: URL): ExportPage {
-  const ctx: RenderContext = { activeId: src.getActive()?.id, href: url.pathname + url.search, export: true };
+  const ctx: RenderContext = { activeId: src.getActive()[0]?.id, href: url.pathname + url.search, export: true };
   try {
     const matched = routeMatch(url.pathname);
     if (!matched) throw new DashboardError(404, `no such page: ${url.pathname}`);
@@ -414,7 +457,7 @@ function exportResponse(src: DashboardSource, url: URL, ctx: RenderContext): Das
 export function routeRequest(src: DashboardSource, method: string, url: URL, host: string | undefined, fetchSite?: string): DashboardResponse {
   const json = url.pathname === "/api" || url.pathname.startsWith("/api/");
   const ctx: RenderContext = {
-    activeId: src.getActive()?.id,
+    activeId: src.getActive()[0]?.id,
     origin: host ? `http://${host}` : undefined,
     href: url.pathname + url.search,
   };

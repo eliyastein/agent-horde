@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { MAX_MEMBERS } from "./args.js";
 import { resourceCitingMembers } from "./citations.js";
+import { formatDateTime } from "./format.js";
 import { loadCollaborationReport } from "./collaboration-report.js";
 import type { CollaborationReport } from "./collaboration-report.js";
 import { readEvents } from "./ledger/events.js";
@@ -22,6 +23,7 @@ import type { Idea } from "./ledger/ideas.js";
 import { listResources } from "./ledger/resources.js";
 import type { ResourceEntry } from "./ledger/resources.js";
 import { buildRunGraph } from "./run-graph.js";
+import { buildSwarmGraph } from "./swarm-graph.js";
 import type { RunGraph } from "./run-graph.js";
 import { readCleanStop } from "./ledger/run-signals.js";
 import { memberSessionDir, parseMemberLog } from "./member.js";
@@ -50,13 +52,40 @@ interface LiveRun extends RunSummaryInput {
   dashboardUrl?: string | undefined;
   /** Synthesis steps still running after the member slot was freed. */
   finalizing?: string[] | undefined;
+  /** Position in the swarm and the swarm's size; a plain run is horde 1 of 1. */
+  horde?: number | undefined;
+  hordes?: number | undefined;
+  slice?: string | undefined;
+  outcome?: string | undefined;
+  reported?: boolean | undefined;
+  finalized?: boolean | undefined;
+}
+
+/** The in-memory swarm the parent exposes; `Swarm` satisfies it. */
+export interface LiveSwarm {
+  id: string;
+  dir: string | undefined;
+  hordes: number;
+  count: number;
+  prompt: string;
+  startedAt: number;
+  runs: LiveRun[];
+  partition?: string[] | undefined;
+  untilStop?: boolean | undefined;
+  /** The swarm step still running after every horde finalized. */
+  finalizing?: string[] | undefined;
+  deliverable?: string | undefined;
 }
 
 export interface DashboardSource {
+  /** The project's `.horde`; a swarm's hordes live under its `swarms/<id>/h<N>/`. */
   hordeDir: string;
-  getActive(): LiveRun | undefined;
-  /** The run still writing DELIVERABLE.md / POSTMORTEM.md, if any. */
-  getFinalizing?(): LiveRun | undefined;
+  /** Runs whose members are live or whose report is not yet written. */
+  getActive(): LiveRun[];
+  /** Runs still writing DELIVERABLE.md / POSTMORTEM.md. */
+  getFinalizing?(): LiveRun[];
+  /** The swarm those runs belong to, while it is in memory. */
+  getSwarm?(): LiveSwarm | undefined;
   now?: () => number;
 }
 
@@ -68,8 +97,41 @@ export class DashboardError extends Error {
   }
 }
 
-export const RUN_ID_RE = /^\d{8}-\d{6}(?:-\d+)?$/;
+export const SWARM_ID_RE = /^\d{8}-\d{6}(?:-\d+)?$/;
+/** A plain run id, or a swarm run id `<swarm>-h<N>`. */
+export const RUN_ID_RE = /^\d{8}-\d{6}(?:-\d+)?(?:-h\d{1,2})?$/;
+const SWARM_RUN_RE = /^(\d{8}-\d{6}(?:-\d+)?)-h(\d{1,2})$/;
 export const MEMBER_RE = /^member-(\d{1,2})$/;
+export const SWARM_FILES = ["SWARM", "REPORT", "DELIVERABLE"] as const;
+type SwarmFile = (typeof SWARM_FILES)[number];
+
+/** The swarm a run id belongs to, from its `-h<N>` suffix; undefined for a plain run. */
+export function swarmOfRun(runId: string): { swarmId: string; horde: number } | undefined {
+  const match = SWARM_RUN_RE.exec(runId);
+  return match ? { swarmId: match[1]!, horde: Number(match[2]) } : undefined;
+}
+
+function validSwarmId(swarmId: string): string {
+  if (!SWARM_ID_RE.test(swarmId)) throw new DashboardError(400, `invalid swarm id: ${swarmId}`);
+  return swarmId;
+}
+
+function swarmDir(src: DashboardSource, swarmId: string): string {
+  return path.join(src.hordeDir, "swarms", swarmId);
+}
+
+/** The horde directory a run's ledgers live in: the project's `.horde`, or the horde's own under `swarms/`. */
+export function ledgerDir(src: DashboardSource, runId: string): string {
+  const live = activeIf(src, runId) ?? finalizingIf(src, runId);
+  if (live?.hordeDir) return live.hordeDir;
+  const swarm = swarmOfRun(runId);
+  return swarm ? path.join(swarmDir(src, swarm.swarmId), `h${swarm.horde}`) : src.hordeDir;
+}
+
+/** The ledgers a page filtered to `run` reads: that horde's for a swarm run, else the project's. */
+function ledgerDirForFilter(src: DashboardSource, run: string | undefined): string {
+  return run === undefined || run === "all" ? src.hordeDir : ledgerDir(src, run);
+}
 const SESSION_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/;
 export const RUN_FILES = ["TASK", "SYSTEM", "PLAN", "SUMMARY", "REPORT", "DELIVERABLE", "POSTMORTEM", "ANSWER", "ACCEPTANCE", "COLLABORATION", "GRAPH"] as const;
 type RunFile = (typeof RUN_FILES)[number];
@@ -114,9 +176,10 @@ export interface CollaborationVm {
 
 export function loadCollaboration(src: DashboardSource, runId: string, from = 0): CollaborationVm {
   const runDir = resolveRunDir(src, runId);
+  const ledgers = ledgerDir(src, runId);
   const frozen = path.join(runDir, "ACCEPTANCE.json");
-  const report = fs.existsSync(frozen) ? JSON.parse(fs.readFileSync(frozen, "utf8")).report as CollaborationReport : loadCollaborationReport(src.hordeDir, runId);
-  const all = readEvents(src.hordeDir, runId);
+  const report = fs.existsSync(frozen) ? JSON.parse(fs.readFileSync(frozen, "utf8")).report as CollaborationReport : loadCollaborationReport(ledgers, runId);
+  const all = readEvents(ledgers, runId);
   return { report, events: all.slice(from, from + 100), next: all.length > from + 100 ? from + 100 : undefined, historical: all.length === 0 };
 }
 
@@ -147,7 +210,7 @@ function taskStartedAt(runDir: string): number | undefined {
 export function loadRunGraph(src: DashboardSource, runId: string, view: GraphView): RunGraphVm {
   const runDir = runDirFor(src, runId);
   const live = activeIf(src, runId) ?? finalizingIf(src, runId);
-  const events = readEvents(src.hordeDir, runId);
+  const events = readEvents(ledgerDir(src, runId), runId);
   const members = live
     ? live.members.map((m) => ({ name: m.name, status: m.status }))
     : memberNamesOnDisk(runDir).map((name) => ({
@@ -169,19 +232,17 @@ function nowOf(src: DashboardSource): number {
 }
 
 function activeIf(src: DashboardSource, runId: string): LiveRun | undefined {
-  const active = src.getActive();
-  return active && active.id === runId ? active : undefined;
+  return src.getActive().find((run) => run.id === runId);
 }
 
 function finalizingIf(src: DashboardSource, runId: string): LiveRun | undefined {
-  const run = src.getFinalizing?.();
-  return run && run.id === runId ? run : undefined;
+  return src.getFinalizing?.().find((run) => run.id === runId);
 }
 
 /** Path of an existing run dir; the id is validated and the real path must stay under runs/. */
 function resolveRunDir(src: DashboardSource, runId: string): string {
   validRunId(runId);
-  const runs = hordePaths(src.hordeDir).runs;
+  const runs = hordePaths(ledgerDir(src, runId)).runs;
   const dir = path.join(runs, runId);
   if (!fs.existsSync(dir)) throw new DashboardError(404, `no run ${runId}`);
   if (!fs.realpathSync(dir).startsWith(fs.realpathSync(runs) + path.sep)) {
@@ -225,15 +286,31 @@ interface RunIndexRow {
   outcome?: string | undefined;
   prompt: string;
   files: Record<RunFile, boolean>;
+  /** The swarm this run is one horde of, when it is. */
+  swarm?: string | undefined;
+}
+
+interface SwarmIndexRow {
+  id: string;
+  active: boolean;
+  finalizing: boolean;
+  started?: string | undefined;
+  hordes: number;
+  count?: number | undefined;
+  prompt: string;
+  /** Per-horde outcomes, `h1` first. */
+  outcomes: string[];
+  files: Record<SwarmFile, boolean>;
 }
 
 export interface RunIndexVm {
   activeId?: string | undefined;
   runs: RunIndexRow[];
+  swarms: SwarmIndexRow[];
 }
 
 function runIndexRow(src: DashboardSource, runId: string): RunIndexRow {
-  const runDir = path.join(hordePaths(src.hordeDir).runs, runId);
+  const runDir = path.join(hordePaths(ledgerDir(src, runId)).runs, runId);
   const task = parseTaskMarkdown(readOptional(path.join(runDir, "TASK.md")) ?? "");
   const live = activeIf(src, runId);
   const fin = live ? undefined : finalizingIf(src, runId);
@@ -247,22 +324,102 @@ function runIndexRow(src: DashboardSource, runId: string): RunIndexRow {
     outcome: live ? liveOutcome(live) : fin ? "synthesizing" : diskOutcome(runDir),
     prompt: live?.prompt ?? task.prompt,
     files: runFilePresence(runDir),
+    swarm: swarmOfRun(runId)?.swarmId,
   };
 }
 
-/** Run ids under runs/, newest first. */
+function listDir(dir: string, accept: RegExp): string[] {
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => accept.test(name)).sort() : [];
+}
+
+/** Swarm ids under swarms/, newest first. */
+function swarmIdsOnDisk(src: DashboardSource): string[] {
+  return listDir(path.join(src.hordeDir, "swarms"), SWARM_ID_RE).reverse();
+}
+
+/** Run ids under runs/ and under every swarm's horde directories, newest first. */
 function runIdsOnDisk(src: DashboardSource): string[] {
-  const runs = hordePaths(src.hordeDir).runs;
-  return fs.existsSync(runs) ? fs.readdirSync(runs).filter((name) => RUN_ID_RE.test(name)).sort().reverse() : [];
+  const own = listDir(hordePaths(src.hordeDir).runs, RUN_ID_RE);
+  const swarmRuns = swarmIdsOnDisk(src).flatMap((swarmId) =>
+    listDir(swarmDir(src, swarmId), /^h\d{1,2}$/).flatMap((horde) =>
+      listDir(hordePaths(path.join(swarmDir(src, swarmId), horde)).runs, RUN_ID_RE)));
+  return [...new Set([...own, ...swarmRuns])].sort().reverse();
 }
 
 /** The run the nav's per-run links point at when the page itself names none: live first, then newest. */
 export function latestRunId(src: DashboardSource): string | undefined {
-  return src.getActive()?.id ?? src.getFinalizing?.()?.id ?? runIdsOnDisk(src)[0];
+  return src.getActive()[0]?.id ?? src.getFinalizing?.()[0]?.id ?? runIdsOnDisk(src)[0];
+}
+
+function swarmFilePresence(dir: string): Record<SwarmFile, boolean> {
+  const files = {} as Record<SwarmFile, boolean>;
+  for (const name of SWARM_FILES) files[name] = fs.existsSync(path.join(dir, `${name}.md`));
+  return files;
+}
+
+/** A swarm's `SWARM.json`, as the parent wrote it; absent for a swarm that never started. */
+interface SwarmRecordOnDisk {
+  prompt?: string;
+  hordes?: number;
+  count?: number;
+  startedAt?: number;
+  untilStop?: boolean;
+  partition?: string[];
+  runs?: Array<{ label?: string; runId?: string; startedAt?: number; endedAt?: number; outcome?: string }>;
+  merge?: { startedAt?: number; endedAt?: number; written?: boolean };
+  endedAt?: number;
+}
+
+function readSwarmRecord(dir: string): SwarmRecordOnDisk | undefined {
+  const raw = readOptional(path.join(dir, "SWARM.json"));
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "object" && parsed !== null ? (parsed as SwarmRecordOnDisk) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function liveSwarmIf(src: DashboardSource, swarmId: string): LiveSwarm | undefined {
+  const swarm = src.getSwarm?.();
+  return swarm && swarm.id === swarmId && swarm.dir !== undefined ? swarm : undefined;
+}
+
+function swarmRunIds(src: DashboardSource, swarmId: string, live: LiveSwarm | undefined, record: SwarmRecordOnDisk | undefined): string[] {
+  if (live) return live.runs.map((run) => run.id);
+  const recorded = (record?.runs ?? []).map((run) => run.runId).filter((id): id is string => typeof id === "string");
+  if (recorded.length > 0) return recorded;
+  return runIdsOnDisk(src).filter((id) => swarmOfRun(id)?.swarmId === swarmId).sort();
+}
+
+function swarmIndexRow(src: DashboardSource, swarmId: string): SwarmIndexRow {
+  const dir = swarmDir(src, swarmId);
+  const live = liveSwarmIf(src, swarmId);
+  const record = readSwarmRecord(dir);
+  const runIds = swarmRunIds(src, swarmId, live, record);
+  const rows = runIds.map((id) => runIndexRow(src, id));
+  const startedAt = live?.startedAt ?? record?.startedAt;
+  const notStarted = /^Not started: (.*)$/m.exec(readOptional(path.join(dir, "SWARM.md")) ?? "")?.[1];
+  return {
+    id: swarmId,
+    active: live !== undefined && rows.some((row) => row.active),
+    finalizing: live !== undefined && !rows.some((row) => row.active),
+    started: startedAt !== undefined ? formatDateTime(new Date(startedAt)) : undefined,
+    hordes: live?.hordes ?? record?.hordes ?? runIds.length,
+    count: live?.count ?? record?.count,
+    prompt: live?.prompt ?? record?.prompt ?? (notStarted ? `not started: ${notStarted}` : ""),
+    outcomes: rows.map((row) => row.outcome ?? ""),
+    files: swarmFilePresence(dir),
+  };
 }
 
 export function listRuns(src: DashboardSource): RunIndexVm {
-  return { activeId: src.getActive()?.id, runs: runIdsOnDisk(src).map((id) => runIndexRow(src, id)) };
+  return {
+    activeId: src.getActive()[0]?.id,
+    runs: runIdsOnDisk(src).map((id) => runIndexRow(src, id)),
+    swarms: swarmIdsOnDisk(src).map((id) => swarmIndexRow(src, id)),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -666,27 +823,35 @@ export function loadSessionEntry(
 // ---------------------------------------------------------------------------
 
 export interface FileVm {
+  /** The run, or the swarm when `swarm` is set. */
   runId: string;
-  name: RunFile;
+  name: RunFile | SwarmFile;
   present: boolean;
   content: string;
   bytes: number;
   truncated: boolean;
+  swarm?: boolean | undefined;
 }
 
-export function loadRunFile(src: DashboardSource, runId: string, name: string): FileVm {
-  const file = validRunFile(name);
-  const content = readOptional(path.join(runDirFor(src, runId), `${file}.md`));
-  if (content === undefined) return { runId, name: file, present: false, content: "", bytes: 0, truncated: false };
+function fileVm(runId: string, name: RunFile | SwarmFile, filePath: string, swarm: boolean): FileVm {
+  const content = readOptional(filePath);
+  const tag = swarm ? { swarm: true } : {};
+  if (content === undefined) return { runId, name, present: false, content: "", bytes: 0, truncated: false, ...tag };
   const truncated = content.length > FILE_BYTES_MAX;
   return {
     runId,
-    name: file,
+    name,
     present: true,
     content: truncated ? content.slice(0, FILE_BYTES_MAX) : content,
     bytes: content.length,
     truncated,
+    ...tag,
   };
+}
+
+export function loadRunFile(src: DashboardSource, runId: string, name: string): FileVm {
+  const file = validRunFile(name);
+  return fileVm(runId, file, path.join(runDirFor(src, runId), `${file}.md`), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -702,10 +867,13 @@ export interface IdeasVm {
   ruledOut: Idea[];
 }
 
-export function loadIdeas(src: DashboardSource, owner?: string): IdeasVm {
+/** `run` picks whose ledger to read: a swarm run's horde, else the project's. */
+export function loadIdeas(src: DashboardSource, owner?: string, run?: string): IdeasVm {
   if (owner !== undefined && owner !== "parent") validMember(owner);
-  const paths = hordePaths(src.hordeDir);
-  const all = fs.existsSync(paths.ideas) ? listIdeas(src.hordeDir) : [];
+  if (run !== undefined) validRunId(run);
+  const ledgers = ledgerDirForFilter(src, run);
+  const paths = hordePaths(ledgers);
+  const all = fs.existsSync(paths.ideas) ? listIdeas(ledgers) : [];
   const owners = Array.from(new Set(all.map((idea) => idea.owner).filter((o): o is string => !!o))).sort();
   const ideas = owner ? all.filter((idea) => idea.owner === owner) : all;
   return {
@@ -733,7 +901,7 @@ export interface BoardVm {
 
 export function loadBoard(src: DashboardSource, run: RunFilter, order: "newest" | "oldest"): BoardVm {
   validRunFilter(run);
-  const all = listBoard(src.hordeDir);
+  const all = listBoard(ledgerDirForFilter(src, run));
   const runs = Array.from(new Set(all.map((entry) => entry.runId).filter(Boolean)));
   const entries = run === "all" ? all : all.filter((entry) => entry.runId === run);
   return { run, order, runs, entries: order === "newest" ? [...entries].reverse() : entries };
@@ -764,7 +932,8 @@ export function loadFindings(
   open: number[],
 ): FindingsVm {
   validRunFilter(run);
-  const paths = hordePaths(src.hordeDir);
+  const ledgers = ledgerDirForFilter(src, run);
+  const paths = hordePaths(ledgers);
   const all = fs.existsSync(paths.findings) ? parseFindings(fs.readFileSync(paths.findings, "utf-8")) : [];
   const runs = Array.from(new Set(all.map((finding) => finding.runId).filter(Boolean)));
   const findings = run === "all" ? all : all.filter((finding) => finding.runId === run);
@@ -777,7 +946,7 @@ export function loadFindings(
           findings: cluster.findings,
         }))
       : undefined;
-  const states = new Map(runs.filter((id) => /^[\w-]+$/.test(id) && findings.some((f) => f.runId === id)).map((id) => [id, collaborationState(src.hordeDir, id)]));
+  const states = new Map(runs.filter((id) => /^[\w-]+$/.test(id) && findings.some((f) => f.runId === id)).map((id) => [id, collaborationState(ledgers, id)]));
   const reviewStates = Object.fromEntries(findings.map((f) => {
     const state = states.get(f.runId);
     const check = findingReviewState(f, state?.reviews, state?.messages);
@@ -791,9 +960,11 @@ const CLAIM_STATE_ORDER: ClaimState[] = ["open", "confirmed", "contested", "unve
 export interface ClaimsVm {
   groups: Array<{ state: ClaimState; claims: ClaimEntry[] }>;
 }
-export function loadClaims(src: DashboardSource): ClaimsVm {
-  const paths = hordePaths(src.hordeDir);
-  const all = fs.existsSync(paths.claims) ? listClaims(src.hordeDir) : [];
+export function loadClaims(src: DashboardSource, run?: string): ClaimsVm {
+  if (run !== undefined) validRunId(run);
+  const ledgers = ledgerDirForFilter(src, run);
+  const paths = hordePaths(ledgers);
+  const all = fs.existsSync(paths.claims) ? listClaims(ledgers) : [];
   return {
     groups: CLAIM_STATE_ORDER.map((state) => ({
       state,
@@ -813,12 +984,14 @@ export interface ResourcesVm {
  * counted the way REPORT.md counts them, from the active run's ledgers; without an active run
  * only explicit reclaims are known.
  */
-export function loadResources(src: DashboardSource): ResourcesVm {
-  const paths = hordePaths(src.hordeDir);
-  const resources = fs.existsSync(paths.resources) ? listResources(src.hordeDir) : [];
-  const live = src.getActive();
+export function loadResources(src: DashboardSource, run?: string): ResourcesVm {
+  if (run !== undefined) validRunId(run);
+  const ledgers = ledgerDirForFilter(src, run);
+  const paths = hordePaths(ledgers);
+  const resources = fs.existsSync(paths.resources) ? listResources(ledgers) : [];
+  const live = run !== undefined ? activeIf(src, run) : src.getActive().find((candidate) => candidate.hordeDir === ledgers);
   const citing = live
-    ? resourceCitingMembers(resources, listFindingsForRun(src.hordeDir, live.id), collaborationState(src.hordeDir, live.id))
+    ? resourceCitingMembers(resources, listFindingsForRun(live.hordeDir, live.id), collaborationState(live.hordeDir, live.id))
     : new Map<number, string[]>();
   return { run: live?.id, resources: resources.map((resource) => ({ ...resource, citedBy: citing.get(resource.id) ?? [] })) };
 }
@@ -834,8 +1007,9 @@ export interface FactsVm {
 /** Facts split into this run / carried for the active run; other runs cannot attribute. */
 export function loadFacts(src: DashboardSource, run?: string): FactsVm {
   if (run !== undefined) validRunId(run);
-  const paths = hordePaths(src.hordeDir);
-  const all = fs.existsSync(paths.facts) ? listFacts(src.hordeDir) : [];
+  const ledgers = ledgerDirForFilter(src, run);
+  const paths = hordePaths(ledgers);
+  const all = fs.existsSync(paths.facts) ? listFacts(ledgers) : [];
   const live = run !== undefined ? activeIf(src, run) : undefined;
   if (!live) return { run, attribution: "unavailable", thisRun: [], carried: [], all };
   return {
@@ -845,4 +1019,160 @@ export function loadFacts(src: DashboardSource, run?: string): FactsVm {
     carried: all.filter((fact) => fact.id <= live.startFactId),
     all,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Swarms
+// ---------------------------------------------------------------------------
+
+export interface SwarmHordeVm {
+  label: string;
+  runId: string;
+  active: boolean;
+  finalizing: boolean;
+  outcome?: string | undefined;
+  slice?: string | undefined;
+  count: number;
+  counts: Record<MemberStatus, number>;
+  totals: UsageTotals;
+  findings: number;
+  acceptedArtifacts: number;
+  elapsedMs?: number | undefined;
+  files: Record<RunFile, boolean>;
+}
+
+export interface SwarmVm {
+  id: string;
+  active: boolean;
+  finalizing: boolean;
+  notStarted?: string | undefined;
+  prompt: string;
+  hordes: number;
+  count?: number | undefined;
+  started?: string | undefined;
+  elapsedMs?: number | undefined;
+  untilStop: boolean;
+  partition: string[];
+  /** What the merge step is doing or did: "pending", "merging", "merged", "no deliverable". */
+  merge: string;
+  rows: SwarmHordeVm[];
+  files: Record<SwarmFile, boolean>;
+}
+
+function acceptedArtifactCount(runDir: string): number {
+  const raw = readOptional(path.join(runDir, "ACCEPTANCE.json"));
+  if (raw === undefined) return 0;
+  try {
+    const accepted = (JSON.parse(raw) as { report?: { acceptedArtifacts?: unknown[] } }).report?.acceptedArtifacts;
+    return Array.isArray(accepted) ? accepted.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function swarmHordeVm(src: DashboardSource, runId: string, slice: string | undefined): SwarmHordeVm {
+  const overview = loadRunOverview(src, runId);
+  const ledgers = ledgerDir(src, runId);
+  const runDir = path.join(hordePaths(ledgers).runs, runId);
+  let findings = 0;
+  try {
+    findings = listFindingsForRun(ledgers, runId).length;
+  } catch {
+    // A horde whose FINDINGS.md is unreadable reports none.
+  }
+  return {
+    label: `h${swarmOfRun(runId)?.horde ?? "?"}`,
+    runId,
+    active: overview.active,
+    finalizing: (overview.finalizing?.length ?? 0) > 0,
+    outcome: overview.outcome,
+    slice,
+    count: overview.count,
+    counts: overview.counts,
+    totals: overview.totals,
+    findings,
+    acceptedArtifacts: acceptedArtifactCount(runDir),
+    elapsedMs: overview.elapsedMs,
+    files: overview.files,
+  };
+}
+
+function mergeLabel(live: LiveSwarm | undefined, record: SwarmRecordOnDisk | undefined, rows: SwarmHordeVm[]): string {
+  if (live?.finalizing?.length) return "merging";
+  const merge = record?.merge;
+  if (merge?.endedAt !== undefined) return merge.written === false ? "no deliverable" : "merged";
+  if (merge?.startedAt !== undefined) return "merging";
+  return rows.every((row) => !row.active && !row.finalizing) && !live ? "not run" : "pending";
+}
+
+/** One row per horde, linking to the run pages, plus the partition and the merge step. */
+export function loadSwarm(src: DashboardSource, swarmId: string): SwarmVm {
+  validSwarmId(swarmId);
+  const dir = swarmDir(src, swarmId);
+  const live = liveSwarmIf(src, swarmId);
+  if (!live && !fs.existsSync(dir)) throw new DashboardError(404, `no swarm ${swarmId}`);
+  const record = readSwarmRecord(dir);
+  const partition = live?.partition ?? record?.partition ?? [];
+  const rows = swarmRunIds(src, swarmId, live, record).map((runId, index) => swarmHordeVm(src, runId, partition[index]));
+  const startedAt = live?.startedAt ?? record?.startedAt;
+  const endedAt = live ? undefined : record?.endedAt;
+  const notStarted = /^Not started: (.*)$/m.exec(readOptional(path.join(dir, "SWARM.md")) ?? "")?.[1];
+  return {
+    id: swarmId,
+    active: live !== undefined && rows.some((row) => row.active),
+    finalizing: live !== undefined && !rows.some((row) => row.active),
+    notStarted,
+    prompt: live?.prompt ?? record?.prompt ?? "",
+    hordes: live?.hordes ?? record?.hordes ?? rows.length,
+    count: live?.count ?? record?.count,
+    started: startedAt !== undefined ? formatDateTime(new Date(startedAt)) : undefined,
+    elapsedMs: startedAt !== undefined ? (endedAt ?? nowOf(src)) - startedAt : undefined,
+    untilStop: live?.untilStop === true || record?.untilStop === true,
+    partition,
+    merge: mergeLabel(live, record, rows),
+    rows,
+    files: swarmFilePresence(dir),
+  };
+}
+
+export interface SwarmGraphVm {
+  swarmId: string;
+  graph: RunGraph;
+  view: GraphView;
+  active: boolean;
+  empty: boolean;
+}
+
+/** One lane per horde built from each horde's lifecycle events, plus the merge step. */
+export function loadSwarmGraph(src: DashboardSource, swarmId: string, view: GraphView): SwarmGraphVm {
+  validSwarmId(swarmId);
+  const dir = swarmDir(src, swarmId);
+  const live = liveSwarmIf(src, swarmId);
+  if (!live && !fs.existsSync(dir)) throw new DashboardError(404, `no swarm ${swarmId}`);
+  const record = readSwarmRecord(dir);
+  const runIds = swarmRunIds(src, swarmId, live, record);
+  const hordes = runIds.map((runId) => {
+    const run = activeIf(src, runId) ?? finalizingIf(src, runId);
+    const status = run ? (run.finalized ? "finished" : run.reported ? "finalizing" : "running") : diskOutcome(path.join(hordePaths(ledgerDir(src, runId)).runs, runId));
+    return { label: `h${swarmOfRun(runId)?.horde ?? "?"}`, runId, events: readEvents(ledgerDir(src, runId), runId), status };
+  });
+  const merge = record?.merge?.startedAt !== undefined
+    ? { startedAt: record.merge.startedAt, endedAt: record.merge.endedAt, written: record.merge.written }
+    : undefined;
+  const graph = buildSwarmGraph({
+    swarmId,
+    startedAt: live?.startedAt ?? record?.startedAt ?? Math.min(...hordes.map((h) => Date.parse(h.events[0]?.at ?? "")).filter(Number.isFinite), Date.now()),
+    hordes,
+    merge,
+    now: live ? nowOf(src) : undefined,
+  });
+  return { swarmId, graph, view, active: live !== undefined, empty: hordes.every((horde) => horde.events.length === 0) };
+}
+
+export function loadSwarmFile(src: DashboardSource, swarmId: string, name: string): FileVm {
+  validSwarmId(swarmId);
+  if (!(SWARM_FILES as readonly string[]).includes(name)) throw new DashboardError(400, `unknown swarm file: ${name}`);
+  const dir = swarmDir(src, swarmId);
+  if (!fs.existsSync(dir)) throw new DashboardError(404, `no swarm ${swarmId}`);
+  return fileVm(swarmId, name as SwarmFile, path.join(dir, `${name}.md`), true);
 }

@@ -5,7 +5,8 @@ import { postBoard } from "../ledger/board.js";
 import { readCleanStop, readSolvedState, writeCleanStop } from "../ledger/run-signals.js";
 import { recordLifecycle } from "./lifecycle.js";
 import type { MemberState } from "../member.js";
-import type { HordeRun } from "./types.js";
+import { hordeLabel } from "./types.js";
+import type { HordeRun, Swarm } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
 /** How long stop-clean lets members wrap up before it escalates to stop-hard. */
@@ -26,10 +27,63 @@ interface CleanStopOptions {
   label?: CleanStopLabel | undefined;
 }
 
-function selectedMembers(
-  run: HordeRun,
+/** A control target resolved to one run: every member, or the named ones. */
+export type RunTarget = { kind: "all" } | { kind: "members"; names: string[] };
+
+/** One run a control command applies to, with its share of the target. */
+export interface RunSelection {
+  run: HordeRun;
+  target: RunTarget;
+}
+
+/**
+ * Resolve a target across the swarm: `all` and `hN` select whole runs, a bare member selects
+ * that member in every horde, `hN:member-M` one member of one horde. Runs the target does not
+ * touch are left out. Notifies and returns undefined when a horde or member does not exist.
+ */
+export function resolveTargets(
+  swarm: Swarm,
   target: HordeTarget,
-): { members: MemberState[]; invalid: string[] } {
+  ctx: ExtensionCommandContext,
+): RunSelection[] | undefined {
+  if (target.kind === "all") return swarm.runs.map((run) => ({ run, target: { kind: "all" } }));
+  const whole = new Set<HordeRun>();
+  const named = new Map<HordeRun, Set<string>>();
+  const invalid: string[] = [];
+  for (const item of target.items) {
+    const runs = item.horde === undefined ? swarm.runs : swarm.runs.filter((run) => run.horde === item.horde);
+    if (runs.length === 0) {
+      invalid.push(hordeLabel(item.horde ?? 0));
+      continue;
+    }
+    for (const run of runs) {
+      if (item.member === undefined) {
+        whole.add(run);
+        continue;
+      }
+      if (!run.members.some((member) => member.name === item.member)) {
+        invalid.push(swarm.hordes > 1 ? `${hordeLabel(run.horde)}:${item.member}` : item.member);
+        continue;
+      }
+      if (!named.has(run)) named.set(run, new Set());
+      named.get(run)!.add(item.member);
+    }
+  }
+  if (invalid.length > 0) {
+    const hordes = invalid.filter((name) => !name.includes("member"));
+    const members = invalid.filter((name) => name.includes("member"));
+    if (hordes.length > 0) ctx.ui.notify(`no such horde: ${[...new Set(hordes)].join(", ")}`, "error");
+    if (members.length > 0) ctx.ui.notify(`no such member: ${[...new Set(members)].join(", ")}`, "error");
+    return undefined;
+  }
+  return swarm.runs.flatMap((run): RunSelection[] => {
+    if (whole.has(run)) return [{ run, target: { kind: "all" } }];
+    const names = named.get(run);
+    return names ? [{ run, target: { kind: "members", names: [...names] } }] : [];
+  });
+}
+
+function selectedMembers(run: HordeRun, target: RunTarget): { members: MemberState[]; invalid: string[] } {
   if (target.kind === "all") return { members: run.members, invalid: [] };
   const known = new Set(run.members.map((m) => m.name));
   return {
@@ -38,10 +92,10 @@ function selectedMembers(
   };
 }
 
-/** Resolve a target, or notify and return undefined when it names unknown members. */
+/** Resolve a run target, or notify and return undefined when it names unknown members. */
 export function targetMembers(
   run: HordeRun,
-  target: HordeTarget,
+  target: RunTarget,
   ctx: ExtensionCommandContext,
 ): MemberState[] | undefined {
   const { members, invalid } = selectedMembers(run, target);
@@ -63,7 +117,12 @@ export function hardStopMembers(run: HordeRun, names: string[]): void {
   }
 }
 
-export function stopHard(run: HordeRun, target: HordeTarget, ctx: ExtensionCommandContext): void {
+/** `h2: ` in a swarm's notifications, nothing for a swarm of one. */
+function prefix(run: HordeRun): string {
+  return (run.hordes ?? 1) > 1 ? `${hordeLabel(run.horde)}: ` : "";
+}
+
+export function stopHard(run: HordeRun, target: RunTarget, ctx: ExtensionCommandContext): void {
   const members = targetMembers(run, target, ctx);
   if (!members) return;
   const names = members.map((m) => m.name);
@@ -72,13 +131,13 @@ export function stopHard(run: HordeRun, target: HordeTarget, ctx: ExtensionComma
   run.stopLabel = "stopped by user";
   hardStopMembers(run, names);
   void recordLifecycle(run, "stop-hard", { members: names, by: "user" });
-  ctx.ui.notify(`stop-hard: terminating ${names.join(", ")}`, "warning");
+  ctx.ui.notify(`${prefix(run)}stop-hard: terminating ${names.join(", ")}`, "warning");
 }
 
 /** Suspend (SIGSTOP) or resume (SIGCONT) the targeted live members. */
 export function setPaused(
   run: HordeRun,
-  target: HordeTarget,
+  target: RunTarget,
   ctx: ExtensionCommandContext,
   paused: boolean,
 ): void {
@@ -104,7 +163,7 @@ export function setPaused(
     : changed > 0
       ? `resumed ${changed} member(s)`
       : "no paused members to resume";
-  ctx.ui.notify(message, "info");
+  ctx.ui.notify(`${prefix(run)}${message}`, "info");
 }
 
 function stopLabelFor(label: CleanStopLabel): string {
@@ -134,7 +193,7 @@ function holdCleanStop(
   run.cleanStopUntil = Date.now() + holdMs;
   run.cleanStopTimer = setTimeout(() => finishCleanStop(run, members, label), holdMs);
   run.cleanStopTimer.unref?.();
-  safeNotify(run, message, "info");
+  safeNotify(run, `${prefix(run)}${message}`, "info");
   refreshRun(run);
 }
 
@@ -184,7 +243,7 @@ function finishCleanStop(run: HordeRun, members: MemberState[], label: CleanStop
   run.cleanStopUntil = undefined;
   hardStopMembers(run, run.cleanStopNames);
   void recordLifecycle(run, "stop-hard", { members: run.cleanStopNames, by: label });
-  safeNotify(run, `${label} deadline reached: terminating ${run.cleanStopNames.join(", ")}`, "warning");
+  safeNotify(run, `${prefix(run)}${label} deadline reached: terminating ${run.cleanStopNames.join(", ")}`, "warning");
   refreshRun(run);
 }
 
@@ -202,7 +261,7 @@ function wakePaused(run: HordeRun, members: MemberState[]): void {
 /** Ask the targeted members to wrap up, with a hard stop once the grace period ends. */
 export async function requestCleanStop(
   run: HordeRun,
-  target: HordeTarget,
+  target: RunTarget,
   ctx: ExtensionCommandContext,
   options: CleanStopOptions = {},
 ): Promise<void> {
@@ -210,7 +269,7 @@ export async function requestCleanStop(
   const members = targetMembers(run, target, ctx);
   if (!members) return;
   if (members.length === 0) {
-    ctx.ui.notify("no running members to stop", "info");
+    ctx.ui.notify(`${prefix(run)}no running members to stop`, "info");
     return;
   }
   const grace = options.graceMs ?? CLEAN_STOP_GRACE_MS;
@@ -236,7 +295,7 @@ export async function requestCleanStop(
   refreshRun(run);
   const graceSeconds = Math.round(grace / 1000);
   ctx.ui.notify(
-    `${label}: ${requested.length} member(s) wrapping up, hard stop in ${graceSeconds}s`,
+    `${prefix(run)}${label}: ${requested.length} member(s) wrapping up, hard stop in ${graceSeconds}s`,
     "warning",
   );
   try {

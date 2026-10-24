@@ -32,7 +32,9 @@ const run = {
   ],
 };
 
-const lines = widget.widgetLines(run, now, 120, theme);
+// A plain run is a swarm of one; the widget shows it as before.
+const swarmOf = (r) => ({ id: r.id, runs: [{ ...r, horde: 1 }], startedAt: r.startedAt, dashboardUrl: r.dashboardUrl });
+const lines = widget.widgetLines(swarmOf(run), now, 120, theme);
 assert.equal(lines.length, 6);
 assert.match(lines[0], /^horde 20260913-140200  3 running  1 done  1 failed  02:15  \/agent-horde status \| stop-hard \| stop-clean$/);
 assert.match(lines[1], /^ ⠋ member-1  running  bash: grep -rn "jwt" src  01:05  t3$/);
@@ -41,22 +43,22 @@ assert.match(lines[3], /^ ✓ member-3  done     3 turns  12\.4k tok  00:41  t3$
 assert.match(lines[4], /^ ✗ member-4  failed   exit 1: ECONNREFUSED  00:05  t0$/);
 assert.match(lines[5], /^ · member-5  starting starting  01:05  t0$/);
 
-const narrow = widget.widgetLines(run, now, 30, theme);
+const narrow = widget.widgetLines(swarmOf(run), now, 30, theme);
 // oxlint-disable-next-line no-control-regex -- matches ANSI escape sequences
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 for (const line of narrow) assert.ok(stripAnsi(line).length <= 30, line);
 
 const big = { ...run, count: 10, members: Array.from({ length: 10 }, (_, i) => mk(i + 1, { status: i === 2 ? "failed" : "running" })) };
-const collapsed = widget.widgetLines(big, now, 120, theme);
+const collapsed = widget.widgetLines(swarmOf(big), now, 120, theme);
 assert.equal(collapsed.length, 3);
 assert.equal(collapsed[1], " ⠋ ⠋ ✗ ⠋ ⠋ ⠋ ⠋ ⠋ ⠋ ⠋");
 assert.equal(collapsed[2], " failed: member-3");
 
 const paused = { ...run, members: run.members.map((m, i) => (i === 0 ? { ...m, paused: true } : m)) };
-const pausedLines = widget.widgetLines(paused, now, 120, theme);
+const pausedLines = widget.widgetLines(swarmOf(paused), now, 120, theme);
 assert.match(pausedLines[1], /^ ⏸ member-1  running  paused  01:05  t3$/);
 
-const w = new widget.HordeWidget(run, theme, () => now);
+const w = new widget.HordeWidget(swarmOf(run), theme, () => now);
 assert.deepEqual(w.render(120), lines);
 w.invalidate();
 
@@ -73,6 +75,6 @@ assert.match(report, /^Horde run 20260913-140200 finished after 02:15: 1 of 5 me
 assert.match(report, /This run added 6 findings; IDEAS\.md now has 7 done, 1 in progress, 2 open, 0 ruled out\./);
 assert.ok(prompt.memberSystemPrompt({ hordeDir: "/x/.horde", count: 4 }).includes("horde of 4 agents"));
 
-const withUrl = widget.widgetLines({ ...run, dashboardUrl: "http://127.0.0.1:7433/" }, now, 160, theme);
+const withUrl = widget.widgetLines(swarmOf({ ...run, dashboardUrl: "http://127.0.0.1:7433/" }), now, 160, theme);
 assert.match(withUrl[0], /02:15  http:\/\/127\.0\.0\.1:7433\/runs\/20260913-140200  \/agent-horde status/);
 console.log("PASS: horde-widget-test");

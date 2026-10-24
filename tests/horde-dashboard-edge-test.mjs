@@ -59,7 +59,7 @@ await ledger.addFinding(hordeDir, runId, "member-1", "finding <script>alert(5)</
 await ledger.assertClaim(hordeDir, "member-1", "claim <script>alert(6)</script>");
 await ledger.addFact(hordeDir, "member-1", "fact <script>alert(7)</script>");
 
-const source = { hordeDir, getActive: () => undefined };
+const source = { hordeDir, getActive: () => [] };
 const server = await dash.startDashboard({ port: 0, source });
 const base = `http://127.0.0.1:${server.port}`;
 const get = async (p, init) => {

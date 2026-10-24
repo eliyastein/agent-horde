@@ -18,7 +18,7 @@ import { buildHordeFixture } from "./fixtures.mjs";
 
 const HORDE = buildHordeFixture();
 const RUN = "20260913-010341";
-const source = { hordeDir: HORDE, getActive: () => undefined };
+const source = { hordeDir: HORDE, getActive: () => [] };
 const server = await dash.startDashboard({ port: 0, source });
 assert.ok(server.port > 0);
 assert.equal(server.url, `http://127.0.0.1:${server.port}/`);
@@ -140,7 +140,7 @@ const live = {
   id: RUN, hordeDir: HORDE, runDir: `${HORDE}/runs/${RUN}`, prompt: "p", count: 1, startedAt: Date.now(), stopped: false,
   startFactId: 0, members: [{ name: "member-1", index: 1, status: "running", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "hi", finalText: "", startedAt: Date.now() }],
 };
-const liveSource = { hordeDir: HORDE, getActive: () => live };
+const liveSource = { hordeDir: HORDE, getActive: () => [live] };
 const liveHtml = (path) => dash.routeRequest(liveSource, "GET", new URL(`http://127.0.0.1${path}`), "127.0.0.1").body;
 assert.ok(liveHtml(`/runs/${RUN}`).includes("http-equiv"));
 assert.ok(liveHtml(`/runs/${RUN}`).includes("<b>ACTIVE</b>") === false);

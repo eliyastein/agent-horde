@@ -50,7 +50,9 @@ found there as its brief. Unrelated files cost members context and invite them t
 from earlier runs persist in `.horde/` and will steer members; start with a fresh one when the
 task changes.
 
-A horde is at most twelve members today. Hordes of hordes are on the roadmap.
+A horde is at most twelve members. For more hands, run a swarm: `3/12` launches three hordes of
+twelve on disjoint workstreams of one task, each with its own ledgers, and merges their
+deliverables at the end.
 
 **Tips.**
 
@@ -135,13 +137,30 @@ extend, stress-test, or deepen the work.
 /agent-horde --dashboard --until-stop 8 find every way an unauthenticated request reaches the database
 ```
 
+A count of `H/M` runs a swarm: H hordes of M members on one task, at most four hordes. A planner
+helper first splits the task into H disjoint workstreams with acceptance criteria and each horde
+works only its slice, with its own ledgers under `.horde/swarms/<id>/hN/`; if the planner cannot
+produce H distinct workstreams the launch stops and says so. `plan 3/12 a; b; c; d; e; f` skips
+the planner and deals the layers round-robin to the hordes. Members read the other hordes' facts,
+rule-outs and resources through the `horde` tool but write only to their own horde. The hordes
+start a few seconds apart, run the normal lifecycle independently, and when the last one has
+finished a synthesis helper merges their deliverables into the swarm's `DELIVERABLE.md`, each
+claim attributed to its horde. `--until-stop` applies to every horde.
+
+```
+/agent-horde --dashboard=1234 3/12 audit the service for authorization bugs
+```
+
 | command | effect |
 |---|---|
-| `/agent-horde status` | the active run and each member |
+| `/agent-horde status` | the active run and each member; one block per horde in a swarm |
 | `/agent-horde stop-clean [postmortem]` | members wrap up, then the run finalizes; this is how an `--until-stop` run ends |
 | `/agent-horde stop-hard` | terminate members now |
 | `/agent-horde pause`, `resume` | suspend and resume member processes |
 | `/agent-horde help` | every flag and target |
+
+Every control takes a target: `member-3`, `h2` for one horde of a swarm, `h2:member-3` for one
+member of one horde, or `all`; a bare `member-3` in a swarm names that member in every horde.
 
 When the run ends, the report is injected into your conversation. Everything else stays under
 `.horde/`; add it to your `.gitignore`.
