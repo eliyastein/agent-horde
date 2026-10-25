@@ -1,7 +1,7 @@
 // The dashboard reads a swarm's hordes from their own directories under .horde/swarms/<id>/hN/:
-// the index lists swarms and tags their runs, run pages resolve swarm run ids, the ledger pages
-// read a horde's ledgers through ?run=, and /swarms/<id> has one row per horde plus a graph with
-// one lane per horde and the merge step. Built on a synthetic swarm written through the parent's
+// the index lists swarms and tags their runs, run pages resolve swarm run ids, a horde's ledgers
+// are at /runs/<horde-run>/<ledger>, /swarms/<id> has one row per horde plus a graph with one lane
+// per horde and the merge step, and the nav names the scope and offers horde tabs. Built on a synthetic swarm written through the parent's
 // own layout and event code, so nothing machine-specific is checked in.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -108,15 +108,14 @@ assert.equal(get(`/runs/${layout.runIds[1]}/collaboration`).status, 200);
 assert.equal(get(`/runs/${layout.runIds[1]}/files/REPORT`).status, 200);
 assert.equal(get(`/runs/${layout.id}-h3`).status, 404);
 
-// ---- ledger pages read a horde's ledgers through ?run= ------------------------
+// ---- a horde's ledgers are its run's ledger pages -----------------------------
 assert.equal(json("/facts").all.length, 0, "the project ledger has no facts");
-assert.equal(json(`/facts?run=${layout.runIds[1]}`).all.length, 1, "h2's ledger has the fact");
-assert.equal(json(`/facts?run=${layout.runIds[0]}`).all.length, 0);
-assert.equal(get(`/ideas?run=${layout.runIds[1]}`).status, 200);
-assert.equal(get(`/claims?run=${layout.runIds[1]}`).status, 200);
-assert.equal(get(`/resources?run=${layout.runIds[1]}`).status, 200);
-assert.equal(get(`/board?run=${layout.runIds[1]}`).status, 200);
-assert.equal(get("/facts?run=../etc").status, 400);
+assert.equal(json(`/runs/${layout.runIds[1]}/facts`).all.length, 1, "h2's ledger has the fact");
+assert.equal(json(`/runs/${layout.runIds[0]}/facts`).all.length, 0);
+for (const k of ["ideas", "claims", "resources", "board", "findings"]) {
+  assert.equal(get(`/runs/${layout.runIds[1]}/${k}`).status, 200, `/runs/<horde>/${k}`);
+}
+assert.equal(get(`/runs/${layout.id}-h3/facts`).status, 404, "a horde that does not exist");
 
 // ---- the swarm page and graph -----------------------------------------------
 const swarm = json(`/swarms/${layout.id}`);
@@ -172,14 +171,27 @@ assert.ok(livePage.body.includes("refresh"), "a live swarm page auto-refreshes")
 assert.ok(data.loadSwarmGraph(liveSrc, layout.id, { width: 1200, from: 0, to: 0 }).graph.end >= startedAt + 120_000, "a live graph runs to now");
 
 // ---- swarm-wide ledgers: every horde on one page ----------------------------
-// The swarm page's nav points ledger links at the swarm aggregate, not the empty project root.
-const swarmNav = get(`/swarms/${layout.id}`).body.match(/<nav>.*?<\/nav>/)[0];
-for (const k of ["ideas", "board", "findings", "claims", "facts", "resources"]) {
-  assert.ok(swarmNav.includes(`href="/swarms/${layout.id}/${k}"`), `swarm nav links ${k} to the aggregate: ${swarmNav}`);
+// The nav names the scope and builds every link from it.
+const navOf = (body) =>
+  [...body.matchAll(/<nav>(.*?)<\/nav>/g)].map((m) => m[1]).join("") + (/<p class="scope">(.*?)<\/p>/.exec(body)?.[1] ?? "");
+const swarmNav = navOf(get(`/swarms/${layout.id}`).body);
+assert.ok(swarmNav.includes(`scope: <b>swarm ${layout.id}</b>`), swarmNav);
+for (const k of ["ideas", "board", "findings", "claims", "facts", "resources", "collaboration", "graph"]) {
+  assert.ok(swarmNav.includes(`href="/swarms/${layout.id}/${k}"`), `swarm nav links ${k} in the swarm: ${swarmNav}`);
 }
-// A horde run page keeps run-scoped ledger links, not the swarm aggregate.
-const runNav = get(`/runs/${layout.runIds[1]}`).body.match(/<nav>.*?<\/nav>/)[0];
-assert.ok(runNav.includes(`href="/findings?run=${layout.runIds[1]}"`), `a horde run page filters ledgers to that horde: ${runNav}`);
+assert.ok(swarmNav.includes("<b>overview</b>") && swarmNav.includes("hordes: <b>all</b>"), "overview and the all tab are current");
+assert.ok(swarmNav.includes(`<a href="/runs/${layout.runIds[0]}">h1</a>`) && swarmNav.includes(`<a href="/runs/${layout.runIds[1]}">h2</a>`), "tabs lead to each horde");
+// Tabs keep the page type: from the swarm's findings, h2 is h2's findings, and back.
+const findingsNav = navOf(get(`/swarms/${layout.id}/findings`).body);
+assert.ok(findingsNav.includes(`<a href="/runs/${layout.runIds[1]}/findings">h2</a>`), findingsNav);
+const hordeNav = navOf(get(`/runs/${layout.runIds[1]}/findings`).body);
+assert.ok(hordeNav.includes(`swarm ${layout.id}</a> &rsaquo; <b>h2</b>`), `a horde names its swarm: ${hordeNav}`);
+assert.ok(hordeNav.includes(`<a href="/swarms/${layout.id}/findings">all</a>`) && hordeNav.includes("<b>h2</b>"), "a horde page tabs back to all");
+assert.ok(hordeNav.includes(`<a href="/runs/${layout.runIds[0]}/findings">h1</a>`), "and across to a sibling horde");
+assert.ok(hordeNav.includes(`href="/runs/${layout.runIds[1]}/board"`) && hordeNav.includes("<b>findings</b>"), "the page row stays in the horde");
+// A page that only a run has, such as a member, tabs to each horde's overview.
+const memberNav = navOf(get(`/runs/${layout.runIds[1]}/members/member-1`).body);
+assert.ok(memberNav.includes(`<a href="/runs/${layout.runIds[0]}">h1</a>`) && memberNav.includes(`<a href="/swarms/${layout.id}">all</a>`), memberNav);
 
 for (const k of ["ideas", "board", "findings", "claims", "facts", "resources"]) {
   assert.equal(get(`/swarms/${layout.id}/${k}`).status, 200, `/swarms/<id>/${k} serves`);
@@ -195,7 +207,7 @@ assert.equal(factsAgg.sections[0].vm.all.length, 0, "h1 has no facts");
 assert.equal(factsAgg.sections[1].vm.all.length, 1, "h2's fact is read from h2's ledger");
 assert.equal(factsAgg.sections[1].vm.all[0].text, "a fact only h2 knows");
 const factsPage = get(`/swarms/${layout.id}/facts`);
-assert.ok(factsPage.body.includes(`href="/runs/${layout.runIds[0]}"`) && factsPage.body.includes(`href="/runs/${layout.runIds[1]}"`), "each section links to its horde run");
+assert.ok(factsPage.body.includes(`<h2>h1 &mdash; <a href="/runs/${layout.runIds[0]}/facts">`) && factsPage.body.includes(`<h2>h2 &mdash; <a href="/runs/${layout.runIds[1]}/facts">`), "each section links to that horde's same page");
 assert.ok(factsPage.body.includes("a fact only h2 knows"), "the h2 fact shows on the swarm-wide facts page");
 assert.ok(factsPage.body.includes("ids repeat per horde"), "the page says ids are per horde");
 
@@ -204,6 +216,15 @@ fs.mkdirSync(path.join(hordeDir, "swarms", "20261024-070000"));
 const emptySwarm = get("/swarms/20261024-070000/findings");
 assert.equal(emptySwarm.status, 200);
 assert.ok(emptySwarm.body.includes("no hordes"), emptySwarm.body.slice(0, 200));
+
+// The swarm's collaboration shows each horde's acceptance and reviews, the audit stays per horde.
+const collab = json(`/swarms/${layout.id}/collaboration`);
+assert.deepEqual(collab.sections.map((s) => s.runId), layout.runIds);
+const collabPage = get(`/swarms/${layout.id}/collaboration`).body;
+assert.equal((collabPage.match(/<h2>Acceptance issues<\/h2>/g) ?? []).length, 2, "one acceptance block per horde");
+assert.ok(!collabPage.includes("<h2>Event audit</h2>"), "no merged event audit");
+assert.ok(collabPage.includes(`<a href="/runs/${layout.runIds[1]}/collaboration">event audit</a>`), "each horde links its own audit");
+assert.equal(get("/swarms/20990101-000000/collaboration").status, 404);
 
 console.log("PASS: horde-swarm-dashboard-test ledgers");
 

@@ -117,14 +117,14 @@ export function entityHref(runId: string, id: string): string | undefined {
   if (!match) return undefined;
   const letter = match[1] ?? "";
   const number = match[2] ?? "";
-  const run = encodeURIComponent(runId);
+  const base = `/runs/${encodeURIComponent(runId)}`;
   switch (letter) {
-    case "I": return `/ideas#idea-${number}`;
-    case "F": return `/findings?run=${run}#F${number}`;
-    case "T": return `/facts?run=${run}#T${number}`;
-    case "C": return `/claims#C${number}`;
-    case "R": return `/resources#R${number}`;
-    case "A": case "V": case "Q": return `/runs/${run}/collaboration#${id}`;
+    case "I": return `${base}/ideas#idea-${number}`;
+    case "F": return `${base}/findings#F${number}`;
+    case "T": return `${base}/facts#T${number}`;
+    case "C": return `${base}/claims#C${number}`;
+    case "R": return `${base}/resources#R${number}`;
+    case "A": case "V": case "Q": return `${base}/collaboration#${id}`;
     case "E": return eventHref(runId, Number(number));
     default: return undefined;
   }

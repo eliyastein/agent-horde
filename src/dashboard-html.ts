@@ -21,6 +21,7 @@ import type {
   RunOverviewVm,
   SessionsVm,
   SwarmGraphVm,
+  SwarmHorde,
   SwarmLedgerVm,
   SwarmVm,
   TranscriptEntryVm,
@@ -33,18 +34,28 @@ import { renderRunGraphMermaid } from "./run-graph-mermaid.js";
 import { GRAPH_CSS, graphLegendHtml, renderRunGraphSvg } from "./run-graph-svg.js";
 import type { TranscriptEntry, TranscriptPart } from "./session-log.js";
 
+/**
+ * What a page is about, fixed by its URL: the ledgers single runs share (`/`, `/findings`), one run
+ * (`/runs/<id>/...`), or a whole swarm (`/swarms/<id>/...`). A horde of a swarm is a run scope that
+ * also knows its swarm, so the nav can offer the sibling hordes. Every scoped link derives from this.
+ */
+export type Scope =
+  | { kind: "project" }
+  | { kind: "run"; runId: string; swarm?: { id: string; hordes: SwarmHorde[] } | undefined }
+  | { kind: "swarm"; swarmId: string; hordes: SwarmHorde[] };
+
+/** The page types every scope offers in the page row; `other` is a run-only page such as a transcript. */
+export type PageKind =
+  | "overview" | "ideas" | "board" | "findings" | "claims" | "facts" | "resources" | "collaboration" | "graph" | "other";
+
 /** Per-request facts the renderers need beyond the view model. */
 export interface RenderContext {
   href?: string;
-  runId?: string | undefined;
-  activeId?: string | undefined;
+  scope?: Scope | undefined;
+  pageKind?: PageKind | undefined;
   refresh?: { on: boolean; toggleHref: string; seconds: number } | undefined;
   /** Scheme and host of the request, for exports that need absolute links. */
   origin?: string | undefined;
-  /** The run the collaboration and graph links target: this page's run, else the newest. */
-  navRun?: string | undefined;
-  /** The swarm this page's run belongs to, or the live swarm; the nav links to it. */
-  swarmId?: string | undefined;
   /** Rendering for the static export: no refresh, no export control, native disclosure. */
   export?: boolean | undefined;
 }
@@ -59,7 +70,7 @@ const CSS =
   "table{border-collapse:collapse;margin:4px 0}" +
   "th,td{border:1px solid #000;padding:2px 6px;vertical-align:top;text-align:left}" +
   "th{background:#eee}pre{white-space:pre-wrap;word-break:break-word;margin:0}" +
-  "nav a{margin-right:8px}.r{text-align:right}h1,h2{font-size:13px;margin:8px 0 4px}" +
+  "nav{margin:2px 0}nav a,nav b{margin-right:8px}.scope{margin:2px 0}.scope a,.scope b{margin-right:6px}.r{text-align:right}h1,h2{font-size:13px;margin:8px 0 4px}" +
   "details>summary{cursor:pointer}a{color:#000}footer{margin-top:16px;color:#666}footer a{color:#666}" +
   ".export{position:absolute;top:8px;right:8px;line-height:0}" +
   ".modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7)}" +
@@ -128,33 +139,77 @@ function memberHref(runId: string, member: string): string {
   return `${runHref(runId)}/members/${encodeURIComponent(member)}`;
 }
 
-function runLinks(run: string | undefined): string {
-  if (!run) return "";
-  return link(`${runHref(run)}/collaboration`, "collaboration") + link(`${runHref(run)}/graph`, "graph");
-}
-
 function swarmHref(swarmId: string): string {
   return `/swarms/${encodeURIComponent(swarmId)}`;
 }
 
+/** The path every scoped link starts from: `` for the project, `/runs/<id>`, or `/swarms/<id>`. */
+function scopeBase(scope: Scope | undefined): string {
+  if (scope?.kind === "run") return runHref(scope.runId);
+  if (scope?.kind === "swarm") return swarmHref(scope.swarmId);
+  return "";
+}
+
+/** The run a page's member names link into; none in the project or swarm scope. */
+function scopeRunId(ctx: RenderContext): string | undefined {
+  return ctx.scope?.kind === "run" ? ctx.scope.runId : undefined;
+}
+
+const LEDGER_PAGES = ["ideas", "board", "findings", "claims", "facts", "resources"] as const;
+
+/** The project scope has its ledgers only; a run or swarm also has an overview, collaboration and graph. */
+function pagesOf(scope: Scope | undefined): PageKind[] {
+  return scope === undefined || scope.kind === "project"
+    ? [...LEDGER_PAGES]
+    : ["overview", ...LEDGER_PAGES, "collaboration", "graph"];
+}
+
+/** The same page type under another base; pages a scope does not share fall back to its overview. */
+function pageHref(base: string, kind: PageKind | undefined): string {
+  if (kind === undefined || kind === "overview" || kind === "other") return base || "/";
+  return `${base}/${kind}`;
+}
+
+/** The current item is shown, not linked. */
+function navItem(href: string, text: string, current: boolean): string {
+  return current ? `<b>${e(text)}</b>` : link(href, text);
+}
+
+/** `all | h1 | h2 ...` for a swarm or one of its hordes; each tab keeps the page type. */
+function hordeTabs(swarmId: string, hordes: SwarmHorde[], current: string | undefined, kind: PageKind | undefined): string {
+  const tabs = [
+    navItem(pageHref(swarmHref(swarmId), kind), "all", current === undefined),
+    ...hordes.map((horde) => navItem(pageHref(runHref(horde.runId), kind), horde.label, horde.runId === current)),
+  ];
+  return ` hordes: ${tabs.join(" ")}`;
+}
+
+/** The scope line: what this page is about, and inside a swarm the tabs to move between hordes. */
+function scopeLine(ctx: RenderContext): string {
+  const scope = ctx.scope;
+  if (scope === undefined || scope.kind === "project") {
+    return `<p class="scope">scope: <b>project</b> (the ledgers single runs share)</p>`;
+  }
+  if (scope.kind === "swarm") {
+    return `<p class="scope">scope: <b>swarm ${e(scope.swarmId)}</b>${hordeTabs(scope.swarmId, scope.hordes, undefined, ctx.pageKind)}</p>`;
+  }
+  if (!scope.swarm) return `<p class="scope">scope: <b>run ${e(scope.runId)}</b></p>`;
+  const horde = scope.swarm.hordes.find((h) => h.runId === scope.runId)?.label ?? "horde";
+  return (
+    `<p class="scope">scope: ${link(swarmHref(scope.swarm.id), `swarm ${scope.swarm.id}`)} &rsaquo; <b>${e(horde)}</b>` +
+    `${hordeTabs(scope.swarm.id, scope.swarm.hordes, scope.runId, ctx.pageKind)}</p>`
+  );
+}
+
 /**
- * On a swarm page (a swarm is in context and no single run is) the ledger links point at the
- * swarm-wide aggregate `/swarms/<id>/<ledger>`, which shows every horde's ledger under its own
- * heading. Elsewhere they carry `run` when a run is in context, so board, findings and facts
- * filter by it and every ledger page reads that run's (or horde's) own ledgers.
+ * Three rows: `runs` to the index, the scope line, and the page row. Every link in the page row is
+ * built from the page's own scope, so nothing silently points at some other run.
  */
 function nav(ctx: RenderContext): string {
-  const swarmScope = ctx.swarmId !== undefined && ctx.runId === undefined;
-  const base = swarmScope ? swarmHref(ctx.swarmId!) : "";
-  const run = ctx.runId ?? ctx.activeId;
-  const q = swarmScope || !run ? "" : query({ run });
-  const ledger = (name: string): string => link(`${base}/${name}${q}`, name);
-  const swarm = ctx.swarmId ? link(swarmHref(ctx.swarmId), "swarm") : "";
-  return (
-    `<nav>${link("/", "runs")}${swarm}${ledger("ideas")}${ledger("board")}` +
-    `${ledger("findings")}${ledger("claims")}${ledger("facts")}` +
-    `${ledger("resources")}${runLinks(ctx.navRun ?? run)}</nav>`
-  );
+  const base = scopeBase(ctx.scope);
+  const pages = pagesOf(ctx.scope).map((kind) => navItem(pageHref(base, kind), kind, kind === ctx.pageKind));
+  const onIndex = (ctx.href ?? "").split("?")[0] === "/";
+  return `<nav>${navItem("/", "runs", onIndex)}</nav>${scopeLine(ctx)}<nav>${pages.join("")}</nav>`;
 }
 
 /** An id cell that deep links, including the run graph, can target. */
@@ -174,7 +229,8 @@ function messageThread(m: PeerMessage): string {
   return lines.join("\n");
 }
 
-export function renderCollaboration(vm: CollaborationVm, ctx: RenderContext): string {
+/** Acceptance, requests, artifacts, reviews, resources and metrics; the event audit only on a run's own page. */
+function collaborationBody(vm: CollaborationVm, withAudit: boolean): string {
   const { report } = vm;
   const { state } = report;
   const messages = table(["request", "owner", "state / age", "target", "question / response"], state.messages.map((m) => [
@@ -183,12 +239,27 @@ export function renderCollaboration(vm: CollaborationVm, ctx: RenderContext): st
   ]));
   const reviews = table(["review", "target revision", "verdict", "scope / evidence"], state.reviews.map((r) => [`${anchor(r.id)} @${e(r.actor)}`, e(`${r.target}@${r.revision}`), e(`${r.verdict} [${r.support}]`), pre(`Checked: ${r.checked}\nUnchecked: ${r.unchecked || "none declared"}\nLimits: ${r.limits || "none disclosed"}\nEvidence: ${r.evidence.join(", ")}${r.reattests ? `\nReattests: ${r.reattests}` : ""}\n${r.text}`)]));
   const artifacts = table(["artifact", "hash / dependencies", "acceptance"], state.artifacts.map((a) => [`${anchor(a.id)} ${e(`${a.path} @${a.owner} (${a.kind ?? "runnable"})`)}`, pre(`${a.hash}\n${JSON.stringify(a.dependencies)}`), e(report.acceptedArtifacts.includes(a.id) ? "accepted" : "excluded / needs review")]));
-  const events = vm.events.map((event) => `<div id="${e(event.eventId)}">${details(`${event.eventId} ${event.at} ${event.actor}/${event.attempt} ${event.action} ${event.outcome}`, pre(JSON.stringify(event, null, 2)), `event:${report.runId}:${event.eventId}`)}</div>`).join("");
-  return page(`Collaboration ${report.runId}`, [{ text: "runs", href: "/" }, { text: report.runId, href: runHref(report.runId) }, { text: "collaboration" }],
+  const summary =
     (vm.historical ? "<p>Historical run: no delivery/revision history was recorded.</p>" : "") +
     `<h2>Acceptance issues</h2>${pre(report.issues.join("\n") || "none recorded")}<h2>Requests</h2>${messages}<h2>Artifacts</h2>${artifacts}<h2>Reviews</h2>${reviews}` +
-    `<h2>Resource readiness and leases</h2>${pre(JSON.stringify(state.resources, null, 2))}<h2>Metrics</h2>${pre(JSON.stringify(report.metrics, null, 2))}<h2>Event audit</h2>${events}` +
-    (vm.next !== undefined ? link(`${runHref(report.runId)}/collaboration?from=${vm.next}`, "next 100 events") : ""), ctx);
+    `<h2>Resource readiness and leases</h2>${pre(JSON.stringify(state.resources, null, 2))}<h2>Metrics</h2>${pre(JSON.stringify(report.metrics, null, 2))}`;
+  if (!withAudit) {
+    return `${summary}<p>${link(`${runHref(report.runId)}/collaboration`, "event audit")} on the horde's own page</p>`;
+  }
+  const events = vm.events.map((event) => `<div id="${e(event.eventId)}">${details(`${event.eventId} ${event.at} ${event.actor}/${event.attempt} ${event.action} ${event.outcome}`, pre(JSON.stringify(event, null, 2)), `event:${report.runId}:${event.eventId}`)}</div>`).join("");
+  return `${summary}<h2>Event audit</h2>${events}` +
+    (vm.next !== undefined ? link(`${runHref(report.runId)}/collaboration?from=${vm.next}`, "next 100 events") : "");
+}
+
+export function renderCollaboration(vm: CollaborationVm, ctx: RenderContext): string {
+  const runId = vm.report.runId;
+  const crumbs = [{ text: "runs", href: "/" }, { text: runId, href: runHref(runId) }, { text: "collaboration" }];
+  return page(`Collaboration ${runId}`, crumbs, collaborationBody(vm, true), ctx);
+}
+
+/** Each horde's acceptance, requests and reviews, under per-horde headings. */
+export function renderSwarmCollaboration(vm: SwarmLedgerVm<CollaborationVm>, ctx: RenderContext): string {
+  return swarmLedgerPage("collaboration", vm, (section) => collaborationBody(section, false), ctx);
 }
 
 function crumbLine(crumbs: Crumb[]): string {
@@ -589,7 +660,7 @@ function ideaRows(ideas: Idea[], ctx: RenderContext): string[][] {
   return ideas.map((idea) => [
     `<span id="idea-${idea.id}">#${idea.id}</span>`,
     e(idea.text),
-    idea.owner ? authorLink(idea.owner, ctx.activeId) : "",
+    idea.owner ? authorLink(idea.owner, scopeRunId(ctx)) : "",
     e(idea.note ?? ""),
   ]);
 }
@@ -604,25 +675,19 @@ function ideasBody(vm: IdeasVm, ctx: RenderContext): string {
 }
 
 export function renderIdeas(vm: IdeasVm, ctx: RenderContext): string {
+  const base = `${scopeBase(ctx.scope)}/ideas`;
   const filters = [
-    vm.owner ? link("/ideas", "all") : "all",
-    ...vm.owners.map((o) => (o === vm.owner ? e(o) : link(`/ideas${query({ owner: o })}`, o))),
+    vm.owner ? link(base, "all") : "all",
+    ...vm.owners.map((o) => (o === vm.owner ? e(o) : link(`${base}${query({ owner: o })}`, o))),
   ];
   return page("ideas", [{ text: "ideas" }], `<p>owner: ${filters.join(" ")}</p>${ideasBody(vm, ctx)}`, ctx);
-}
-
-function runPicker(base: string, current: string, runs: string[], extra: Record<string, string | undefined>): string {
-  const items = ["all", ...runs].map((run) =>
-    run === current ? e(run) : link(`${base}${query({ ...extra, run })}`, run),
-  );
-  return `<p>run: ${items.join(" ")}</p>`;
 }
 
 function boardBody(vm: BoardVm, ctx: RenderContext): string {
   const rows = vm.entries.map((entry: BoardEntry) => [
     entry.runId ? link(runHref(entry.runId), entry.runId) : "",
     e(entry.time),
-    authorLink(entry.author, entry.runId || ctx.activeId),
+    authorLink(entry.author, entry.runId || scopeRunId(ctx)),
     pre(entry.text),
   ]);
   return table(["run", "time", "author", "message"], rows, "no posts");
@@ -631,14 +696,14 @@ function boardBody(vm: BoardVm, ctx: RenderContext): string {
 export function renderBoard(vm: BoardVm, ctx: RenderContext): string {
   const other = vm.order === "newest" ? "oldest" : "newest";
   const body =
-    runPicker("/board", vm.run, vm.runs, { order: vm.order }) +
-    `<p>order: ${vm.order} ${link(`/board${query({ run: vm.run, order: other })}`, `[${other} first]`)}</p>` +
+    `<p>order: ${vm.order} ${link(`${scopeBase(ctx.scope)}/board${query({ order: other })}`, `[${other} first]`)}</p>` +
     boardBody(vm, ctx);
   return page("board", [{ text: "board" }], body, ctx);
 }
 
-function findingsHref(vm: FindingsVm, open: number[]): string {
-  return `/findings${query({ run: vm.run, view: vm.view, open: open.length > 0 ? open.join(",") : undefined })}`;
+/** The findings page of the scope this finding is shown in, with a body opened or closed. */
+function findingsHref(vm: FindingsVm, ctx: RenderContext, open: number[]): string {
+  return `${scopeBase(ctx.scope)}/findings${query({ view: vm.view, open: open.length > 0 ? open.join(",") : undefined })}`;
 }
 
 /** The body is expanded when its id is in the URL, so the state survives auto-refresh; the export shows it inline. */
@@ -646,13 +711,14 @@ function findingBody(f: FindingEntry, vm: FindingsVm, ctx: RenderContext): strin
   if (!f.body) return "";
   if (ctx.export) return pre(f.body);
   if (vm.open.includes(f.id)) {
-    return pre(f.body) + link(findingsHref(vm, vm.open.filter((id) => id !== f.id)), "[hide body]");
+    return pre(f.body) + link(findingsHref(vm, ctx, vm.open.filter((id) => id !== f.id)), "[hide body]");
   }
-  return ` ${link(findingsHref(vm, [...vm.open, f.id]), "[show body]")}`;
+  return ` ${link(findingsHref(vm, ctx, [...vm.open, f.id]), "[show body]")}`;
 }
 
 function findingRow(f: FindingEntry, vm: FindingsVm, ctx: RenderContext): string[] {
-  const idea = f.ideaId === undefined ? "" : link(`/ideas#idea-${f.ideaId}`, `#${f.ideaId}`);
+  const ideas = f.runId ? `${runHref(f.runId)}/ideas` : "/ideas";
+  const idea = f.ideaId === undefined ? "" : link(`${ideas}#idea-${f.ideaId}`, `#${f.ideaId}`);
   const authors = [f.author, ...f.corroborators].map((a) => authorLink(a, f.runId)).join(", ");
   const title = (f.supersededBy !== undefined ? "<b>SUPERSEDED</b> " : "") + e(f.title);
   return [
@@ -696,8 +762,7 @@ export function renderFindings(vm: FindingsVm, ctx: RenderContext): string {
   const other = vm.view === "list" ? "clusters" : "list";
   const open = vm.open.length > 0 ? vm.open.join(",") : undefined;
   const body =
-    runPicker("/findings", vm.run, vm.runs, { view: vm.view, open }) +
-    `<p>view: ${vm.view} ${link(`/findings${query({ run: vm.run, view: other, open })}`, `[${other}]`)}</p>` +
+    `<p>view: ${vm.view} ${link(`${scopeBase(ctx.scope)}/findings${query({ view: other, open })}`, `[${other}]`)}</p>` +
     findingsBody(vm, ctx);
   return page("findings", [{ text: "findings" }], body, ctx);
 }
@@ -709,7 +774,7 @@ function claimsBody(vm: ClaimsVm, ctx: RenderContext): string {
         `<h2>${e(group.state)} (${group.claims.length})</h2>` +
         table(
           ["id", "statement", "owner", "notes"],
-          group.claims.map((c: ClaimEntry) => [anchor(`C${c.id}`), e(c.statement), authorLink(c.owner, ctx.activeId), e(c.notes.join(" | "))]),
+          group.claims.map((c: ClaimEntry) => [anchor(`C${c.id}`), e(c.statement), authorLink(c.owner, scopeRunId(ctx)), e(c.notes.join(" | "))]),
         ),
     )
     .join("");
@@ -724,7 +789,7 @@ function factRows(facts: FactEntry[], ctx: RenderContext): string[][] {
   return facts.map((f) => [
     anchor(`T${f.id}`),
     e(f.text),
-    authorLink(f.author, ctx.activeId),
+    authorLink(f.author, scopeRunId(ctx)),
     f.deltaOf === undefined ? "" : `T${f.deltaOf}`,
   ]);
 }
@@ -746,10 +811,10 @@ function resourcesBody(vm: ResourcesVm, ctx: RenderContext): string {
   const rows = vm.resources.map((resource) => [
     anchor(`R${resource.id}`),
     e(resource.name),
-    authorLink(resource.owner, ctx.activeId),
+    authorLink(resource.owner, scopeRunId(ctx)),
     e(resource.note ?? ""),
-    resource.reusers.map((name) => authorLink(name, ctx.activeId)).join(", "),
-    resource.citedBy.map((name) => authorLink(name, ctx.activeId)).join(", "),
+    resource.reusers.map((name) => authorLink(name, scopeRunId(ctx))).join(", "),
+    resource.citedBy.map((name) => authorLink(name, scopeRunId(ctx))).join(", "),
     e(resource.cleanup ?? ""),
   ]);
   const scope = vm.run
@@ -774,12 +839,16 @@ function swarmLedgerPage<T>(
   ctx: RenderContext,
 ): string {
   const crumbs: Crumb[] = [{ text: "runs", href: "/" }, { text: `swarm ${vm.swarmId}`, href: swarmHref(vm.swarmId) }, { text: kind }];
+  // Links inside a section (member names, finding bodies, idea anchors) belong to that horde.
+  const sectionCtx = (runId: string): RenderContext => ({ ...ctx, scope: { kind: "run", runId } });
   const inner =
     vm.sections.length === 0
       ? "<p>this swarm has no hordes</p>"
       : `<p>${kind} across ${vm.sections.length} hordes; ids repeat per horde, so each section is one horde's ledger</p>` +
         vm.sections
-          .map((section) => `<h2>${e(section.label)} &mdash; ${link(runHref(section.runId), section.runId)}</h2>${body(section.vm, ctx)}`)
+          .map((section) =>
+            `<h2>${e(section.label)} &mdash; ${link(pageHref(runHref(section.runId), ctx.pageKind), section.runId)}</h2>` +
+            body(section.vm, sectionCtx(section.runId)))
           .join("");
   return page(kind, crumbs, inner, ctx);
 }

@@ -370,11 +370,6 @@ function runIdsOnDisk(src: DashboardSource): string[] {
   return [...new Set([...own, ...swarmRuns])].sort().reverse();
 }
 
-/** The run the nav's per-run links point at when the page itself names none: live first, then newest. */
-export function latestRunId(src: DashboardSource): string | undefined {
-  return src.getActive()[0]?.id ?? src.getFinalizing?.()[0]?.id ?? runIdsOnDisk(src)[0];
-}
-
 function swarmFilePresence(dir: string): Record<SwarmFile, boolean> {
   const files = {} as Record<SwarmFile, boolean>;
   for (const name of SWARM_FILES) files[name] = fs.existsSync(path.join(dir, `${name}.md`));
@@ -703,6 +698,11 @@ function runDirFor(src: DashboardSource, runId: string): string {
   return activeIf(src, runId)?.runDir ?? resolveRunDir(src, runId);
 }
 
+/** Throws 400 for a malformed run id and 404 for one that is neither live nor on disk. */
+export function requireRun(src: DashboardSource, runId: string): void {
+  runDirFor(src, runId);
+}
+
 function logLines(runDir: string, name: string): string[] {
   const content = readOptional(path.join(runDir, `${name}.log`)) ?? "";
   return content === "" ? [] : content.replace(/\n$/, "").split("\n");
@@ -939,16 +939,14 @@ function validRunFilter(run: RunFilter): RunFilter {
 export interface BoardVm {
   run: RunFilter;
   order: "newest" | "oldest";
-  runs: string[];
   entries: BoardEntry[];
 }
 
 export function loadBoard(src: DashboardSource, run: RunFilter, order: "newest" | "oldest"): BoardVm {
   validRunFilter(run);
   const all = listBoard(ledgerDirForFilter(src, run));
-  const runs = Array.from(new Set(all.map((entry) => entry.runId).filter(Boolean)));
   const entries = run === "all" ? all : all.filter((entry) => entry.runId === run);
-  return { run, order, runs, entries: order === "newest" ? [...entries].reverse() : entries };
+  return { run, order, entries: order === "newest" ? [...entries].reverse() : entries };
 }
 
 interface FindingClusterVm {
@@ -961,7 +959,6 @@ interface FindingClusterVm {
 export interface FindingsVm {
   run: RunFilter;
   view: "list" | "clusters";
-  runs: string[];
   findings: FindingEntry[];
   clusters?: FindingClusterVm[] | undefined;
   reviewStates?: Record<number, string>;
@@ -996,7 +993,7 @@ export function loadFindings(
     const check = findingReviewState(f, state?.reviews, state?.messages);
     return [f.id, `${check.status}${check.reviews.length ? ` (${check.reviews.map((r) => `${r.id}:${r.support}`).join(", ")})` : ""}`];
   }));
-  return { run, view, runs, findings, clusters, open, reviewStates };
+  return { run, view, findings, clusters, open, reviewStates };
 }
 
 const CLAIM_STATE_ORDER: ClaimState[] = ["open", "confirmed", "contested", "unverified", "retracted", "superseded"];
@@ -1185,14 +1182,14 @@ export function loadSwarm(src: DashboardSource, swarmId: string): SwarmVm {
   };
 }
 
-/** One horde of a swarm, for aggregating its ledgers on one page. */
-interface SwarmLedger {
+/** One horde of a swarm: its tab label and its run. */
+export interface SwarmHorde {
   label: string;
   runId: string;
 }
 
 /** The swarm's hordes in order, `h1` first; throws when the swarm does not exist. */
-function swarmLedgers(src: DashboardSource, swarmId: string): SwarmLedger[] {
+export function swarmHordes(src: DashboardSource, swarmId: string): SwarmHorde[] {
   validSwarmId(swarmId);
   const live = liveSwarmIf(src, swarmId);
   if (!live && !fs.existsSync(swarmDir(src, swarmId))) throw new DashboardError(404, `no swarm ${swarmId}`);
@@ -1203,11 +1200,16 @@ function swarmLedgers(src: DashboardSource, swarmId: string): SwarmLedger[] {
 /** A ledger page aggregated across a swarm: one section per horde, each the normal per-horde view. */
 export interface SwarmLedgerVm<T> {
   swarmId: string;
-  sections: Array<SwarmLedger & { vm: T }>;
+  sections: Array<SwarmHorde & { vm: T }>;
 }
 
 function swarmSections<T>(src: DashboardSource, swarmId: string, perHorde: (runId: string) => T): SwarmLedgerVm<T> {
-  return { swarmId, sections: swarmLedgers(src, swarmId).map((l) => ({ ...l, vm: perHorde(l.runId) })) };
+  return { swarmId, sections: swarmHordes(src, swarmId).map((l) => ({ ...l, vm: perHorde(l.runId) })) };
+}
+
+/** Each horde's collaboration state on one page; the event audit stays on the horde's own page. */
+export function loadSwarmCollaboration(src: DashboardSource, swarmId: string): SwarmLedgerVm<CollaborationVm> {
+  return swarmSections(src, swarmId, (runId) => loadCollaboration(src, runId));
 }
 
 export function loadSwarmIdeas(src: DashboardSource, swarmId: string, owner?: string): SwarmLedgerVm<IdeasVm> {

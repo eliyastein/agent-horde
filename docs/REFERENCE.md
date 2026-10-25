@@ -78,9 +78,17 @@ Every page has a JSON twin under `/api/<same path>`. The footer of every page na
 agent-horde version from its package.json and, when it runs from a git checkout, the commit it is
 at (`-dirty` when the tree has uncommitted changes), linked to the commit on GitHub.
 
+Every page belongs to one scope, fixed by its URL: the **project** (`/` and the bare ledger paths,
+the ledgers single runs share), one **run** (`/runs/<id>/...`), or one **swarm**
+(`/swarms/<id>/...`). Under the `runs` link a scope line names the scope, and a page row offers that
+scope's pages (overview, the six ledgers, collaboration, graph; the project has the ledgers only),
+with the current page marked. Inside a swarm the scope line adds horde tabs, `all | h1 | h2 ...`,
+that keep the page type: from h2's findings, h3 opens h3's findings and `all` the swarm's. A horde's
+pages are its run's pages, `/runs/<swarm-id>-h2/...`. No link falls back to another run.
+
 | page | shows |
 |------|-------|
-| `/` | every run: active marker, start, count, model, outcome, prompt, files present |
+| `/` | every swarm and run: state (active, finalizing, pending, finished, not started), start, count, model, outcome, prompt, files present |
 | `/runs/<id>` | prompt, outcome, canary, clean-stop countdown, plan layers, members table, run files |
 | `/runs/<id>/members/<m>` | live activity, last and final text, log tail (`?tail=<n>`), transcript link |
 | `/runs/<id>/members/<m>/log` | the member log; `tail=0` is the whole file (1 MiB cap) |
@@ -90,16 +98,27 @@ at (`-dirty` when the tree has uncommitted changes), linked to the commit on Git
 | `/runs/<id>/collaboration` | messages, review scope, artifact acceptance, resources, event audit |
 | `/runs/<id>/graph` | the run as a swimlane: one lane per member plus the parent, phase bands, every event a link to its ledger entry (`?w=<px>`, `?from=<s>&to=<s>`); the axis is real time until the last member exits, then the synthesis phases share a compressed tail |
 | `/runs/<id>/graph.mmd` | the same run as a Mermaid flowchart with absolute dashboard links (text/plain) |
-| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them; `/resources` also lists who cited each resource in the active run, as REPORT.md counts reuse |
+| `/runs/<id>/ideas`, `board`, `findings`, `claims`, `facts`, `resources` | the run's ledgers: a horde's own, or for a single run the project ledgers with board and findings narrowed to the run and facts split into this run and carried; `?view=clusters`, `?owner=<m>`, `?order=oldest` |
+| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the project ledgers across every single run; `/resources` also lists who cited each resource in a live single run, as REPORT.md counts reuse |
+| `/swarms/<id>` | one row per horde (state, outcome, members, findings, accepted artifacts, cost, workstream), the partition, the merge state, swarm files |
+| `/swarms/<id>/ideas`, `board`, `findings`, `claims`, `facts`, `resources`, `collaboration` | every horde's ledger, or its acceptance, requests and reviews, on one page under a per-horde heading; ids repeat per horde, and each horde's event audit stays on its run page |
+| `/swarms/<id>/graph` | one lane per horde with its phase marks, and the merge step |
+| `/swarms/<id>/files/<NAME>` | `SWARM`, `REPORT`, `DELIVERABLE`; 404 until written |
 | `/export` | confirms the export and starts the download of `/export.zip` (`?back=<path>` names the page to return to); no JSON twin |
 | `/export.zip` | the whole dashboard as static HTML (`application/zip`, streamed, no JSON twin); see below |
+
+A page auto-refreshes while what it shows can change: a run's pages while the run is live or
+finalizing, a swarm's while the swarm is in memory, the project ledgers while a single run is
+live, and the index always. A swarm and its hordes show as `pending` from the moment their directories
+are allocated until the hordes have a TASK.md, which covers the minutes the planner takes, and as
+`not started` when the planner could not partition the task.
 
 The download icon in the top-right corner of every page opens a warning that the export may
 leak sensitive data from this machine. Its download link goes to `/export`, which closes the
 warning, explains the wait, and starts the download of `/export.zip`. The zip holds one
 folder, `horde-dashboard-<timestamp>/`, whose `index.html` opens the dashboard from disk: every
 run, member, transcript page and entry, log, run document, collaboration page, graph (each width,
-plus the Mermaid file), and the ledgers under each run filter, with links rewritten relative to
+plus the Mermaid file), and the ledgers of every scope, with links rewritten relative to
 each other. Exported pages do not refresh, expandable entries use the browser's own disclosure,
 finding bodies are shown inline, transcripts are paged fifty entries at a time, and the export
 control itself is absent. Pages that fail to load are exported as their error page, so no link
@@ -307,16 +326,9 @@ with per-horde members, turns, tokens, cost, findings and outcome. One swarm rep
 the parent conversation instead of one per horde. No horde reviews another's work; a verification
 pass over the merged deliverable is not built.
 
-**Dashboard and widget.** The index lists swarms above runs and tags each swarm run; `/swarms/<id>`
-has one row per horde linking to the run pages, the partition and the merge state, and
-`/swarms/<id>/graph` draws one lane per horde with its phase marks and the merge step in a swarm
-lane. From a swarm page the nav's ledger links point at `/swarms/<id>/<ledger>` (ideas, board,
-findings, claims, facts, resources), which shows every horde's ledger on one page under a per-horde
-heading, since the hordes keep separate ledgers and reuse ids. Run pages resolve swarm run ids to
-their horde directory, and every ledger page reads a horde's ledgers when `run=<swarm-run-id>` is
-given. A swarm and its hordes show as `pending` from the moment their directories are allocated
-until the hordes have a TASK.md, which covers the minutes the planner takes; a swarm the planner
-could not partition shows `not started`. The widget shows one line per horde.
+**Dashboard and widget.** Each swarm has its own scope in the dashboard, with horde tabs and
+swarm-wide ledger, collaboration and graph pages; see [Dashboard](#dashboard). The widget shows one
+line per horde.
 
 ## Finding metadata
 

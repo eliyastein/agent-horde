@@ -1,7 +1,6 @@
 import * as http from "node:http";
 import {
   DashboardError,
-  latestRunId,
   listRunSessions,
   listRuns,
   loadBoard,
@@ -21,6 +20,7 @@ import {
   loadSwarm,
   loadSwarmBoard,
   loadSwarmClaims,
+  loadSwarmCollaboration,
   loadSwarmFacts,
   loadSwarmFile,
   loadSwarmFindings,
@@ -30,7 +30,8 @@ import {
   loadTranscript,
   loadTranscriptEntry,
   MEMBER_RE,
-  RUN_ID_RE,
+  requireRun,
+  swarmHordes,
   swarmOfRun,
 } from "./dashboard-data.js";
 import type { DashboardSource, GraphView } from "./dashboard-data.js";
@@ -55,6 +56,7 @@ import {
   renderSwarm,
   renderSwarmBoard,
   renderSwarmClaims,
+  renderSwarmCollaboration,
   renderSwarmFacts,
   renderSwarmFindings,
   renderSwarmGraph,
@@ -63,7 +65,7 @@ import {
   renderTranscript,
   renderTranscriptEntry,
 } from "./dashboard-html.js";
-import type { RenderContext } from "./dashboard-html.js";
+import type { PageKind, RenderContext, Scope } from "./dashboard-html.js";
 import { collect, exportDashboard } from "./dashboard-export.js";
 import type { ExportPage } from "./dashboard-export.js";
 
@@ -90,6 +92,10 @@ interface Route {
   live: (vm: unknown, src: DashboardSource, params: string[], query: URLSearchParams) => boolean;
   load: (src: DashboardSource, params: string[], query: URLSearchParams) => unknown;
   render: (vm: never, ctx: RenderContext) => string;
+  /** What the page is about; params[0] is the run or swarm id for those scopes. */
+  scope: "project" | "run" | "swarm";
+  /** Which page-row item the page is, so the nav can mark it and horde tabs can keep it. */
+  page: PageKind;
   /** Serve the renderer's output as text/plain instead of a page. */
   text?: boolean;
 }
@@ -121,17 +127,19 @@ function queryFrom(query: URLSearchParams): number | "last" {
   return query.get("from") === "last" ? "last" : queryInt(query, "from", 0, 999_999_999, 0);
 }
 
-function queryRun(query: URLSearchParams): string {
-  const value = query.get("run") ?? "all";
-  if (value !== "all" && !RUN_ID_RE.test(value)) throw new DashboardError(400, `invalid run: ${value}`);
-  return value;
-}
-
 function queryOwner(query: URLSearchParams): string | undefined {
   const value = query.get("owner");
   if (value === null || value === "") return undefined;
   if (value !== "parent" && !MEMBER_RE.test(value)) throw new DashboardError(400, `invalid owner: ${value}`);
   return value;
+}
+
+function queryOrder(query: URLSearchParams): "newest" | "oldest" {
+  return queryEnum(query, "order", ["newest", "oldest"] as const, "newest");
+}
+
+function queryView(query: URLSearchParams): "list" | "clusters" {
+  return queryEnum(query, "view", ["list", "clusters"] as const, "list");
 }
 
 function isActive(src: DashboardSource, runId: string | undefined): boolean {
@@ -142,20 +150,23 @@ function isFinalizing(src: DashboardSource, runId: string | undefined): boolean 
   return runId !== undefined && (src.getFinalizing?.() ?? []).some((run) => run.id === runId);
 }
 
+function isRunLive(src: DashboardSource, runId: string): boolean {
+  return isActive(src, runId) || isFinalizing(src, runId);
+}
+
 /** A swarm page is live while the swarm is in memory: members running or the merge step pending. */
 function isSwarmLive(src: DashboardSource, swarmId: string | undefined): boolean {
   return swarmId !== undefined && src.getSwarm?.()?.id === swarmId;
 }
 
+/** The project ledgers change while a single run (one writing to the project `.horde`) is live. */
+function isProjectLive(src: DashboardSource): boolean {
+  return src.getActive().some((run) => run.hordeDir === src.hordeDir);
+}
+
 function memberRunning(src: DashboardSource, runId: string, member: string): boolean {
   const state = src.getActive().find((run) => run.id === runId)?.members.find((m) => m.name === member);
   return state !== undefined && (state.status === "running" || state.status === "starting");
-}
-
-/** An optional `run` on a ledger page: picks a swarm horde's ledgers, else the project's. */
-function queryLedgerRun(query: URLSearchParams): string | undefined {
-  const run = queryRun(query);
-  return run === "all" ? undefined : run;
 }
 
 const p = (params: string[], i: number): string => params[i] ?? "";
@@ -171,84 +182,112 @@ function graphView(query: URLSearchParams): GraphView {
   };
 }
 
-const ROUTES: Route[] = [
+const LEDGERS = ["ideas", "board", "findings", "claims", "facts", "resources"] as const;
+type Ledger = (typeof LEDGERS)[number];
+
+/** A ledger page for the project (`run` undefined) or for one run, which may be a swarm horde. */
+const LEDGER_LOAD: Record<Ledger, (src: DashboardSource, run: string | undefined, query: URLSearchParams) => unknown> = {
+  ideas: (src, run, query) => loadIdeas(src, queryOwner(query), run),
+  board: (src, run, query) => loadBoard(src, run ?? "all", queryOrder(query)),
+  findings: (src, run, query) => loadFindings(src, run ?? "all", queryView(query), queryIds(query, "open")),
+  claims: (src, run) => loadClaims(src, run),
+  facts: (src, run) => loadFacts(src, run),
+  resources: (src, run) => loadResources(src, run),
+};
+
+const SWARM_LEDGER_LOAD: Record<Ledger, (src: DashboardSource, swarmId: string, query: URLSearchParams) => unknown> = {
+  ideas: (src, swarmId, query) => loadSwarmIdeas(src, swarmId, queryOwner(query)),
+  board: (src, swarmId, query) => loadSwarmBoard(src, swarmId, queryOrder(query)),
+  findings: (src, swarmId, query) => loadSwarmFindings(src, swarmId, queryView(query), queryIds(query, "open")),
+  claims: (src, swarmId) => loadSwarmClaims(src, swarmId),
+  facts: (src, swarmId) => loadSwarmFacts(src, swarmId),
+  resources: (src, swarmId) => loadSwarmResources(src, swarmId),
+};
+
+const LEDGER_RENDER: Record<Ledger, Route["render"]> = {
+  ideas: renderIdeas, board: renderBoard, findings: renderFindings, claims: renderClaims, facts: renderFacts, resources: renderResources,
+};
+
+const SWARM_LEDGER_RENDER: Record<Ledger, Route["render"]> = {
+  ideas: renderSwarmIdeas, board: renderSwarmBoard, findings: renderSwarmFindings,
+  claims: renderSwarmClaims, facts: renderSwarmFacts, resources: renderSwarmResources,
+};
+
+/** Every ledger page in its three scopes: `/<ledger>`, `/runs/<id>/<ledger>`, `/swarms/<id>/<ledger>`. */
+function ledgerRoutes(): Route[] {
+  return LEDGERS.flatMap((kind): Route[] => [
+    {
+      pattern: new RegExp(`^/${kind}$`), scope: "project", page: kind,
+      live: (_vm, src) => isProjectLive(src),
+      load: (src, _params, query) => LEDGER_LOAD[kind](src, undefined, query),
+      render: LEDGER_RENDER[kind],
+    },
+    {
+      pattern: new RegExp(`^/runs/([^/]+)/${kind}$`), scope: "run", page: kind,
+      live: (_vm, src, params) => isRunLive(src, p(params, 0)),
+      load: (src, params, query) => {
+        requireRun(src, p(params, 0));
+        return LEDGER_LOAD[kind](src, p(params, 0), query);
+      },
+      render: LEDGER_RENDER[kind],
+    },
+    {
+      pattern: new RegExp(`^/swarms/([^/]+)/${kind}$`), scope: "swarm", page: kind,
+      live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
+      load: (src, params, query) => SWARM_LEDGER_LOAD[kind](src, p(params, 0), query),
+      render: SWARM_LEDGER_RENDER[kind],
+    },
+  ]);
+}
+
+/** Pages that exist for one run only: members, logs, transcripts, sessions, run files. */
+const RUN_DETAIL_ROUTES: Route[] = [
   {
-    pattern: /^\/$/,
-    live: () => true,
-    load: (src) => listRuns(src),
-    render: renderRunIndex,
-  },
-  {
-    pattern: /^\/runs\/([^/]+)$/,
-    live: (_vm, src, params) => isActive(src, p(params, 0)) || isFinalizing(src, p(params, 0)),
-    load: (src, params) => loadRunOverview(src, p(params, 0)),
-    render: renderRunOverview,
-  },
-  {
-    pattern: /^\/runs\/([^/]+)\/collaboration$/,
-    live: (_vm, src, params) => isActive(src, p(params, 0)),
-    load: (src, params, query) => loadCollaboration(src, p(params, 0), queryInt(query, "from", 0, 999_999_999, 0)),
-    render: renderCollaboration,
-  },
-  {
-    pattern: /^\/runs\/([^/]+)\/graph$/,
-    live: (_vm, src, params) => isActive(src, p(params, 0)) || isFinalizing(src, p(params, 0)),
-    load: (src, params, query) => loadRunGraph(src, p(params, 0), graphView(query)),
-    render: renderGraph,
-  },
-  {
-    pattern: /^\/runs\/([^/]+)\/graph\.mmd$/,
-    live: () => false,
-    load: (src, params) => loadRunGraph(src, p(params, 0), { width: GRAPH_WIDTH_DEFAULT, from: 0, to: 0 }),
-    render: renderGraphMermaid,
-    text: true,
-  },
-  {
-    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)$/,
+    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)$/, scope: "run", page: "other",
     live: (_vm, src, params) => memberRunning(src, p(params, 0), p(params, 1)),
     load: (src, params, query) => loadMemberDetail(src, p(params, 0), p(params, 1), queryInt(query, "tail", 1, 2000, 60)),
     render: renderMemberDetail,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)\/log$/,
+    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)\/log$/, scope: "run", page: "other",
     live: () => false,
     load: (src, params, query) => loadMemberLog(src, p(params, 0), p(params, 1), queryInt(query, "tail", 0, 2000, 500)),
     render: renderMemberLog,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)\/transcript$/,
+    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)\/transcript$/, scope: "run", page: "other",
     live: (_vm, src, params, query) => query.get("from") === "last" && memberRunning(src, p(params, 0), p(params, 1)),
     load: (src, params, query) =>
       loadTranscript(src, p(params, 0), p(params, 1), queryFrom(query), queryInt(query, "n", 1, 200, 50)),
     render: renderTranscript,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)\/transcript\/(\d{1,9})$/,
+    pattern: /^\/runs\/([^/]+)\/members\/([^/]+)\/transcript\/(\d{1,9})$/, scope: "run", page: "other",
     live: () => false,
     load: (src, params) => loadTranscriptEntry(src, p(params, 0), p(params, 1), Number(p(params, 2))),
     render: renderTranscriptEntry,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/sessions$/,
+    pattern: /^\/runs\/([^/]+)\/sessions$/, scope: "run", page: "other",
     live: (_vm, src, params) => isActive(src, p(params, 0)),
     load: (src, params) => listRunSessions(src, p(params, 0)),
     render: renderSessions,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/sessions\/([^/]+)$/,
+    pattern: /^\/runs\/([^/]+)\/sessions\/([^/]+)$/, scope: "run", page: "other",
     live: () => false,
     load: (src, params, query) =>
       loadSessionTranscript(src, p(params, 0), p(params, 1), queryFrom(query), queryInt(query, "n", 1, 200, 50)),
     render: renderTranscript,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/sessions\/([^/]+)\/(\d{1,9})$/,
+    pattern: /^\/runs\/([^/]+)\/sessions\/([^/]+)\/(\d{1,9})$/, scope: "run", page: "other",
     live: () => false,
     load: (src, params) => loadSessionEntry(src, p(params, 0), p(params, 1), Number(p(params, 2))),
     render: renderTranscriptEntry,
   },
   {
-    pattern: /^\/runs\/([^/]+)\/files\/([^/]+)$/,
+    pattern: /^\/runs\/([^/]+)\/files\/([^/]+)$/, scope: "run", page: "other",
     live: () => false,
     load: (src, params) => {
       const vm = loadRunFile(src, p(params, 0), p(params, 1));
@@ -257,20 +296,61 @@ const ROUTES: Route[] = [
     },
     render: renderFile,
   },
+];
+
+const ROUTES: Route[] = [
   {
-    pattern: /^\/swarms\/([^/]+)$/,
+    pattern: /^\/$/, scope: "project", page: "overview",
+    live: () => true,
+    load: (src) => listRuns(src),
+    render: renderRunIndex,
+  },
+  {
+    pattern: /^\/runs\/([^/]+)$/, scope: "run", page: "overview",
+    live: (_vm, src, params) => isRunLive(src, p(params, 0)),
+    load: (src, params) => loadRunOverview(src, p(params, 0)),
+    render: renderRunOverview,
+  },
+  {
+    pattern: /^\/runs\/([^/]+)\/collaboration$/, scope: "run", page: "collaboration",
+    live: (_vm, src, params) => isActive(src, p(params, 0)),
+    load: (src, params, query) => loadCollaboration(src, p(params, 0), queryInt(query, "from", 0, 999_999_999, 0)),
+    render: renderCollaboration,
+  },
+  {
+    pattern: /^\/runs\/([^/]+)\/graph$/, scope: "run", page: "graph",
+    live: (_vm, src, params) => isRunLive(src, p(params, 0)),
+    load: (src, params, query) => loadRunGraph(src, p(params, 0), graphView(query)),
+    render: renderGraph,
+  },
+  {
+    pattern: /^\/runs\/([^/]+)\/graph\.mmd$/, scope: "run", page: "graph",
+    live: () => false,
+    load: (src, params) => loadRunGraph(src, p(params, 0), { width: GRAPH_WIDTH_DEFAULT, from: 0, to: 0 }),
+    render: renderGraphMermaid,
+    text: true,
+  },
+  ...RUN_DETAIL_ROUTES,
+  {
+    pattern: /^\/swarms\/([^/]+)$/, scope: "swarm", page: "overview",
     live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
     load: (src, params) => loadSwarm(src, p(params, 0)),
     render: renderSwarm,
   },
   {
-    pattern: /^\/swarms\/([^/]+)\/graph$/,
+    pattern: /^\/swarms\/([^/]+)\/collaboration$/, scope: "swarm", page: "collaboration",
+    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
+    load: (src, params) => loadSwarmCollaboration(src, p(params, 0)),
+    render: renderSwarmCollaboration,
+  },
+  {
+    pattern: /^\/swarms\/([^/]+)\/graph$/, scope: "swarm", page: "graph",
     live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
     load: (src, params, query) => loadSwarmGraph(src, p(params, 0), graphView(query)),
     render: renderSwarmGraph,
   },
   {
-    pattern: /^\/swarms\/([^/]+)\/files\/([^/]+)$/,
+    pattern: /^\/swarms\/([^/]+)\/files\/([^/]+)$/, scope: "swarm", page: "other",
     live: () => false,
     load: (src, params) => {
       const vm = loadSwarmFile(src, p(params, 0), p(params, 1));
@@ -279,89 +359,7 @@ const ROUTES: Route[] = [
     },
     render: renderFile,
   },
-  {
-    pattern: /^\/swarms\/([^/]+)\/ideas$/,
-    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
-    load: (src, params, query) => loadSwarmIdeas(src, p(params, 0), queryOwner(query)),
-    render: renderSwarmIdeas,
-  },
-  {
-    pattern: /^\/swarms\/([^/]+)\/board$/,
-    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
-    load: (src, params, query) => loadSwarmBoard(src, p(params, 0), queryEnum(query, "order", ["newest", "oldest"] as const, "newest")),
-    render: renderSwarmBoard,
-  },
-  {
-    pattern: /^\/swarms\/([^/]+)\/findings$/,
-    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
-    load: (src, params, query) =>
-      loadSwarmFindings(src, p(params, 0), queryEnum(query, "view", ["list", "clusters"] as const, "list"), queryIds(query, "open")),
-    render: renderSwarmFindings,
-  },
-  {
-    pattern: /^\/swarms\/([^/]+)\/claims$/,
-    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
-    load: (src, params) => loadSwarmClaims(src, p(params, 0)),
-    render: renderSwarmClaims,
-  },
-  {
-    pattern: /^\/swarms\/([^/]+)\/facts$/,
-    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
-    load: (src, params) => loadSwarmFacts(src, p(params, 0)),
-    render: renderSwarmFacts,
-  },
-  {
-    pattern: /^\/swarms\/([^/]+)\/resources$/,
-    live: (_vm, src, params) => isSwarmLive(src, p(params, 0)),
-    load: (src, params) => loadSwarmResources(src, p(params, 0)),
-    render: renderSwarmResources,
-  },
-  {
-    pattern: /^\/ideas$/,
-    live: () => true,
-    load: (src, _params, query) => loadIdeas(src, queryOwner(query), queryLedgerRun(query)),
-    render: renderIdeas,
-  },
-  {
-    pattern: /^\/board$/,
-    live: () => true,
-    load: (src, _params, query) =>
-      loadBoard(src, queryRun(query), queryEnum(query, "order", ["newest", "oldest"] as const, "newest")),
-    render: renderBoard,
-  },
-  {
-    pattern: /^\/findings$/,
-    live: () => true,
-    load: (src, _params, query) =>
-      loadFindings(
-        src,
-        queryRun(query),
-        queryEnum(query, "view", ["list", "clusters"] as const, "list"),
-        queryIds(query, "open"),
-      ),
-    render: renderFindings,
-  },
-  {
-    pattern: /^\/claims$/,
-    live: () => true,
-    load: (src, _params, query) => loadClaims(src, queryLedgerRun(query)),
-    render: renderClaims,
-  },
-  {
-    pattern: /^\/facts$/,
-    live: () => true,
-    load: (src, _params, query) => {
-      const run = queryRun(query);
-      return loadFacts(src, run === "all" ? undefined : run);
-    },
-    render: renderFacts,
-  },
-  {
-    pattern: /^\/resources$/,
-    live: () => true,
-    load: (src, _params, query) => loadResources(src, queryLedgerRun(query)),
-    render: renderResources,
-  },
+  ...ledgerRoutes(),
 ];
 
 function baseHeaders(): Record<string, string> {
@@ -417,16 +415,26 @@ function routeMatch(pathname: string): { route: Route; params: string[] } | unde
   return undefined;
 }
 
-/** The run this page belongs to, the run the nav's collaboration and graph links target, and its swarm. */
-function runContext(src: DashboardSource, url: URL, params: string[]): Pick<RenderContext, "runId" | "navRun" | "swarmId"> {
-  const swarmPage = url.pathname.startsWith("/swarms/") ? params[0] : undefined;
-  const runId = swarmPage === undefined && RUN_ID_RE.test(params[0] ?? "") ? params[0] : undefined;
-  const filterRun = url.searchParams.get("run");
-  const navRun = runId ?? (filterRun && RUN_ID_RE.test(filterRun) ? filterRun : undefined) ?? latestRunId(src);
-  // A swarm of one has no swarm directory and no swarm page.
-  const live = src.getSwarm?.();
-  const swarmId = swarmPage ?? (navRun ? swarmOfRun(navRun)?.swarmId : undefined) ?? (live?.dir !== undefined ? live.id : undefined);
-  return { runId, navRun, swarmId };
+/**
+ * The scope the route declares, filled in from its id. A horde run also carries its swarm's hordes
+ * for the tabs; a swarm that cannot be read leaves the run without tabs rather than failing the page.
+ */
+function scopeOf(src: DashboardSource, route: Route, params: string[]): Scope {
+  if (route.scope === "project") return { kind: "project" };
+  const id = p(params, 0);
+  if (route.scope === "swarm") return { kind: "swarm", swarmId: id, hordes: swarmHordes(src, id) };
+  const swarm = swarmOfRun(id);
+  if (!swarm) return { kind: "run", runId: id };
+  try {
+    return { kind: "run", runId: id, swarm: { id: swarm.swarmId, hordes: swarmHordes(src, swarm.swarmId) } };
+  } catch {
+    return { kind: "run", runId: id };
+  }
+}
+
+/** The page's place in the nav: its scope and which page-row item it is. */
+function pageContext(src: DashboardSource, route: Route, params: string[]): Pick<RenderContext, "scope" | "pageKind"> {
+  return { scope: scopeOf(src, route, params), pageKind: route.page };
 }
 
 /** The export costs seconds of work per request, so pages from other sites may not start one. */
@@ -447,7 +455,7 @@ function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderC
   const on = live && refreshParam !== "0";
   const pageCtx: RenderContext = {
     ...ctx,
-    ...runContext(src, url, params),
+    ...pageContext(src, route, params),
     refresh: live ? { on, toggleHref: refreshToggle(url, on), seconds: REFRESH_SECONDS } : undefined,
   };
   const body = route.render(vm as never, pageCtx);
@@ -457,13 +465,13 @@ function handleRoute(src: DashboardSource, url: URL, json: boolean, ctx: RenderC
 
 /** One page of the static export; errors become pages so no exported link dangles. */
 function exportPage(src: DashboardSource, url: URL): ExportPage {
-  const ctx: RenderContext = { activeId: src.getActive()[0]?.id, href: url.pathname + url.search, export: true };
+  const ctx: RenderContext = { href: url.pathname + url.search, export: true };
   try {
     const matched = routeMatch(url.pathname);
     if (!matched) throw new DashboardError(404, `no such page: ${url.pathname}`);
     const { route, params } = matched;
     const vm = route.load(src, params, url.searchParams);
-    return { body: route.render(vm as never, { ...ctx, ...runContext(src, url, params) }), text: route.text };
+    return { body: route.render(vm as never, { ...ctx, ...pageContext(src, route, params) }), text: route.text };
   } catch (error) {
     const status = error instanceof DashboardError ? error.status : 500;
     const message = error instanceof DashboardError ? error.message : `dashboard error: ${error instanceof Error ? error.message : String(error)}`;
@@ -506,7 +514,6 @@ function exportResponse(src: DashboardSource, url: URL, ctx: RenderContext): Das
 export function routeRequest(src: DashboardSource, method: string, url: URL, host: string | undefined, fetchSite?: string): DashboardResponse {
   const json = url.pathname === "/api" || url.pathname.startsWith("/api/");
   const ctx: RenderContext = {
-    activeId: src.getActive()[0]?.id,
     origin: host ? `http://${host}` : undefined,
     href: url.pathname + url.search,
   };
