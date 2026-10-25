@@ -272,6 +272,23 @@ function diskOutcome(runDir: string): string | undefined {
   return fs.existsSync(path.join(runDir, "SUMMARY.md")) ? "finished" : undefined;
 }
 
+/**
+ * What a run is doing. `pending`: its directory is allocated but TASK.md is not written yet, as
+ * for a swarm's hordes while the planner partitions the task. `finished`: not in memory and past
+ * launch, whatever its REPORT.md says.
+ */
+export type RunState = "active" | "finalizing" | "pending" | "finished";
+
+function runStateOnDisk(runDir: string): "pending" | "finished" {
+  return fs.existsSync(path.join(runDir, "TASK.md")) ? "finished" : "pending";
+}
+
+function runStateOf(live: LiveRun | undefined, fin: LiveRun | undefined, runDir: string): RunState {
+  if (live) return "active";
+  if (fin) return "finalizing";
+  return runStateOnDisk(runDir);
+}
+
 // ---------------------------------------------------------------------------
 // Run index
 // ---------------------------------------------------------------------------
@@ -288,12 +305,17 @@ interface RunIndexRow {
   files: Record<RunFile, boolean>;
   /** The swarm this run is one horde of, when it is. */
   swarm?: string | undefined;
+  state: RunState;
 }
+
+/** A swarm's state adds `not started`: the planner could not partition the task. */
+export type SwarmState = RunState | "not started";
 
 interface SwarmIndexRow {
   id: string;
   active: boolean;
   finalizing: boolean;
+  state: SwarmState;
   started?: string | undefined;
   hordes: number;
   count?: number | undefined;
@@ -314,14 +336,16 @@ function runIndexRow(src: DashboardSource, runId: string): RunIndexRow {
   const task = parseTaskMarkdown(readOptional(path.join(runDir, "TASK.md")) ?? "");
   const live = activeIf(src, runId);
   const fin = live ? undefined : finalizingIf(src, runId);
+  const state = runStateOf(live, fin, runDir);
   return {
     id: runId,
     active: live !== undefined,
     finalizing: fin !== undefined,
+    state,
     started: task.started,
     count: live?.count ?? task.count,
     model: live?.model ?? task.model,
-    outcome: live ? liveOutcome(live) : fin ? "synthesizing" : diskOutcome(runDir),
+    outcome: live ? liveOutcome(live) : fin ? "synthesizing" : state === "pending" ? "pending" : diskOutcome(runDir),
     prompt: live?.prompt ?? task.prompt,
     files: runFilePresence(runDir),
     swarm: swarmOfRun(runId)?.swarmId,
@@ -393,6 +417,24 @@ function swarmRunIds(src: DashboardSource, swarmId: string, live: LiveSwarm | un
   return runIdsOnDisk(src).filter((id) => swarmOfRun(id)?.swarmId === swarmId).sort();
 }
 
+/**
+ * A swarm is `pending` until its hordes have TASK.md (the planner is still partitioning, or the
+ * parent died before launch), `not started` when the planner failed, `active` or `finalizing`
+ * while in memory, and `finished` once launched and no longer in memory.
+ */
+function swarmStateOf(
+  live: LiveSwarm | undefined,
+  record: SwarmRecordOnDisk | undefined,
+  notStarted: string | undefined,
+  hordeStates: RunState[],
+): SwarmState {
+  if (notStarted !== undefined) return "not started";
+  if (live) return hordeStates.includes("active") ? "active" : "finalizing";
+  // `every` is true for no hordes at all, which is pending too.
+  if (record === undefined || hordeStates.every((state) => state === "pending")) return "pending";
+  return "finished";
+}
+
 function swarmIndexRow(src: DashboardSource, swarmId: string): SwarmIndexRow {
   const dir = swarmDir(src, swarmId);
   const live = liveSwarmIf(src, swarmId);
@@ -401,10 +443,12 @@ function swarmIndexRow(src: DashboardSource, swarmId: string): SwarmIndexRow {
   const rows = runIds.map((id) => runIndexRow(src, id));
   const startedAt = live?.startedAt ?? record?.startedAt;
   const notStarted = /^Not started: (.*)$/m.exec(readOptional(path.join(dir, "SWARM.md")) ?? "")?.[1];
+  const active = live !== undefined && rows.some((row) => row.active);
   return {
     id: swarmId,
-    active: live !== undefined && rows.some((row) => row.active),
-    finalizing: live !== undefined && !rows.some((row) => row.active),
+    active,
+    finalizing: live !== undefined && !active,
+    state: swarmStateOf(live, record, notStarted, rows.map((row) => row.state)),
     started: startedAt !== undefined ? formatDateTime(new Date(startedAt)) : undefined,
     hordes: live?.hordes ?? record?.hordes ?? runIds.length,
     count: live?.count ?? record?.count,
@@ -617,7 +661,7 @@ function diskOverview(runId: string, runDir: string): RunOverviewVm {
     count: task.count ?? members.length,
     started: task.started,
     elapsedMs: elapsed.length > 0 ? Math.max(...elapsed) : undefined,
-    outcome: diskOutcome(runDir),
+    outcome: runStateOnDisk(runDir) === "pending" ? "pending" : diskOutcome(runDir),
     cleanStop: cleanStop ? { members: cleanStop.members } : undefined,
     plan: readOptional(path.join(runDir, "PLAN.md"))
       ?.split("\n")
@@ -1030,6 +1074,7 @@ export interface SwarmHordeVm {
   runId: string;
   active: boolean;
   finalizing: boolean;
+  state: RunState;
   outcome?: string | undefined;
   slice?: string | undefined;
   count: number;
@@ -1045,6 +1090,7 @@ export interface SwarmVm {
   id: string;
   active: boolean;
   finalizing: boolean;
+  state: SwarmState;
   notStarted?: string | undefined;
   prompt: string;
   hordes: number;
@@ -1080,11 +1126,13 @@ function swarmHordeVm(src: DashboardSource, runId: string, slice: string | undef
   } catch {
     // A horde whose FINDINGS.md is unreadable reports none.
   }
+  const finalizing = (overview.finalizing?.length ?? 0) > 0;
   return {
     label: `h${swarmOfRun(runId)?.horde ?? "?"}`,
     runId,
     active: overview.active,
-    finalizing: (overview.finalizing?.length ?? 0) > 0,
+    finalizing,
+    state: overview.active ? "active" : finalizing ? "finalizing" : runStateOnDisk(runDir),
     outcome: overview.outcome,
     slice,
     count: overview.count,
@@ -1117,10 +1165,12 @@ export function loadSwarm(src: DashboardSource, swarmId: string): SwarmVm {
   const startedAt = live?.startedAt ?? record?.startedAt;
   const endedAt = live ? undefined : record?.endedAt;
   const notStarted = /^Not started: (.*)$/m.exec(readOptional(path.join(dir, "SWARM.md")) ?? "")?.[1];
+  const active = live !== undefined && rows.some((row) => row.active);
   return {
     id: swarmId,
-    active: live !== undefined && rows.some((row) => row.active),
-    finalizing: live !== undefined && !rows.some((row) => row.active),
+    active,
+    finalizing: live !== undefined && !active,
+    state: swarmStateOf(live, record, notStarted, rows.map((row) => row.state)),
     notStarted,
     prompt: live?.prompt ?? record?.prompt ?? "",
     hordes: live?.hordes ?? record?.hordes ?? rows.length,

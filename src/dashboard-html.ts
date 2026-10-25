@@ -288,11 +288,16 @@ function cost(value: number): string {
   return `$${value.toFixed(4)}`;
 }
 
+/** The state column: a live run stands out; pending, finalizing, finished and not started read as written. */
+function stateCell(state: string): string {
+  return state === "active" ? "<b>ACTIVE</b>" : e(state);
+}
+
 function swarmIndexTable(vm: RunIndexVm): string {
   if (vm.swarms.length === 0) return "";
   const rows = vm.swarms.map((swarm) => [
     link(swarmHref(swarm.id), swarm.id),
-    swarm.active ? "<b>ACTIVE</b>" : swarm.finalizing ? "finalizing" : "finished",
+    stateCell(swarm.state),
     e(swarm.started ?? ""),
     `${swarm.hordes} x ${num(swarm.count) || "?"}`,
     e(swarm.outcomes.map((outcome, index) => `h${index + 1} ${outcome || "?"}`).join(", ")),
@@ -307,7 +312,7 @@ export function renderRunIndex(vm: RunIndexVm, ctx: RenderContext): string {
   const rows = vm.runs.map((run) => [
     link(runHref(run.id), run.id),
     run.swarm ? link(swarmHref(run.swarm), run.swarm) : "",
-    run.active ? "<b>ACTIVE</b>" : run.finalizing ? "finalizing" : "finished",
+    stateCell(run.state),
     e(run.started ?? ""),
     num(run.count),
     e(run.model ?? ""),
@@ -861,7 +866,7 @@ function swarmHordeRow(row: SwarmVm["rows"][number]): string[] {
   return [
     e(row.label),
     link(runHref(row.runId), row.runId),
-    row.active ? "<b>ACTIVE</b>" : row.finalizing ? "finalizing" : "finished",
+    stateCell(row.state),
     e(row.outcome ?? ""),
     String(row.count),
     String(row.counts.running + row.counts.starting),
@@ -881,6 +886,7 @@ function swarmHordeRow(row: SwarmVm["rows"][number]): string[] {
 
 function swarmHeader(vm: SwarmVm): string {
   const rows: Array<[string, string]> = [
+    ["state", stateCell(vm.state) + (vm.state === "pending" ? " (the planner is partitioning the task, or the launch did not reach the hordes)" : "")],
     ["prompt", pre(vm.prompt)],
     ["hordes", `${vm.hordes} x ${vm.count ?? "?"} members`],
     ["started", e(vm.started ?? "")],

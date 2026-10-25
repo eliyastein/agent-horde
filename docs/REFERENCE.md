@@ -314,7 +314,9 @@ lane. From a swarm page the nav's ledger links point at `/swarms/<id>/<ledger>` 
 findings, claims, facts, resources), which shows every horde's ledger on one page under a per-horde
 heading, since the hordes keep separate ledgers and reuse ids. Run pages resolve swarm run ids to
 their horde directory, and every ledger page reads a horde's ledgers when `run=<swarm-run-id>` is
-given. The widget shows one line per horde.
+given. A swarm and its hordes show as `pending` from the moment their directories are allocated
+until the hordes have a TASK.md, which covers the minutes the planner takes; a swarm the planner
+could not partition shows `not started`. The widget shows one line per horde.
 
 ## Finding metadata
 

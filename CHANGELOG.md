@@ -20,7 +20,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   row per horde and a graph with one lane per horde and the merge step; the widget shows one line
   per horde. From a swarm page the ledger nav links lead to `/swarms/<id>/<ledger>`, which shows
   every horde's ideas, board, findings, claims, facts or resources on one page under a per-horde
-  heading. `--until-stop` applies to every horde (#18).
+  heading. A swarm and its hordes show as `pending` while the planner partitions the task, and
+  `not started` when it could not. `--until-stop` applies to every horde (#18).
 
 ## [0.1.6] - 2026-10-23
 

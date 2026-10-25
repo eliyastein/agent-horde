@@ -207,6 +207,42 @@ assert.ok(emptySwarm.body.includes("no hordes"), emptySwarm.body.slice(0, 200));
 
 console.log("PASS: horde-swarm-dashboard-test ledgers");
 
+// ---- states: a swarm allocated before its planner finished is pending, not finished ----------
+// allocateSwarm runs before the planner, so for minutes the directories exist with no TASK.md.
+const pending = swarmMod.allocateSwarm(hordeDir, 2, Date.parse("2026-10-24T08:00:00Z"));
+const pendingIndex = json("/");
+const pendingSwarm = pendingIndex.swarms.find((s) => s.id === pending.id);
+assert.equal(pendingSwarm.state, "pending", "a swarm whose hordes have no TASK.md yet is pending");
+assert.deepEqual(pendingSwarm.outcomes, ["pending", "pending"]);
+for (const runId of pending.runIds) {
+  const row = pendingIndex.runs.find((r) => r.id === runId);
+  assert.equal(row.state, "pending", `${runId} is pending, not finished`);
+  assert.equal(row.outcome, "pending");
+  assert.equal(json(`/runs/${runId}`).outcome, "pending", "the run overview says pending too");
+}
+assert.ok(get("/").body.includes(">pending<"), "the index renders the pending state");
+const pendingVm = json(`/swarms/${pending.id}`);
+assert.equal(pendingVm.state, "pending");
+assert.deepEqual(pendingVm.rows.map((r) => r.state), ["pending", "pending"]);
+assert.ok(get(`/swarms/${pending.id}`).body.includes("the planner is partitioning the task"));
+// The finished fixture swarm and its runs keep their state.
+assert.equal(pendingIndex.swarms.find((s) => s.id === layout.id).state, "finished");
+assert.equal(pendingIndex.runs.find((r) => r.id === layout.runIds[0]).state, "finished");
+assert.equal(json(`/swarms/${layout.id}`).state, "finished");
+// A swarm the planner could not partition says so.
+fs.writeFileSync(path.join(pending.dir, "SWARM.md"), `# Swarm ${pending.id}\n\nNot started: the planner produced 1 workstream(s), not 2\n`);
+assert.equal(json("/").swarms.find((s) => s.id === pending.id).state, "not started");
+assert.equal(json(`/swarms/${pending.id}`).state, "not started");
+assert.ok(get("/").body.includes(">not started<"));
+// A live swarm is active while any horde runs and finalizing once none does.
+assert.equal(data.loadSwarm(liveSrc, layout.id).state, "active");
+const doneRuns = liveSwarm.runs.map((run) => ({ ...run, reported: true }));
+const finalizingSrc = { ...liveSrc, getActive: () => [], getFinalizing: () => doneRuns, getSwarm: () => ({ ...liveSwarm, runs: doneRuns }) };
+assert.equal(data.loadSwarm(finalizingSrc, layout.id).state, "finalizing");
+assert.equal(data.listRuns(finalizingSrc).swarms.find((s) => s.id === layout.id).state, "finalizing");
+fs.rmSync(pending.dir, { recursive: true });
+console.log("PASS: horde-swarm-dashboard-test states");
+
 // ---- the graph builder on its own -------------------------------------------
 const empty = graphMod.buildSwarmGraph({ swarmId: "x", startedAt: 1_000, hordes: [{ label: "h1", runId: "r-h1", events: [] }] });
 assert.equal(empty.end, 2_000, "an empty graph still has a time axis");
