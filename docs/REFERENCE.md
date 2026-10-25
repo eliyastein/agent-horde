@@ -84,7 +84,9 @@ the ledgers single runs share), one **run** (`/runs/<id>/...`), or one **swarm**
 scope's pages (overview, the six ledgers, collaboration, graph; the project has the ledgers only),
 with the current page marked. Inside a swarm the scope line adds horde tabs, `all | h1 | h2 ...`,
 that keep the page type: from h2's findings, h3 opens h3's findings and `all` the swarm's. A horde's
-pages are its run's pages, `/runs/<swarm-id>-h2/...`. No link falls back to another run.
+pages are its run's pages, `/runs/<swarm-id>-h2/...`. No link falls back to another run. While a swarm
+is running or finishing, project pages show a pointer to the same page in the swarm, since its
+hordes write their own ledgers and leave the project ones untouched.
 
 | page | shows |
 |------|-------|

@@ -30,7 +30,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   `/<ledger>?run=<id>` to `/runs/<id>/<ledger>`; the `run=` parameter is gone, and the nav no
   longer falls back to the first live or newest run. Project ledger pages auto-refresh only
   while a single run is live. Links in earlier GRAPH.md files and exports that use `?run=` no
-  longer resolve.
+  longer resolve. While a swarm is running or finishing, project pages point at the same page in
+  the swarm.
 
 ## [0.1.6] - 2026-10-23
 

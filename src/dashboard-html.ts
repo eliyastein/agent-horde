@@ -53,6 +53,11 @@ export interface RenderContext {
   href?: string;
   scope?: Scope | undefined;
   pageKind?: PageKind | undefined;
+  /**
+   * A swarm in memory, set on project pages only: its hordes write their own ledgers, so the
+   * project page points at the same page in the swarm. `finishing` once no horde is running.
+   */
+  liveSwarm?: { id: string; finishing: boolean } | undefined;
   refresh?: { on: boolean; toggleHref: string; seconds: number } | undefined;
   /** Scheme and host of the request, for exports that need absolute links. */
   origin?: string | undefined;
@@ -70,7 +75,7 @@ const CSS =
   "table{border-collapse:collapse;margin:4px 0}" +
   "th,td{border:1px solid #000;padding:2px 6px;vertical-align:top;text-align:left}" +
   "th{background:#eee}pre{white-space:pre-wrap;word-break:break-word;margin:0}" +
-  "nav{margin:2px 0}nav a,nav b{margin-right:8px}.scope{margin:2px 0}.scope a,.scope b{margin-right:6px}.r{text-align:right}h1,h2{font-size:13px;margin:8px 0 4px}" +
+  "nav{margin:2px 0}nav a,nav b{margin-right:8px}.scope{margin:2px 0}.scope a,.scope b{margin-right:6px}.pointer{border:1px solid #000;padding:2px 6px;display:inline-block}.r{text-align:right}h1,h2{font-size:13px;margin:8px 0 4px}" +
   "details>summary{cursor:pointer}a{color:#000}footer{margin-top:16px;color:#666}footer a{color:#666}" +
   ".export{position:absolute;top:8px;right:8px;line-height:0}" +
   ".modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7)}" +
@@ -184,11 +189,24 @@ function hordeTabs(swarmId: string, hordes: SwarmHorde[], current: string | unde
   return ` hordes: ${tabs.join(" ")}`;
 }
 
+/** On a project page while a swarm is live: where the swarm's activity is, on the same page type. */
+function swarmPointer(ctx: RenderContext): string {
+  const swarm = ctx.liveSwarm;
+  if (!swarm) return "";
+  const target = ctx.pageKind === undefined || ctx.pageKind === "overview" || ctx.pageKind === "other"
+    ? "the swarm"
+    : `the swarm's ${ctx.pageKind}`;
+  return (
+    `<p class="pointer">swarm ${e(swarm.id)} is ${swarm.finishing ? "finishing" : "running"} in its own ledgers, ` +
+    `not these: ${link(pageHref(swarmHref(swarm.id), ctx.pageKind), target)}</p>`
+  );
+}
+
 /** The scope line: what this page is about, and inside a swarm the tabs to move between hordes. */
 function scopeLine(ctx: RenderContext): string {
   const scope = ctx.scope;
   if (scope === undefined || scope.kind === "project") {
-    return `<p class="scope">scope: <b>project</b> (the ledgers single runs share)</p>`;
+    return `<p class="scope">scope: <b>project</b> (the ledgers single runs share)</p>${swarmPointer(ctx)}`;
   }
   if (scope.kind === "swarm") {
     return `<p class="scope">scope: <b>swarm ${e(scope.swarmId)}</b>${hordeTabs(scope.swarmId, scope.hordes, undefined, ctx.pageKind)}</p>`;

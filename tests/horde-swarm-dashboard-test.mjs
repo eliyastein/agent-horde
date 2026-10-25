@@ -226,6 +226,22 @@ assert.ok(!collabPage.includes("<h2>Event audit</h2>"), "no merged event audit")
 assert.ok(collabPage.includes(`<a href="/runs/${layout.runIds[1]}/collaboration">event audit</a>`), "each horde links its own audit");
 assert.equal(get("/swarms/20990101-000000/collaboration").status, 404);
 
+// While a swarm is in memory, project pages point at the same page in the swarm.
+const liveGet = (source, target) => dashboard.routeRequest(source, "GET", new URL(`http://127.0.0.1:7433${target}`), "127.0.0.1:7433").body;
+const pointerOf = (body) => /<p class="pointer">(.*?)<\/p>/.exec(body)?.[1];
+const boardPointer = pointerOf(liveGet(liveSrc, "/board"));
+assert.ok(boardPointer?.includes(`swarm ${layout.id} is running`), `project board points at the running swarm: ${boardPointer}`);
+assert.ok(boardPointer.includes(`<a href="/swarms/${layout.id}/board">the swarm&#39;s board</a>`), boardPointer);
+assert.ok(pointerOf(liveGet(liveSrc, "/")).includes(`<a href="/swarms/${layout.id}">the swarm</a>`), "the index points at the swarm overview");
+assert.ok(pointerOf(liveGet(liveSrc, "/findings")).includes(`/swarms/${layout.id}/findings`), "the pointer keeps the page type");
+assert.equal(pointerOf(liveGet(liveSrc, `/swarms/${layout.id}/board`)), undefined, "swarm pages need no pointer");
+assert.equal(pointerOf(liveGet(liveSrc, `/runs/${layout.runIds[0]}/board`)), undefined, "run pages need no pointer");
+assert.equal(pointerOf(get("/board")), undefined, "no pointer without a live swarm");
+const finishingSrc = { ...liveSrc, getActive: () => [] };
+assert.ok(pointerOf(liveGet(finishingSrc, "/board")).includes("is finishing"), "a swarm with no running horde is finishing");
+const singleSrc = { ...liveSrc, getSwarm: () => ({ ...liveSwarm, dir: undefined }) };
+assert.equal(pointerOf(liveGet(singleSrc, "/board")), undefined, "a single run writes the project ledgers, so no pointer");
+
 console.log("PASS: horde-swarm-dashboard-test ledgers");
 
 // ---- states: a swarm allocated before its planner finished is pending, not finished ----------

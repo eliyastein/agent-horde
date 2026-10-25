@@ -433,8 +433,18 @@ function scopeOf(src: DashboardSource, route: Route, params: string[]): Scope {
 }
 
 /** The page's place in the nav: its scope and which page-row item it is. */
-function pageContext(src: DashboardSource, route: Route, params: string[]): Pick<RenderContext, "scope" | "pageKind"> {
-  return { scope: scopeOf(src, route, params), pageKind: route.page };
+/** A swarm (not a swarm of one, which writes the project ledgers) the parent still holds in memory. */
+function liveSwarmOf(src: DashboardSource): RenderContext["liveSwarm"] {
+  const swarm = src.getSwarm?.();
+  if (!swarm || swarm.dir === undefined) return undefined;
+  const running = src.getActive().some((run) => swarmOfRun(run.id)?.swarmId === swarm.id);
+  return { id: swarm.id, finishing: !running };
+}
+
+/** The page's place in the nav: its scope, which page-row item it is, and a live swarm for project pages. */
+function pageContext(src: DashboardSource, route: Route, params: string[]): Pick<RenderContext, "scope" | "pageKind" | "liveSwarm"> {
+  const liveSwarm = route.scope === "project" ? liveSwarmOf(src) : undefined;
+  return { scope: scopeOf(src, route, params), pageKind: route.page, liveSwarm };
 }
 
 /** The export costs seconds of work per request, so pages from other sites may not start one. */
