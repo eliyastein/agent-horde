@@ -4,6 +4,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-28
+
 ### Added
 
 - Horde of hordes: a count of `H/M` launches H concurrent hordes of M members on one task, H at
