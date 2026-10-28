@@ -206,7 +206,7 @@ function swarmPointer(ctx: RenderContext): string {
 function scopeLine(ctx: RenderContext): string {
   const scope = ctx.scope;
   if (scope === undefined || scope.kind === "project") {
-    return `<p class="scope">scope: <b>project</b> (the ledgers single runs share)</p>${swarmPointer(ctx)}`;
+    return `<p class="scope">scope: <b>project</b></p>${swarmPointer(ctx)}`;
   }
   if (scope.kind === "swarm") {
     return `<p class="scope">scope: <b>swarm ${e(scope.swarmId)}</b>${hordeTabs(scope.swarmId, scope.hordes, undefined, ctx.pageKind)}</p>`;
