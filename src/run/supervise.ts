@@ -11,7 +11,7 @@ import { resetMemberState, spawnMember } from "../member.js";
 import type { MemberState } from "../member.js";
 import { hardStopMembers } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
-import type { HordeRun, HordeState } from "./types.js";
+import type { HordeRun, HordeState, Swarm } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
 /** A running member with no ledger write for this long is reset; 0 disables. */
@@ -37,6 +37,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** What spawning and supervising a run's members needs beyond the run itself. */
 export interface RunLaunch {
   state: HordeState;
+  /** The swarm the run belongs to; a plain run is a swarm of one. */
+  swarm: Swarm;
   run: HordeRun;
   ctx: ExtensionCommandContext;
   /** Per-member role instruction, indexed by member index - 1. */

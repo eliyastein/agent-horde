@@ -4,6 +4,35 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Added
+
+- Horde of hordes: a count of `H/M` launches H concurrent hordes of M members on one task, H at
+  most 4. A planner helper splits a plain prompt into H disjoint workstreams with acceptance
+  criteria before launch and stops the launch when it cannot; `plan H/M` deals the layers
+  round-robin to the hordes. Each horde gets its own ledgers, lock and run under
+  `.horde/swarms/<id>/hN/`, so a plain `M` is a swarm of one and keeps `.horde/runs/`. Members read
+  sibling hordes' facts, resources and closed ideas through the `horde` tool, tagged `[hN]`, and
+  write only to their own. Hordes start `PI_HORDE_SWARM_STAGGER_MS` apart; controls take `hN` and
+  `hN:member-M` targets and `status` prints one block per horde. After the last horde finalizes a
+  synthesis helper merges the deliverables into the swarm's `DELIVERABLE.md`, each claim attributed
+  to its horde, and one swarm report replaces the per-horde reports. The dashboard lists swarms
+  and adds `/swarms/<id>` with one row per horde, swarm-wide ledger and collaboration pages under
+  per-horde headings, and a graph with one lane per horde and the merge step. A swarm and its
+  hordes show as `pending` while the planner partitions the task, and `not started` when it could
+  not. The widget shows one line per horde. `--until-stop` applies to every horde (#18).
+
+### Changed
+
+- Dashboard pages are scoped by their URL: the project (`/`, `/findings`, ...), one run
+  (`/runs/<id>/...`), or one swarm (`/swarms/<id>/...`). A scope line names the scope, the page
+  row offers that scope's pages with the current one marked, and inside a swarm horde tabs move
+  between `all` and each horde while keeping the page type. A run's ledgers moved from
+  `/<ledger>?run=<id>` to `/runs/<id>/<ledger>`; the `run=` parameter is gone, and the nav no
+  longer falls back to the first live or newest run. Project ledger pages auto-refresh only
+  while a single run is live. Links in earlier GRAPH.md files and exports that use `?run=` no
+  longer resolve. While a swarm is running or finishing, project pages point at the same page in
+  the swarm.
+
 ## [0.1.6] - 2026-10-23
 
 ### Added

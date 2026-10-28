@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { cleanStopRequestedFor, writeHeartbeat } from "../ledger/run-signals.js";
 import { envNumber } from "../format.js";
+import { parseSiblings } from "../member.js";
 import { ReminderGate, goalReminder } from "../reminder.js";
 import { isVerifierRole, runHordeAction } from "./actions.js";
 import { pendingVerificationHint, solvedHint } from "./hints.js";
@@ -31,6 +32,7 @@ export function registerMemberTool(pi: ExtensionAPI): void {
     throw new Error("agent-horde: PI_HORDE_DIR and PI_HORDE_NAME must be set for a horde member");
   }
   const attempt = process.env.PI_HORDE_ATTEMPT ?? `pid-${process.pid}`;
+  const siblings = parseSiblings(process.env.PI_HORDE_SIBLINGS);
   const activeRun = process.env.PI_HORDE_RUN;
   if (activeRun) registerInbox(pi, { hordeDir, runId: activeRun, actor: member, attempt });
   // One member per process, so one gate is the per-member reminder counter.
@@ -64,7 +66,7 @@ export function registerMemberTool(pi: ExtensionAPI): void {
     async execute(toolCallId, params) {
       const runId = process.env.PI_HORDE_RUN;
       const role = process.env.PI_HORDE_ROLE;
-      const result = await runHordeAction(hordeDir, member, params, runId, { attempt, requestId: toolCallId, role });
+      const result = await runHordeAction(hordeDir, member, params, runId, { attempt, requestId: toolCallId, role, siblings });
       const runDir = runId ? path.join(hordeDir, "runs", runId) : undefined;
       if (runDir && MUTATING_ACTIONS.has(params.action)) touchHeartbeat(runDir, member);
       let text = compactReceipt(result.text, params) + solvedHint(hordeDir, runId, member, params.action);

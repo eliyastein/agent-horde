@@ -149,14 +149,15 @@ if (process.argv.includes("--mode")) {
   assert.ok(page.text.includes('http-equiv="refresh"'), "live member page auto-refreshes");
   assert.ok(page.text.includes("member-1.log"));
 
-  // Board/ideas/findings are readable and live.
-  for (const p of ["/ideas", "/board", "/findings", "/claims"]) {
+  // The project ledgers and the run's own ledgers are readable and live while this single run is.
+  for (const p of ["/ideas", "/board", "/findings", "/claims", `/runs/${runId}/ideas`, `/runs/${runId}/findings`]) {
     const r = await get(port, p);
     assert.equal(r.res.status, 200, p);
     assert.ok(r.text.startsWith("<!doctype html>"), p);
+    assert.ok(r.text.includes('http-equiv="refresh"'), `${p} auto-refreshes while the run is live`);
   }
   // Facts split for the active run.
-  page = await get(port, `/facts?run=${runId}`);
+  page = await get(port, `/runs/${runId}/facts`);
   assert.equal(page.res.status, 200);
   assert.ok(page.text.includes("this run ("), "active run splits facts");
 

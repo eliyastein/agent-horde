@@ -79,7 +79,7 @@ if (process.argv.includes("--mode")) {
       }),
     ],
   };
-  const source = { hordeDir, getActive: () => undefined, getFinalizing: () => finalizingRun };
+  const source = { hordeDir, getActive: () => [], getFinalizing: () => [finalizingRun] };
 
   // Run overview reports synthesizing, not completed.
   const overview = data.loadRunOverview(source, runId);
@@ -101,7 +101,7 @@ if (process.argv.includes("--mode")) {
   const indexRes = dash.routeRequest(source, "GET", new URL("http://127.0.0.1/"), "127.0.0.1");
   assert.ok(indexRes.body.includes("finalizing"), "run index should show finalizing");
   // Other runs still read as finished once this one clears.
-  const doneSource = { hordeDir, getActive: () => undefined, getFinalizing: () => undefined };
+  const doneSource = { hordeDir, getActive: () => [], getFinalizing: () => [] };
   assert.equal(data.loadRunOverview(doneSource, runId).outcome, "completed");
 
   // Widget header names the synthesis steps.

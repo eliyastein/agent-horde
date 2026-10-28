@@ -129,7 +129,7 @@ assert.match(report, /- resources: 2 claimed, 1 reused \(1 explicit reclaim\(s\)
 assert.match(report, /## Resources/);
 assert.match(report, /- R1 php8\.2 lab @member-1: docker php:8\.2-cli, lab\.sh \(reused by member-2\)/);
 
-const source = { hordeDir, getActive: () => undefined };
+const source = { hordeDir, getActive: () => [] };
 assert.equal(data.loadResources(source).resources.length, 2);
 const res = dash.routeRequest(source, "GET", new URL("http://127.0.0.1/resources"), "127.0.0.1");
 assert.equal(res.status, 200);
@@ -150,7 +150,7 @@ fs.mkdirSync(path.join(runDir, "artifacts"), { recursive: true });
 fs.writeFileSync(path.join(runDir, "TASK.md"), "Members: 3\n");
 await board.appendRunHeading(hordeDir, runId, "resource citation fixture");
 await findings.addFinding(hordeDir, runId, "member-3", "Root chown follows a planted link, reproduced in R1", { concern: "planted-link", concernDef: "chown", concernNew: true });
-const live = { hordeDir, getActive: () => ({ id: runId, hordeDir, runDir }) };
+const live = { hordeDir, getActive: () => [{ id: runId, hordeDir, runDir }] };
 const liveVm = data.loadResources(live);
 assert.equal(liveVm.run, runId);
 assert.deepEqual(liveVm.resources[0].citedBy, ["member-3"], "a non-owner finding that names R1 counts as reuse");

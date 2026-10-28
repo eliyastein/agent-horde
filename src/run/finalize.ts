@@ -35,9 +35,10 @@ import { runGraphMarkdown } from "../run-graph-mermaid.js";
 import type { CleanupStatus, ReportResource, RunReportInput } from "../prompt.js";
 import { buildDiagnosis } from "./diagnosis.js";
 import { recordLifecycle, recordPhase } from "./lifecycle.js";
+import { noteRunFinalized, noteRunReported } from "./swarm-finalize.js";
 import { runDeliverable, runPostmortem } from "./synthesis.js";
-import type { HordeRun, HordeState } from "./types.js";
-import { REPORT_TYPE, refreshRun, reportDetails, safeNotify, unmountWidget } from "./ui.js";
+import type { HordeRun, HordeState, Swarm } from "./types.js";
+import { REPORT_TYPE, refreshRun, reportDetails, safeNotify } from "./ui.js";
 
 /** Most deliverable warnings shown inline; REPORT.md keeps the full list. */
 const INLINE_WARNING_CAP = 12;
@@ -279,12 +280,11 @@ async function runCleanup(run: HordeRun, item: PendingCleanup): Promise<CleanupR
  * Tear down the labs this run registered before writing the report, so the
  * report states whether cleanup succeeded and no containers outlive the run.
  */
-async function runCleanups(state: HordeState, run: HordeRun): Promise<CleanupResult[]> {
+async function runCleanups(run: HordeRun): Promise<CleanupResult[]> {
   const pending =
     process.env.PI_HORDE_CLEANUP === "off" ? [] : pendingCleanups(run.hordeDir, run.id);
   if (pending.length === 0) return [];
   run.finalizing = ["cleanup"];
-  state.finalizing = run;
   refreshRun(run);
   const cleanups: CleanupResult[] = [];
   for (const item of pending) cleanups.push(await runCleanup(run, item));
@@ -337,6 +337,7 @@ function writeRunReports(
   });
   const memberPosts = lastBoardPostsByMember(run.hordeDir, run.id);
   const outcome = runOutcome(run);
+  run.outcome = outcome;
   let events: HordeEvent[] = [];
   try {
     events = readEvents(run.hordeDir, run.id);
@@ -461,7 +462,6 @@ async function synthesize(
   if (wantPostmortem) steps.push("post-mortem");
   if (steps.length > 0) {
     run.finalizing = steps;
-    state.finalizing = run;
     refreshRun(run);
   }
   run.deliverable = undefined;
@@ -502,7 +502,15 @@ async function synthesize(
   }
 }
 
-function sendReport(state: HordeState, run: HordeRun, ledgers: RunLedgers, now: number): void {
+/**
+ * Inject the run report into the parent conversation. A horde of a larger swarm only notifies:
+ * the swarm sends one merged report once every horde has finished.
+ */
+function sendReport(state: HordeState, swarm: Swarm, run: HordeRun, ledgers: RunLedgers, now: number): void {
+  if (swarm.hordes > 1) {
+    safeNotify(run, `horde ${run.id} ${run.stopped ? "stopped" : "finished"} (${run.outcome ?? "finished"})`, "info");
+    return;
+  }
   const sections = [reportText(run, ledgers.ideaCounts, ledgers.findings.length, now)];
   if (run.deliverable) sections.push("## Deliverable", "", run.deliverable);
   if (run.postmortem) sections.push("## Post-mortem", "", run.postmortem);
@@ -535,8 +543,11 @@ export function writeRunGraph(run: HordeRun): void {
   }
 }
 
-/** Wind a run down once every member has exited: reconcile, report, synthesize, notify. */
-export async function finalizeRun(state: HordeState, run: HordeRun): Promise<void> {
+/**
+ * Wind a run down once every member has exited: reconcile, report, synthesize, notify. The
+ * swarm's slot frees once every horde has reported, and the swarm step follows the last finalize.
+ */
+export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun): Promise<void> {
   const now = Date.now();
   try {
     if (state.disposed) return;
@@ -552,21 +563,20 @@ export async function finalizeRun(state: HordeState, run: HordeRun): Promise<voi
       (acceptance.issues.length > 0 || supersededCitations(answer.proposal.text, ledgers.findings).length > 0);
     if (annotate) annotateAnswer(run, answer, acceptance, ledgers.findings);
     // Workers and bounded repairs have exited; only now may their labs be torn down.
-    const cleanups = await runCleanups(state, run);
+    const cleanups = await runCleanups(run);
     const reportInput = writeRunReports(run, ledgers, releasedIdeas, cleanups, now);
     // Free the slot before the (possibly slow) synthesis so a new run can start.
-    if (state.active === run) state.active = undefined;
+    noteRunReported(state, swarm, run);
     await synthesize(state, run, ledgers, reportInput, now);
     if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, ledgers.findings);
-    sendReport(state, run, ledgers, now);
+    sendReport(state, swarm, run, ledgers, now);
     await recordLifecycle(run, "run-end", { outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel });
     writeRunGraph(run);
   } catch (error) {
     safeNotify(run, `horde ${run.id} failed to finalize: ${errorMessage(error)}`, "error");
   } finally {
-    if (state.active === run) state.active = undefined;
+    noteRunReported(state, swarm, run);
     run.finalizing = undefined;
-    if (state.finalizing === run) state.finalizing = undefined;
-    unmountWidget(run);
+    await noteRunFinalized(state, swarm, run);
   }
 }

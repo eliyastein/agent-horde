@@ -1,8 +1,13 @@
 export const MAX_MEMBERS = 12;
 
+/** Hordes per swarm; `H/M` launches H hordes of M members. */
+export const MAX_HORDES = 4;
+
 export const USAGE = [
   "usage: /agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] <count> <prompt>",
-  "                                          spawn <count> members with the same prompt",
+  "                                          spawn <count> members with the same prompt;",
+  "                                          <count> may be H/M: H hordes of M members, the",
+  "                                          task partitioned between the hordes by a planner",
   "       /agent-horde status [target]       show the active run",
   "       /agent-horde stop-hard [target]    terminate members now (SIGTERM, then SIGKILL)",
   "       /agent-horde stop-clean [target]   let members wrap up, then reconcile their ideas",
@@ -11,11 +16,13 @@ export const USAGE = [
   "       /agent-horde pause [target]        suspend members (SIGSTOP)",
   "       /agent-horde resume [target]       resume suspended members (SIGCONT)",
   `       /agent-horde plan [--dashboard] <count> <a; b; ...>`,
-  "                                          partition members across workstreams",
+  "                                          partition members across workstreams; with H/M",
+  "                                          the layers go round-robin to the hordes",
   "       /agent-horde help                  show this text",
   "",
-  "target is 'all' (default), 'member-N', 'N', or a comma/space separated list.",
-  `count is a whole number from 1 to ${MAX_MEMBERS}`,
+  "target is 'all' (default), 'member-N', 'N', 'hN' (one horde), 'hN:member-M', 'hN:M', or a",
+  "comma/space separated list; a bare member names that member in every horde.",
+  `count is a whole number from 1 to ${MAX_MEMBERS}, or H/M with H from 1 to ${MAX_HORDES}`,
   "--dashboard serves a read-only localhost dashboard (default port 7433, or",
   "PI_HORDE_DASHBOARD_PORT); --dashboard=<port> picks the port.",
   "--no-verifier skips the default verifier role that runs of 3 or more members assign",
@@ -25,10 +32,18 @@ export const USAGE = [
   "session told to add new ideas.",
 ].join("\n");
 
-/** Which members a control command applies to. */
+/** One token of a control target: a horde, a member in every horde, or a member of one horde. */
+export interface TargetItem {
+  /** 1-based horde index (`h2`); absent for every horde. */
+  horde?: number;
+  /** `member-N`; absent for every member of the horde. */
+  member?: string;
+}
+
+/** Which hordes and members a control command applies to. */
 export type HordeTarget =
   | { kind: "all" }
-  | { kind: "members"; names: string[] };
+  | { kind: "selection"; items: TargetItem[] };
 
 type HordeStopMode = "hard" | "clean";
 
@@ -46,6 +61,9 @@ type HordeArgs =
   | { kind: "resume"; target: HordeTarget }
   | {
       kind: "run";
+      /** Concurrent hordes; `12` is one horde, `3/12` three. */
+      hordes: number;
+      /** Members per horde. */
       count: number;
       prompt: string;
       plan?: string[] | undefined;
@@ -58,22 +76,51 @@ type HordeArgs =
 
 export type HordeRunArgs = Extract<HordeArgs, { kind: "run" }>;
 
+const HORDE_TOKEN = /^h(\d+)$/i;
+const MEMBER_TOKEN = /^(?:member-)?(\d+)$/i;
+
+function memberName(token: string): string | undefined {
+  const match = MEMBER_TOKEN.exec(token);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  return index >= 1 && index <= MAX_MEMBERS ? `member-${index}` : undefined;
+}
+
+function hordeIndex(token: string): number | undefined {
+  const match = HORDE_TOKEN.exec(token);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  return index >= 1 && index <= MAX_HORDES ? index : undefined;
+}
+
+/** `h2`, `h2:member-3`, `h2:3`, `member-3`, or `3`; undefined for anything else. */
+function parseTargetItem(token: string): TargetItem | undefined {
+  const colon = token.indexOf(":");
+  if (colon === -1) {
+    const horde = hordeIndex(token);
+    if (horde !== undefined) return { horde };
+    const member = memberName(token);
+    return member === undefined ? undefined : { member };
+  }
+  const horde = hordeIndex(token.slice(0, colon));
+  const member = memberName(token.slice(colon + 1));
+  return horde === undefined || member === undefined ? undefined : { horde, member };
+}
+
 function parseTargets(raw: string): HordeTarget | undefined {
   const trimmed = raw.trim();
   if (trimmed === "") return { kind: "all" };
-  const names: string[] = [];
+  const items: TargetItem[] = [];
   for (const token of trimmed.split(/[\s,]+/).filter(Boolean)) {
     if (token.toLowerCase() === "all") return { kind: "all" };
-    const match = /^(?:member-)?(\d+)$/i.exec(token);
-    if (!match) return undefined;
-    const index = Number(match[1]);
-    if (index < 1 || index > MAX_MEMBERS) return undefined;
-    names.push(`member-${index}`);
+    const item = parseTargetItem(token);
+    if (!item) return undefined;
+    items.push(item);
   }
-  return names.length > 0 ? { kind: "members", names } : { kind: "all" };
+  return items.length > 0 ? { kind: "selection", items } : { kind: "all" };
 }
 
-const TARGET_ERROR = "invalid target; use all, member-N, or N";
+const TARGET_ERROR = "invalid target; use all, member-N, N, hN, or hN:member-M";
 
 function parseStopRest(
   rest: string,
@@ -166,29 +213,56 @@ function mergeLaunchFlags(leading: LaunchFlags, trailing: LaunchFlags): LaunchFl
   };
 }
 
-/** Parse `<count> [flags] <tail>`. */
-function parseCountedRun(
-  text: string,
-  leading: LaunchFlags,
-): { count: number; rest: string; flags: LaunchFlags } | { error: string } {
-  const match = /^(\d+)(?:\s+([\s\S]*))?$/.exec(text.trim());
-  if (!match) return { error: `count must be a whole number from 1 to ${MAX_MEMBERS}` };
-  const count = Number(match[1]);
-  if (count < 1 || count > MAX_MEMBERS) {
-    return { error: `count must be a whole number from 1 to ${MAX_MEMBERS}` };
-  }
-  const flags = mergeLaunchFlags(leading, takeLaunchFlags(match[2] ?? ""));
-  if (flags.error) return { error: flags.error };
-  return { count, rest: flags.rest, flags };
+const COUNT_ERROR =
+  `count must be a whole number from 1 to ${MAX_MEMBERS}, or H/M with H from 1 to ${MAX_HORDES} hordes`;
+
+interface CountedRun {
+  hordes: number;
+  count: number;
+  rest: string;
+  flags: LaunchFlags;
 }
 
-function runArgs(count: number, prompt: string, flags: LaunchFlags, plan?: string[]): HordeRunArgs {
-  const args: HordeRunArgs = { kind: "run", count, prompt };
+/** Parse `<count> [flags] <tail>`, where count is `M` or `H/M`. */
+function parseCountedRun(text: string, leading: LaunchFlags): CountedRun | { error: string } {
+  const match = /^(?:(\d+)\/)?(\d+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (!match) return { error: COUNT_ERROR };
+  const hordes = match[1] === undefined ? 1 : Number(match[1]);
+  const count = Number(match[2]);
+  if (count < 1 || count > MAX_MEMBERS || hordes < 1 || hordes > MAX_HORDES) return { error: COUNT_ERROR };
+  const flags = mergeLaunchFlags(leading, takeLaunchFlags(match[3] ?? ""));
+  if (flags.error) return { error: flags.error };
+  return { hordes, count, rest: flags.rest, flags };
+}
+
+function runArgs(parsed: CountedRun, prompt: string, plan?: string[]): HordeRunArgs {
+  const { hordes, count, flags } = parsed;
+  const args: HordeRunArgs = { kind: "run", hordes, count, prompt };
   if (plan) args.plan = plan;
   if (flags.dashboard) args.dashboard = flags.dashboard;
   if (flags.noVerifier) args.noVerifier = true;
   if (flags.untilStop) args.untilStop = true;
   return args;
+}
+
+function parsePlan(rest: string, leading: LaunchFlags): HordeArgs {
+  const afterPlan = takeLaunchFlags(rest);
+  if (afterPlan.error) return { kind: "usage", error: afterPlan.error };
+  const parsed = parseCountedRun(afterPlan.rest, mergeLaunchFlags(leading, afterPlan));
+  if ("error" in parsed) {
+    return { kind: "usage", error: "plan usage: /agent-horde plan <count> <layer1; layer2; ...>" };
+  }
+  const layers = parsed.rest
+    .split(/[;\n]/)
+    .map((layer) => layer.trim())
+    .filter(Boolean);
+  if (layers.length < 2) {
+    return { kind: "usage", error: "plan needs at least 2 layers separated by ';'" };
+  }
+  if (layers.length < parsed.hordes) {
+    return { kind: "usage", error: `plan with ${parsed.hordes} hordes needs at least ${parsed.hordes} layers` };
+  }
+  return runArgs(parsed, layers.join("; "), layers);
 }
 
 export function parseHordeArgs(raw: string): HordeArgs {
@@ -203,7 +277,7 @@ export function parseHordeArgs(raw: string): HordeArgs {
   const space = trimmed.search(/\s/);
   const head = (space === -1 ? trimmed : trimmed.slice(0, space)).toLowerCase();
   const rest = space === -1 ? "" : trimmed.slice(space + 1);
-  if (hasFlags && head !== "plan" && !/^\d+$/.test(head)) {
+  if (hasFlags && head !== "plan" && !/^\d+(?:\/\d+)?$/.test(head)) {
     return { kind: "usage", error: "launch flags only apply when starting a run" };
   }
 
@@ -232,22 +306,8 @@ export function parseHordeArgs(raw: string): HordeArgs {
       const target = parseTargets(rest);
       return target ? { kind: "pause", target } : { kind: "usage", error: TARGET_ERROR };
     }
-    case "plan": {
-      const afterPlan = takeLaunchFlags(rest);
-      if (afterPlan.error) return { kind: "usage", error: afterPlan.error };
-      const parsed = parseCountedRun(afterPlan.rest, mergeLaunchFlags(leading, afterPlan));
-      if ("error" in parsed) {
-        return { kind: "usage", error: "plan usage: /agent-horde plan <count> <layer1; layer2; ...>" };
-      }
-      const layers = parsed.rest
-        .split(/[;\n]/)
-        .map((layer) => layer.trim())
-        .filter(Boolean);
-      if (layers.length < 2) {
-        return { kind: "usage", error: "plan needs at least 2 layers separated by ';'" };
-      }
-      return runArgs(parsed.count, layers.join("; "), parsed.flags, layers);
-    }
+    case "plan":
+      return parsePlan(rest, leading);
     case "resume": {
       const target = parseTargets(rest);
       return target ? { kind: "resume", target } : { kind: "usage", error: TARGET_ERROR };
@@ -257,5 +317,5 @@ export function parseHordeArgs(raw: string): HordeArgs {
   const parsed = parseCountedRun(trimmed, leading);
   if ("error" in parsed) return { kind: "usage", error: parsed.error };
   if (parsed.rest === "") return { kind: "usage", error: "prompt is required" };
-  return runArgs(parsed.count, parsed.rest, parsed.flags);
+  return runArgs(parsed, parsed.rest);
 }

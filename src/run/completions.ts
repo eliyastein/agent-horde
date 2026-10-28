@@ -1,5 +1,6 @@
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import type { HordeRun } from "./types.js";
+import { hordeLabel } from "./types.js";
+import type { Swarm } from "./types.js";
 
 const CONTROL_SUBCOMMANDS: Array<{
   value: string;
@@ -41,7 +42,24 @@ const EXTRA_COMPLETIONS: Record<string, Array<{ value: string; description: stri
   plan: [DASHBOARD_COMPLETION],
 };
 
-export function controlCompletions(prefix: string, active: HordeRun | undefined): AutocompleteItem[] | null {
+/** `all`, then the members of a single horde, or `hN` and `hN:member-M` for a larger swarm. */
+function targetNames(active: Swarm | undefined): Array<{ name: string; description: string }> {
+  if (!active) return [{ name: "all", description: "all members" }];
+  const total = active.runs.reduce((sum, run) => sum + run.members.length, 0);
+  const names = [{ name: "all", description: active.hordes > 1 ? `all ${total} members of ${active.hordes} hordes` : `all ${total} members` }];
+  if (active.hordes === 1) {
+    for (const member of active.runs[0]?.members ?? []) names.push({ name: member.name, description: member.status });
+    return names;
+  }
+  for (const run of active.runs) {
+    const label = hordeLabel(run.horde);
+    names.push({ name: label, description: `horde ${label}: ${run.members.length} members` });
+    for (const member of run.members) names.push({ name: `${label}:${member.name}`, description: member.status });
+  }
+  return names;
+}
+
+export function controlCompletions(prefix: string, active: Swarm | undefined): AutocompleteItem[] | null {
   const space = prefix.search(/\s/);
   if (space === -1 && prefix.startsWith("-")) {
     const items = LAUNCH_FLAG_COMPLETIONS.filter((flag) => flag.value.startsWith(prefix)).map(
@@ -66,18 +84,12 @@ export function controlCompletions(prefix: string, active: HordeRun | undefined)
   const match = /^([\s\S]*?)([^\s,]*)$/.exec(rest);
   const base = match?.[1] ?? "";
   const token = match?.[2] ?? "";
-  const names = active && sub.takesTarget ? active.members.map((m) => m.name) : [];
-  const targetItems: AutocompleteItem[] = (sub.takesTarget ? ["all", ...names] : [])
-    .filter((name) => name.startsWith(token))
-    .map((name) => ({
-      value: `${head} ${base}${name}`,
-      label: name,
-      description:
-        name === "all"
-          ? active
-            ? `all ${active.count} members`
-            : "all members"
-          : active?.members.find((m) => m.name === name)?.status,
+  const targetItems: AutocompleteItem[] = (sub.takesTarget ? targetNames(active) : [])
+    .filter((target) => target.name.startsWith(token))
+    .map((target) => ({
+      value: `${head} ${base}${target.name}`,
+      label: target.name,
+      description: target.description,
     }));
   const extraItems: AutocompleteItem[] = (EXTRA_COMPLETIONS[head] ?? [])
     .filter((extra) => {

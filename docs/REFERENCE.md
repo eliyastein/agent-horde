@@ -16,8 +16,10 @@ at one problem beat a single linear one: research, audits, design exploration, R
 /agent-horde help
 ```
 
-`target` is `all` (default), `member-N`, `N`, or a comma or space separated list. Subcommands and
-member targets tab-complete.
+`count` is `M` members (1 to 12) or `H/M`: H hordes of M members, H at most 4; a plain `M` is a
+swarm of one. `target` is `all` (default), `member-N`, `N`, `hN` (one horde of a swarm),
+`hN:member-M`, `hN:M`, or a comma or space separated list; a bare member names that member in
+every horde. Subcommands and targets tab-complete.
 
 The command returns immediately. A widget above the editor shows each member's status, current
 tool, elapsed time, turns, and resets. Members inherit the parent session's model and thinking
@@ -76,9 +78,19 @@ Every page has a JSON twin under `/api/<same path>`. The footer of every page na
 agent-horde version from its package.json and, when it runs from a git checkout, the commit it is
 at (`-dirty` when the tree has uncommitted changes), linked to the commit on GitHub.
 
+Every page belongs to one scope, fixed by its URL: the **project** (`/` and the bare ledger paths,
+the ledgers single runs share), one **run** (`/runs/<id>/...`), or one **swarm**
+(`/swarms/<id>/...`). Under the `runs` link a scope line names the scope, and a page row offers that
+scope's pages (overview, the six ledgers, collaboration, graph; the project has the ledgers only),
+with the current page marked. Inside a swarm the scope line adds horde tabs, `all | h1 | h2 ...`,
+that keep the page type: from h2's findings, h3 opens h3's findings and `all` the swarm's. A horde's
+pages are its run's pages, `/runs/<swarm-id>-h2/...`. No link falls back to another run. While a swarm
+is running or finishing, project pages show a pointer to the same page in the swarm, since its
+hordes write their own ledgers and leave the project ones untouched.
+
 | page | shows |
 |------|-------|
-| `/` | every run: active marker, start, count, model, outcome, prompt, files present |
+| `/` | every swarm and run: state (active, finalizing, pending, finished, not started), start, count, model, outcome, prompt, files present |
 | `/runs/<id>` | prompt, outcome, canary, clean-stop countdown, plan layers, members table, run files |
 | `/runs/<id>/members/<m>` | live activity, last and final text, log tail (`?tail=<n>`), transcript link |
 | `/runs/<id>/members/<m>/log` | the member log; `tail=0` is the whole file (1 MiB cap) |
@@ -88,16 +100,27 @@ at (`-dirty` when the tree has uncommitted changes), linked to the commit on Git
 | `/runs/<id>/collaboration` | messages, review scope, artifact acceptance, resources, event audit |
 | `/runs/<id>/graph` | the run as a swimlane: one lane per member plus the parent, phase bands, every event a link to its ledger entry (`?w=<px>`, `?from=<s>&to=<s>`); the axis is real time until the last member exits, then the synthesis phases share a compressed tail |
 | `/runs/<id>/graph.mmd` | the same run as a Mermaid flowchart with absolute dashboard links (text/plain) |
-| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the shared ledgers; `?run=<id>\|all`, `?view=clusters`, `?owner=<m>` filter them; `/resources` also lists who cited each resource in the active run, as REPORT.md counts reuse |
+| `/runs/<id>/ideas`, `board`, `findings`, `claims`, `facts`, `resources` | the run's ledgers: a horde's own, or for a single run the project ledgers with board and findings narrowed to the run and facts split into this run and carried; `?view=clusters`, `?owner=<m>`, `?order=oldest` |
+| `/ideas`, `/board`, `/findings`, `/claims`, `/facts`, `/resources` | the project ledgers across every single run; `/resources` also lists who cited each resource in a live single run, as REPORT.md counts reuse |
+| `/swarms/<id>` | one row per horde (state, outcome, members, findings, accepted artifacts, cost, workstream), the partition, the merge state, swarm files |
+| `/swarms/<id>/ideas`, `board`, `findings`, `claims`, `facts`, `resources`, `collaboration` | every horde's ledger, or its acceptance, requests and reviews, on one page under a per-horde heading; ids repeat per horde, and each horde's event audit stays on its run page |
+| `/swarms/<id>/graph` | one lane per horde with its phase marks, and the merge step |
+| `/swarms/<id>/files/<NAME>` | `SWARM`, `REPORT`, `DELIVERABLE`; 404 until written |
 | `/export` | confirms the export and starts the download of `/export.zip` (`?back=<path>` names the page to return to); no JSON twin |
 | `/export.zip` | the whole dashboard as static HTML (`application/zip`, streamed, no JSON twin); see below |
+
+A page auto-refreshes while what it shows can change: a run's pages while the run is live or
+finalizing, a swarm's while the swarm is in memory, the project ledgers while a single run is
+live, and the index always. A swarm and its hordes show as `pending` from the moment their directories
+are allocated until the hordes have a TASK.md, which covers the minutes the planner takes, and as
+`not started` when the planner could not partition the task.
 
 The download icon in the top-right corner of every page opens a warning that the export may
 leak sensitive data from this machine. Its download link goes to `/export`, which closes the
 warning, explains the wait, and starts the download of `/export.zip`. The zip holds one
 folder, `horde-dashboard-<timestamp>/`, whose `index.html` opens the dashboard from disk: every
 run, member, transcript page and entry, log, run document, collaboration page, graph (each width,
-plus the Mermaid file), and the ledgers under each run filter, with links rewritten relative to
+plus the Mermaid file), and the ledgers of every scope, with links rewritten relative to
 each other. Exported pages do not refresh, expandable entries use the browser's own disclosure,
 finding bodies are shown inline, transcripts are paged fifty entries at a time, and the export
 control itself is absent. Pages that fail to load are exported as their error page, so no link
@@ -134,11 +157,17 @@ the session files, so they show end cause, turns, and usage but no activity.
     SUMMARY.md REPORT.md            per-member status and usage; the reconciled run report
     ANSWER.md DELIVERABLE.md POSTMORTEM.md   solved answer; synthesis output; reviewer critique
     GRAPH.md                        Mermaid graph of the run, written last at finalize
+  swarms/<swarm-id>/
+    SWARM.md SWARM.json             prompt, partition, horde list; the swarm's timeline for the dashboard
+    planner-sessions/ deliverable-sessions/   planner and merge helper sessions
+    REPORT.md DELIVERABLE.md        per-horde totals and file list; the merged deliverable
+    h1/ h2/ ...                     one complete horde directory per horde: its own ledgers,
+                                    .lock and runs/<swarm-id>-hN/ with everything a run has
 ```
 
 Each run appends a `## Run <id>` heading to BOARD.md and FINDINGS.md that cites `TASK.md` by
-sha256. `runs/` is gitignored inside `.horde/`; add `.horde/` to the project `.gitignore` to keep
-the ledgers out of git too.
+sha256. `runs/` and `swarms/` are gitignored inside `.horde/`; add `.horde/` to the project
+`.gitignore` to keep the ledgers out of git too.
 
 ## The `horde` tool
 
@@ -263,6 +292,46 @@ Crash and stall resets apply as usual. `stop-clean` and `stop-hard` end the run 
 `stop-clean` produces the report, deliverable, and postmortem; the last banked answer stands unless
 a later proposal was validated too.
 
+## Horde of hordes
+
+`H/M` launches a swarm: H concurrent hordes of M members on one task, H at most 4. A plain `M` is
+a swarm of one and keeps the layout above; a larger swarm gets `.horde/swarms/<swarm-id>/` with one
+complete horde directory per horde (`h1/`, `h2/`, ...), each with its own ledgers, lock and
+`runs/<swarm-id>-hN/`. Hordes therefore never share a lock, a dedup pass or a coverage watermark,
+and run ids stay unique across the swarm.
+
+**Partition.** A plain prompt is split before launch by a read-only planner helper (`pi -p`, the
+parent's model, `PI_HORDE_PLANNER_MS` timeout) into exactly H disjoint workstreams with one
+acceptance criterion each, recorded in `SWARM.md` and in each horde's `TASK.md`; every member of a
+horde is told its workstream and to work only on it. If the planner cannot produce H distinct
+workstreams the launch stops with that message, the swarm directory keeps the planner session and
+a `SWARM.md` saying why, and the slot stays free. `plan H/M a; b; c; ...` skips the planner: the
+layers are dealt round-robin to the hordes (layer 1 to h1, layer 2 to h2, ...) and each horde runs
+its share as its own plan, so there must be at least H layers.
+
+**Sharing.** Shared read, local write. Each member's system prompt lists the sibling horde
+directories; `horde facts` and `horde resources` append every sibling's entries tagged `[hN]`, and
+`horde list` appends their done and ruled-out ideas, so a fact, a rule-out or a lab another horde
+recorded is not re-derived. Open sibling ideas are not shown and nothing is written to a sibling:
+the lock, dedup and coverage rules keep their per-horde scope. Members reuse a sibling's resource
+by its path, not its R#.
+
+**Lifecycle.** The hordes start `PI_HORDE_SWARM_STAGGER_MS` (default 5000) apart so H canaries do
+not hit the provider at once; each then runs the lifecycle above unchanged, with its own canary,
+resets, repair, acceptance, deliverable and post-mortem. `--until-stop` applies to every horde.
+Controls take horde targets: `stop-clean h2` winds one horde down, `pause h2:member-3` one member,
+`stop-hard` every horde, and `status` prints one block per horde. The swarm slot frees once every
+horde has written its REPORT.md; after the last horde's finalize a synthesis helper reads the
+hordes' DELIVERABLE.md, REPORT.md and ACCEPTANCE.md and writes the swarm `DELIVERABLE.md`, keeping
+each claim attributed to its horde and to that horde's acceptance label, and the swarm `REPORT.md`
+with per-horde members, turns, tokens, cost, findings and outcome. One swarm report is injected into
+the parent conversation instead of one per horde. No horde reviews another's work; a verification
+pass over the merged deliverable is not built.
+
+**Dashboard and widget.** Each swarm has its own scope in the dashboard, with horde tabs and
+swarm-wide ledger, collaboration and graph pages; see [Dashboard](#dashboard). The widget shows one
+line per horde.
+
 ## Finding metadata
 
 `importance` (critical, high, medium, low, info), `confidence` (high, medium, low), and
@@ -295,6 +364,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_CANARY_MS` | 60000 | time for member-1 to produce output before a retry |
 | `PI_HORDE_STALL_MS` | 1800000 | reset a member with no ledger write for this long; `0` disables |
 | `PI_HORDE_RESET_CAP` | 2 | resets per member |
+| `PI_HORDE_SWARM_STAGGER_MS` | 5000 | pause between one horde's launch and the next in a swarm |
+| `PI_HORDE_PLANNER_MS` | 300000 | planner helper timeout when a swarm partitions a plain prompt |
 | `PI_HORDE_ACTIVE_GRACE_MS` | 15000 | one clean-stop extension for a member still producing output |
 | `PI_HORDE_SOLVED_CONFIRM_MS` | 120000 | wait for a second member to validate a solve |
 | `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
@@ -337,6 +408,7 @@ build-info.ts         the running package's version and checkout commit, for the
 collaboration-report.ts  acceptance checks, frozen snapshots, collaboration metrics
 run-graph.ts          events.jsonl projected into lanes, phases, nodes, and edges with dashboard links
 run-graph-svg.ts      the swimlane SVG and its legend; run-graph-mermaid.ts the Mermaid export and GRAPH.md
+swarm-graph.ts        a swarm's hordes as lanes of lifecycle marks, plus the merge step
 
 ledger/               one module per .horde/ document, all writes under the .horde lock
   files.ts            paths, init, atomic writes, shared entry formatting
@@ -361,10 +433,13 @@ tool/                 the member-side `horde` tool
   resource-contract.ts      resource generations, readiness, leases, and port coordination
 
 run/                  the parent-side run lifecycle, sharing one HordeState
-  types.ts            HordeRun, HordeState, ReportDetails
-  command.ts          /agent-horde dispatch and session shutdown
+  types.ts            HordeRun, Swarm, HordeState, ReportDetails
+  command.ts          /agent-horde dispatch, horde-prefixed targets, session shutdown
   setup.ts            run directory, TASK.md, roles, plan seeding
-  launch.ts           dashboard, deadline, canary preflight, fan-out
+  swarm.ts            swarm directories and ids, dealing plan layers, planner output parsing
+  swarm-finalize.ts   the swarm slot, the merge step, SWARM.json
+  swarm-report.ts     per-horde totals: the swarm REPORT.md and the injected message
+  launch.ts           dashboard, deadline, partition, staggered canary preflights, fan-out
   supervise.ts        member spawn, reset on exit, stall detection
   schedule.ts         artifact review assignment and superseded-dependency handoffs
   repair.ts           bounded post-discovery reviews, owner repair, and recheck attempts
@@ -372,7 +447,7 @@ run/                  the parent-side run lifecycle, sharing one HordeState
   controls.ts         stop-hard, pause and resume, clean stop and its deadline
   finalize.ts         reconcile, cleanups, SUMMARY.md and REPORT.md, report message, GRAPH.md
   lifecycle.ts        parent lifecycle events in events.jsonl
-  synthesis.ts        deliverable and post-mortem helper agents
+  synthesis.ts        deliverable, post-mortem, swarm merge and planner helper agents
   diagnosis.ts        one-line run diagnosis
   ui.ts               widget mount, status line, report renderer, notifications
   completions.ts      command argument completions

@@ -9,7 +9,7 @@ import type { PeerMessage, ReviewRecord } from "./ledger/collaboration.js";
 import type { Idea } from "./ledger/ideas.js";
 import type { ResourceEntry } from "./ledger/resources.js";
 import type { SolvedSignal } from "./ledger/run-signals.js";
-import type { MemberReset, MemberState } from "./member.js";
+import type { MemberReset, MemberState, SiblingHorde } from "./member.js";
 
 /** A resource with the non-owner members whose findings, evidence, reviews or leases cite it. */
 export type ReportResource = ResourceEntry & { citedBy?: string[] | undefined };
@@ -169,7 +169,26 @@ Collaboration loop:
   attempt after discovery exits. Repair attempts must address assigned feedback only.
 `;
 
-export function memberSystemPrompt(input: { hordeDir: string; count: number }): string {
+/** What a member of a swarm is told about the other hordes: shared read, local write. */
+function siblingsSection(siblings: SiblingHorde[]): string {
+  if (siblings.length === 0) return "";
+  const lines = siblings.map(
+    (sibling) => `- ${sibling.label}: ${sibling.hordeDir}/${sibling.slice ? ` (workstream: ${sibling.slice})` : ""}`,
+  );
+  return `
+Your horde is one of ${siblings.length + 1} hordes working the same task in parallel, each with its
+own ledgers. The other hordes' directories are read-only for you:
+
+${lines.join("\n")}
+
+'horde facts' and 'horde resources' include their entries tagged [hN], and 'horde list' includes
+their done and ruled-out ideas, so a fact, a rule-out, or a resource another horde recorded is not
+re-derived here; reuse a sibling's resource by its path. Every write goes to your own horde's
+ledgers; never write to a sibling's directory, and never claim or cite a sibling's ideas as yours.
+`;
+}
+
+export function memberSystemPrompt(input: { hordeDir: string; count: number; siblings?: SiblingHorde[] | undefined }): string {
   const count = input.count;
   return `You are one member of a horde of ${count} agents. Every member received the same task
 and works in parallel in this repository with its own separate context. Coordinate through the
@@ -188,9 +207,9 @@ horde tool. Durable run events retain messages, evidence, reviews and revisions;
 - PLAN.md     workstream partition and your assigned layer, when the run was started with plan.
 
 Read them with the read tool. Write them ONLY with the horde tool; never edit them directly.
-Put reproduction snippets under .horde/runs/<run-id>/artifacts/ using PI_HORDE_RUN, so evidence
-survives finalization and line references do not drift.
-
+Put reproduction snippets under ${input.hordeDir}/runs/<run-id>/artifacts/ using PI_HORDE_RUN, so
+evidence survives finalization and line references do not drift.
+${siblingsSection(input.siblings ?? [])}
 Protocol:
 1. Run 'horde list', 'horde findings', 'horde facts', and read BOARD.md before planning.
 2. Prefer the shared queue. Add an idea only for an uncovered question or concrete evidence gap.
@@ -275,7 +294,10 @@ export function taskMarkdown(input: {
   startedAt: number;
   verifier?: string | undefined;
   untilStop?: boolean | undefined;
+  /** Set for a horde of a larger swarm: which horde this is and its workstream. */
+  swarm?: { id: string; horde: number; hordes: number; slice?: string | undefined } | undefined;
 }): string {
+  const swarm = input.swarm;
   return [
     `# Horde run ${input.id}`,
     "",
@@ -285,6 +307,8 @@ export function taskMarkdown(input: {
     `Thinking: ${input.thinkingLevel ?? "parent default"}`,
     `Verifier: ${input.verifier ?? "none"}`,
     `Until stop: ${input.untilStop ? "yes (the run continues until stop-clean or stop-hard)" : "no"}`,
+    ...(swarm ? [`Swarm: ${swarm.id} (horde h${swarm.horde} of ${swarm.hordes})`] : []),
+    ...(swarm?.slice ? [`Workstream: ${swarm.slice}`] : []),
     `Task-SHA256: ${taskHash(input.prompt)}`,
     "",
     "## Prompt",

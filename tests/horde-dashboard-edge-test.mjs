@@ -59,7 +59,7 @@ await ledger.addFinding(hordeDir, runId, "member-1", "finding <script>alert(5)</
 await ledger.assertClaim(hordeDir, "member-1", "claim <script>alert(6)</script>");
 await ledger.addFact(hordeDir, "member-1", "fact <script>alert(7)</script>");
 
-const source = { hordeDir, getActive: () => undefined };
+const source = { hordeDir, getActive: () => [] };
 const server = await dash.startDashboard({ port: 0, source });
 const base = `http://127.0.0.1:${server.port}`;
 const get = async (p, init) => {
@@ -81,6 +81,11 @@ const htmlPages = [
   `/findings`,
   `/claims`,
   `/facts`,
+  `/runs/${runId}/ideas`,
+  `/runs/${runId}/board`,
+  `/runs/${runId}/findings`,
+  `/runs/${runId}/claims`,
+  `/runs/${runId}/facts`,
 ];
 for (const p of htmlPages) {
   const { res, text } = await get(p);
@@ -102,21 +107,21 @@ for (const p of [`/runs/${runId}/sessions/..%2F..%2FIDEAS.md`, `/runs/${runId}/s
   const { res } = await get(p);
   assert.equal(res.status, 400, `${p} should be rejected, got ${res.status}`);
 }
-// Invalid owner and run filters.
+// Invalid owner and run ids.
 assert.equal((await get("/ideas?owner=root")).res.status, 400);
-assert.equal((await get("/facts?run=nope")).res.status, 400);
+assert.equal((await get("/runs/nope/facts")).res.status, 400);
 assert.equal((await get(`/runs/${runId}/members/member-1?tail=0`)).res.status, 400);
 assert.equal((await get(`/runs/${runId}/members/member-1/log?tail=99999`)).res.status, 400);
 // refresh=3 is the default and accepted.
 assert.equal((await get(`/runs/${runId}?refresh=3`)).res.status, 200);
 
 // Findings cluster view groups the one finding.
-const clusters = JSON.parse((await get(`/api/findings?run=${runId}&view=clusters`)).text);
+const clusters = JSON.parse((await get(`/api/runs/${runId}/findings?view=clusters`)).text);
 assert.equal(clusters.view, "clusters");
 assert.ok(clusters.clusters.length >= 1);
 
-// Board order and run filter agree with the parser.
-const boardVm = JSON.parse((await get(`/api/board?run=${runId}&order=oldest`)).text);
+// Board order and the run scope agree with the parser.
+const boardVm = JSON.parse((await get(`/api/runs/${runId}/board?order=oldest`)).text);
 assert.equal(boardVm.order, "oldest");
 assert.ok(boardVm.entries.length >= 1);
 assert.ok(boardVm.entries.every((e) => e.runId === runId));

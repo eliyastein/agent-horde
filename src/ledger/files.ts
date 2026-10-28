@@ -79,7 +79,12 @@ function writeIfMissing(filePath: string, content: string): void {
 }
 
 export function initHordeDir(cwd: string): string {
-  const paths = hordePaths(path.join(cwd, ".horde"));
+  return initHordeDirAt(path.join(cwd, ".horde"));
+}
+
+/** Create a complete horde directory (ledgers, lock, runs/) at `hordeDir`; existing ledgers are kept. */
+export function initHordeDirAt(hordeDir: string): string {
+  const paths = hordePaths(hordeDir);
   fs.mkdirSync(paths.runs, { recursive: true });
   writeIfMissing(paths.gitignore, "runs/\n");
   writeIfMissing(paths.ideas, IDEAS_HEADER);

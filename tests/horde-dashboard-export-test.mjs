@@ -92,7 +92,7 @@ assert.deepEqual([...tinyFiles.get("z")], [1]);
 
 // --- The real dashboard exports as a self-contained site --------------------
 const HORDE = buildHordeFixture();
-const source = { hordeDir: HORDE, getActive: () => undefined };
+const source = { hordeDir: HORDE, getActive: () => [] };
 const { filename, zip } = await dash.exportDashboardBuffer(source, new Date("2026-10-20T12:34:56Z"));
 assert.equal(filename, "horde-dashboard-2026-10-20-12-34-56.zip");
 const files = readZip(zip);
@@ -133,7 +133,7 @@ for (const [name, data] of files) {
 }
 assert.ok(pages > 20, `exported ${pages} pages`);
 
-const findings = html("findings~run=all~view=list.html");
+const findings = html("findings.html");
 assert.ok(findings.includes("fixture detail line shown only when expanded"), "finding bodies are inline");
 const sessions = html(`runs/${FIXTURE_RUN}/sessions.html`);
 const file = /href="sessions\/([^"~]+)~from=0~n=50\.html"/.exec(sessions)?.[1];
@@ -164,14 +164,17 @@ const api = await fetch(`${base}/api/export.zip`);
 assert.equal(api.status, 404);
 assert.equal(JSON.parse(await api.text()).status, 404);
 
-const live = await (await fetch(`${base}/board`)).text();
-assert.ok(live.includes('<a class="export" href="/board?refresh=0#export" title="export dashboard" aria-label="export dashboard">'), "icon opens the modal on the paused page");
+// The run index always refreshes, so it carries the pause-then-export flow.
+const live = await (await fetch(`${base}/`)).text();
+assert.ok(live.includes('<a class="export" href="/?refresh=0#export" title="export dashboard" aria-label="export dashboard">'), "icon opens the modal on the paused page");
 assert.ok(live.includes('<div id="export" class="modal">'), "modal present");
-assert.ok(live.includes('<a class="btn" href="/export?back=%2Fboard">download zip</a>'), "download goes through the export page");
-assert.ok(live.includes('<a class="btn" href="/board">cancel</a>'), "cancel returns to the live page");
+assert.ok(live.includes('<a class="btn" href="/export?back=%2F">download zip</a>'), "download goes through the export page");
+assert.ok(live.includes('<a class="btn" href="/">cancel</a>'), "cancel returns to the live page");
 assert.ok(live.includes("secrets or credentials"), "warning names the risk");
-const paused = await (await fetch(`${base}/board?refresh=0`)).text();
-assert.ok(paused.includes('href="/board?refresh=0#export"') && paused.includes('<a class="btn" href="/board?refresh=0">cancel</a>'), "paused page stays paused");
+const paused = await (await fetch(`${base}/?refresh=0`)).text();
+assert.ok(paused.includes('href="/?refresh=0#export"') && paused.includes('<a class="btn" href="/?refresh=0">cancel</a>'), "paused page stays paused");
+const idleBoard = await (await fetch(`${base}/board`)).text();
+assert.ok(idleBoard.includes('href="/board#export"'), "an idle project ledger does not refresh, so it links the modal directly");
 const historical = await (await fetch(`${base}/runs/${FIXTURE_RUN}`)).text();
 assert.ok(historical.includes(`href="/runs/${FIXTURE_RUN}#export"`), "non-live pages link the modal directly");
 const notFound = await (await fetch(`${base}/nope`)).text();

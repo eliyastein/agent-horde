@@ -107,13 +107,14 @@ const members = [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: 
 const run = { id: runId, runDir, hordeDir, cwd, count: 3, prompt: "offline acceptance fixture", members, stopped: false,
   startedAt: Date.now(), startIdeaId: 0, startFactId: 0, cleanStopNames: [], canary: "ok", controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [] };
 const notices = [];
-const state = { disposed: false, pi: { sendMessage: (m) => notices.push(m) }, active: run };
+const swarm = { id: runId, dir: undefined, hordeDir, cwd, prompt: run.prompt, hordes: 1, count: 3, startedAt: run.startedAt, runs: [run] };
+const state = { disposed: false, pi: { sendMessage: (m) => notices.push(m) }, active: swarm };
 const saved = { ...process.env };
 try {
   process.env.PI_HORDE_POSTMORTEM = "off";
   process.env.PI_HORDE_DELIVERABLE = "off";
   process.env.PI_HORDE_CLEANUP = "off";
-  await finalizeRun(state, run);
+  await finalizeRun(state, swarm, run);
 } finally {
   for (const key of ["PI_HORDE_POSTMORTEM", "PI_HORDE_DELIVERABLE", "PI_HORDE_CLEANUP"]) {
     if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];

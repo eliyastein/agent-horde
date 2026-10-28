@@ -18,7 +18,7 @@ import { buildHordeFixture } from "./fixtures.mjs";
 
 const HORDE = buildHordeFixture();
 const RUN = "20260913-010341";
-const source = { hordeDir: HORDE, getActive: () => undefined };
+const source = { hordeDir: HORDE, getActive: () => [] };
 const server = await dash.startDashboard({ port: 0, source });
 assert.ok(server.port > 0);
 assert.equal(server.url, `http://127.0.0.1:${server.port}/`);
@@ -61,30 +61,27 @@ await expectHtml(`/runs/${RUN}/files/TASK`, "# Horde run");
 await expectHtml(`/runs/${RUN}/files/SUMMARY`, "member-1");
 await expectHtml("/ideas", "in progress", "done (");
 await expectHtml("/ideas?owner=member-1", "owner:");
-const board = await expectHtml("/board", "01:03:55", "member-2", "http-equiv");
-assert.ok(board.includes('content="3"'));
-await expectHtml(`/board?run=${RUN}&order=oldest`, "[newest first]");
+const board = await expectHtml("/board", "01:03:55", "member-2");
+assert.ok(!board.includes("http-equiv"), "project ledgers do not auto-refresh while no single run is live");
+await expectHtml(`/runs/${RUN}/board?order=oldest`, "[newest first]");
 const FINDING_BODY = "fixture detail line shown only when expanded";
 const findingsClosed = await expectHtml(
-  "/findings", "F1", '<a href="/findings?run=all&amp;view=list&amp;open=1">[show body]</a>',
+  "/findings", "F1", '<a href="/findings?view=list&amp;open=1">[show body]</a>',
 );
 assert.ok(!findingsClosed.includes(FINDING_BODY), "finding body is collapsed by default");
 const findingsOpen = await expectHtml(
-  "/findings?open=1", FINDING_BODY, '<a href="/findings?run=all&amp;view=list">[hide body]</a>', "http-equiv",
+  "/findings?open=1", FINDING_BODY, '<a href="/findings?view=list">[hide body]</a>',
 );
 assert.ok(!findingsOpen.includes("[show body]"), "open finding has no show link");
-const openPaused = await get("/findings?open=1&refresh=0");
-assert.ok(openPaused.text.includes('href="/findings?open=1"'), "resume link keeps open state");
-assert.ok(openPaused.text.includes(FINDING_BODY), "paused page keeps the body expanded");
-await expectHtml(`/findings?run=${RUN}&view=clusters`, "cluster 1", "[show body]");
-await expectHtml(`/findings?run=${RUN}&view=clusters&open=1`, "cluster 1", FINDING_BODY, "[hide body]");
+// A run's own ledger pages keep the run in every link they build.
+await expectHtml(`/runs/${RUN}/findings`, `<a href="/runs/${RUN}/findings?view=list&amp;open=1">[show body]</a>`);
+await expectHtml(`/runs/${RUN}/findings?view=clusters`, "cluster 1", "[show body]");
+await expectHtml(`/runs/${RUN}/findings?view=clusters&open=1`, "cluster 1", FINDING_BODY, "[hide body]");
+await expectHtml(`/runs/${RUN}/ideas`, `href="/runs/${RUN}/ideas?owner=member-1"`);
 const openApi = await get("/api/findings?open=1,1");
 assert.deepEqual(JSON.parse(openApi.text).open, [1], "api exposes deduped open ids");
 await expectHtml("/claims");
-await expectHtml(`/facts?run=${RUN}`, "attribution is only available");
-const paused = await get("/board?refresh=0");
-assert.ok(!paused.text.includes("http-equiv"));
-assert.ok(paused.text.includes("[resume]"));
+await expectHtml(`/runs/${RUN}/facts`, "attribution is only available");
 
 const expectStatus = async (path, status, needle, init) => {
   const { res, text } = await get(path, init);
@@ -100,6 +97,9 @@ await expectStatus(`/runs/${RUN}/members/member-9`, 404, "has no member-9");
 await expectStatus(`/runs/${RUN}/files/REPORT`, 404, "has not been written yet");
 await expectStatus(`/api/runs/${RUN}/files/REPORT`, 404, '"status":404');
 await expectStatus("/runs/20991231-000000", 404, "no run");
+await expectStatus("/runs/20991231-000000/findings", 404, "no run");
+await expectStatus("/runs/..%2F..%2Fetc/facts", 400, "invalid run id");
+await expectStatus(`/findings?run=${RUN}`, 200);
 await expectStatus(`/runs/${RUN}/sessions/${file}?n=abc`, 400, "invalid n");
 await expectStatus(`/runs/${RUN}/sessions/${file}?n=0`, 400, "n must be");
 await expectStatus("/board?order=sideways", 400, "invalid order");
@@ -140,14 +140,21 @@ const live = {
   id: RUN, hordeDir: HORDE, runDir: `${HORDE}/runs/${RUN}`, prompt: "p", count: 1, startedAt: Date.now(), stopped: false,
   startFactId: 0, members: [{ name: "member-1", index: 1, status: "running", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "hi", finalText: "", startedAt: Date.now() }],
 };
-const liveSource = { hordeDir: HORDE, getActive: () => live };
+const liveSource = { hordeDir: HORDE, getActive: () => [live] };
 const liveHtml = (path) => dash.routeRequest(liveSource, "GET", new URL(`http://127.0.0.1${path}`), "127.0.0.1").body;
 assert.ok(liveHtml(`/runs/${RUN}`).includes("http-equiv"));
 assert.ok(liveHtml(`/runs/${RUN}`).includes("<b>ACTIVE</b>") === false);
 assert.ok(liveHtml("/").includes("<b>ACTIVE</b>"));
 assert.ok(liveHtml(`/runs/${RUN}/members/member-1`).includes("http-equiv"));
 assert.ok(liveHtml(`/runs/${RUN}/members/member-1`).includes("last text"));
-assert.ok(liveHtml(`/facts?run=${RUN}`).includes("this run ("));
+assert.ok(liveHtml(`/runs/${RUN}/facts`).includes("this run ("));
+// A single run writes the project ledgers, so they refresh while it is live, with a pause toggle.
+assert.ok(liveHtml("/board").includes('<meta http-equiv="refresh" content="3">'));
+const pausedBoard = liveHtml("/board?refresh=0");
+assert.ok(!pausedBoard.includes("http-equiv") && pausedBoard.includes("[resume]"));
+const openPaused = liveHtml("/findings?open=1&refresh=0");
+assert.ok(openPaused.includes('href="/findings?open=1"'), "resume link keeps open state");
+assert.ok(openPaused.includes("fixture detail line shown only when expanded"), "paused page keeps the body expanded");
 
 // Lifecycle.
 await assert.rejects(dash.startDashboard({ port: server.port, source }), /in use/);

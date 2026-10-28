@@ -96,10 +96,10 @@ assert.ok(graph.phases[0].to < graph.end);
 const ideaNode = node(`I${idea.id}`);
 assert.equal(ideaNode.kind, "idea");
 assert.equal(ideaNode.lane, "member-1");
-assert.equal(ideaNode.href, `/ideas#idea-${idea.id}`);
+assert.equal(ideaNode.href, `/runs/${runId}/ideas#idea-${idea.id}`);
 assert.ok(ideaNode.title.includes("<script>"), "the model keeps raw text; renderers escape");
 const findingNode = node(`F${finding.id}`);
-assert.equal(findingNode.href, `/findings?run=${runId}#F${finding.id}`);
+assert.equal(findingNode.href, `/runs/${runId}/findings#F${finding.id}`);
 assert.ok(edge(`F${finding.id}`, `I${idea.id}`, "under"));
 const claimMarker = graph.nodes.find((n) => n.action === "claim");
 assert.ok(claimMarker.marker);
@@ -113,8 +113,8 @@ assert.equal(rejected.lane, "member-2");
 assert.equal(edge(rejected.id, `I${idea.id}`).tone, "negative");
 const verifyMarker = graph.nodes.find((n) => n.action === "verify");
 assert.equal(edge(verifyMarker.id, `F${finding.id}`, "verifies").tone, "verification");
-assert.equal(node(`T${fact.id}`).href, `/facts?run=${runId}#T${fact.id}`);
-assert.equal(node(`R${resource.id}`).href, `/resources#R${resource.id}`);
+assert.equal(node(`T${fact.id}`).href, `/runs/${runId}/facts#T${fact.id}`);
+assert.equal(node(`R${resource.id}`).href, `/runs/${runId}/resources#R${resource.id}`);
 assert.equal(node(artifact.id).kind, "artifact");
 assert.equal(node(artifact.id).href, `/runs/${runId}/collaboration#${artifact.id}`);
 assert.equal(node(request.id).lane, "parent");
@@ -149,8 +149,8 @@ assert.deepEqual(graphs.buildRunGraph({ runId, events: [] }).lanes.map((lane) =>
 // ---- SVG -----------------------------------------------------------------------------------------
 const picture = svg.renderRunGraphSvg(graph, { width: 1200, from: 0, to: 0 });
 assert.ok(picture.startsWith("<svg "));
-assert.ok(picture.includes(`<a href="/ideas#idea-${idea.id}">`));
-assert.ok(picture.includes(`<a href="/findings?run=${runId}#F${finding.id}">`));
+assert.ok(picture.includes(`<a href="/runs/${runId}/ideas#idea-${idea.id}">`));
+assert.ok(picture.includes(`<a href="/runs/${runId}/findings#F${finding.id}">`));
 assert.ok(picture.includes(`<a href="/runs/${runId}/members/member-1">`));
 assert.ok(picture.includes("&lt;script&gt;") && !picture.includes("<script>"), "titles are escaped");
 assert.ok(picture.includes("&quot;quoted&quot;"));
@@ -169,7 +169,7 @@ assert.ok(svg.graphLegendHtml().includes("finding"));
 const text = mermaid.renderRunGraphMermaid(graph, "http://127.0.0.1:7433/");
 assert.ok(text.startsWith("%% Horde run "));
 assert.ok(text.includes("\nflowchart LR\n"));
-assert.ok(text.includes(`  click F${finding.id} "http://127.0.0.1:7433/findings?run=${runId}#F${finding.id}"`));
+assert.ok(text.includes(`  click F${finding.id} "http://127.0.0.1:7433/runs/${runId}/findings#F${finding.id}"`));
 assert.ok(text.includes(`  click member_1 "http://127.0.0.1:7433/runs/${runId}/members/member-1"`));
 assert.ok(text.includes(`  member_1 -.->|claims| I${idea.id}`));
 assert.ok(text.includes(`  F${finding.id} -->|under| I${idea.id}`));
@@ -180,15 +180,15 @@ assert.ok(!/^\s*member_1 -.->\|post\|/m.test(text), "edge-less markers are dropp
 const markdown = mermaid.runGraphMarkdown(graph, "http://127.0.0.1:7433");
 assert.ok(markdown.startsWith(`# Run graph ${runId}`) && markdown.includes("```mermaid\n%% Horde run"));
 finalize.writeRunGraph(fakeRun);
-assert.ok(fs.readFileSync(path.join(runDir, "GRAPH.md"), "utf8").includes(`click F${finding.id} "http://127.0.0.1:7433/findings`));
+assert.ok(fs.readFileSync(path.join(runDir, "GRAPH.md"), "utf8").includes(`click F${finding.id} "http://127.0.0.1:7433/runs/${runId}/findings`));
 
 // ---- Dashboard -----------------------------------------------------------------------------------
-const src = { hordeDir, getActive: () => undefined };
+const src = { hordeDir, getActive: () => [] };
 const get = (target) => dashboard.routeRequest(src, "GET", new URL(`http://127.0.0.1:7433${target}`), "127.0.0.1:7433");
 const page = get(`/runs/${runId}/graph?w=800`);
 assert.equal(page.status, 200, page.body.slice(0, 200));
 assert.equal(page.contentType, "text/html; charset=utf-8");
-assert.ok(page.body.includes("<svg ") && page.body.includes("mermaid export") && page.body.includes(`href="/runs/${runId}/graph"`));
+assert.ok(page.body.includes("<svg ") && page.body.includes("mermaid export") && page.body.includes("<b>graph</b>"), "the graph is the current page-row item");
 assert.ok(page.body.includes("width: 800 "), "the current width is plain text, the others links");
 assert.ok(!page.body.includes("http-equiv"), "a finished run does not auto-refresh");
 const windowed = get(`/runs/${runId}/graph?from=1&to=2`);
@@ -196,7 +196,7 @@ assert.ok(windowed.body.includes("window: +00:01 to +00:02"));
 const exported = get(`/runs/${runId}/graph.mmd`);
 assert.equal(exported.status, 200);
 assert.equal(exported.contentType, "text/plain; charset=utf-8");
-assert.ok(exported.body.startsWith("%% Horde run ") && exported.body.includes(`"http://127.0.0.1:7433/findings?run=${runId}#F${finding.id}"`));
+assert.ok(exported.body.startsWith("%% Horde run ") && exported.body.includes(`"http://127.0.0.1:7433/runs/${runId}/findings#F${finding.id}"`));
 const api = JSON.parse(get(`/api/runs/${runId}/graph`).body);
 assert.equal(api.graph.nodes.length, graph.nodes.length);
 assert.equal(get(`/runs/${runId}/graph?w=10`).status, 400);
@@ -209,8 +209,9 @@ assert.ok(opened.includes(`<div id="${claimMarker.id}"><section id="detail-`) &&
 assert.ok(opened.includes("&quot;action&quot;: &quot;claim&quot;"), "the opened entry shows the event json");
 assert.equal((opened.match(/aria-expanded="true"/g) ?? []).length, 1, "only the linked entry opens");
 for (const id of [artifact.id, request.id, review.id]) assert.ok(collaboration.includes(`id="${id}"`), `collaboration anchors ${id}`);
-assert.ok(get("/facts").body.includes(`id="T${fact.id}"`));
-assert.ok(get("/resources").body.includes(`id="R${resource.id}"`));
+assert.ok(get(`/runs/${runId}/facts`).body.includes(`id="T${fact.id}"`));
+assert.ok(get(`/runs/${runId}/resources`).body.includes(`id="R${resource.id}"`));
+assert.ok(get("/facts").body.includes(`id="T${fact.id}"`), "the project facts page lists the shared ledger");
 // A run that predates events.jsonl renders an empty graph page rather than an error.
 const olderRun = "20260913-110000";
 fs.mkdirSync(path.join(hordeDir, "runs", olderRun), { recursive: true });
@@ -219,16 +220,25 @@ const older = get(`/runs/${olderRun}/graph`);
 assert.equal(older.status, 200);
 assert.ok(older.body.includes("no events recorded"));
 assert.equal(get(`/runs/${olderRun}/graph.mmd`).status, 200);
-// The collaboration and graph links are in the nav everywhere: the page's run, the ?run= filter, else the newest run.
-const navOf = (body) => /<nav>(.*?)<\/nav>/.exec(body)[1];
-for (const target of ["/", "/ideas", "/findings", "/claims", "/resources", `/runs/${runId}/members/member-1`]) {
+// The nav is built from the page's own scope, never from "the newest run".
+const navOf = (body) =>
+  [...body.matchAll(/<nav>(.*?)<\/nav>/g)].map((m) => m[1]).join("") + (/<p class="scope">(.*?)<\/p>/.exec(body)?.[1] ?? "");
+for (const target of ["/", "/ideas", "/findings", "/claims", "/resources"]) {
   const nav = navOf(get(target).body);
-  assert.ok(nav.includes(`href="/runs/${runId}/graph"`) && nav.includes(`href="/runs/${runId}/collaboration"`), `${target} links the newest run`);
+  assert.ok(nav.includes("scope: <b>project</b>"), `${target} is project scope: ${nav}`);
+  assert.ok(!nav.includes("/graph") && !nav.includes("/collaboration"), `${target} links no run's graph or collaboration`);
+  assert.ok(nav.includes('href="/findings"') || target === "/findings", `${target} links the project ledgers`);
 }
-assert.ok(navOf(get(`/findings?run=${olderRun}`).body).includes(`href="/runs/${olderRun}/graph"`), "the ?run= filter picks the nav run");
-assert.ok(navOf(get(`/runs/${olderRun}/graph`).body).includes(`href="/runs/${olderRun}/collaboration"`), "a run page links its own run");
-assert.ok(navOf(get("/findings?run=all").body).includes(`href="/runs/${runId}/graph"`), "run=all falls back to the newest run");
-assert.ok(!navOf(dashboard.routeRequest({ hordeDir: files.initHordeDir(fs.mkdtempSync(path.resolve(".tmp/horde-graph-empty-"))), getActive: () => undefined }, "GET", new URL("http://127.0.0.1:7433/ideas"), "127.0.0.1:7433").body).includes("/graph"), "no runs, no run links");
+assert.ok(navOf(get("/findings").body).includes("<b>findings</b>"), "the current page is marked, not linked");
+for (const run of [runId, olderRun]) {
+  const nav = navOf(get(`/runs/${run}/graph`).body);
+  assert.ok(nav.includes(`scope: <b>run ${run}</b>`), nav);
+  assert.ok(nav.includes(`href="/runs/${run}/collaboration"`) && nav.includes(`href="/runs/${run}/findings"`), `${run} graph links its own run`);
+  assert.ok(nav.includes("<b>graph</b>") && !nav.includes("hordes:"), "a single run has no horde tabs");
+}
+const memberNav = navOf(get(`/runs/${runId}/members/member-1`).body);
+assert.ok(memberNav.includes(`href="/runs/${runId}"`) && memberNav.includes(`href="/runs/${runId}/graph"`), "a run's member page stays in its run");
+assert.ok(!navOf(dashboard.routeRequest({ hordeDir: files.initHordeDir(fs.mkdtempSync(path.resolve(".tmp/horde-graph-empty-"))), getActive: () => [] }, "GET", new URL("http://127.0.0.1:7433/ideas"), "127.0.0.1:7433").body).includes("/graph"), "no runs, no run links");
 
 console.log("horde-graph-test ok");
 

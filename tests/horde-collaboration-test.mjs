@@ -164,7 +164,8 @@ const run = { id: runId, hordeDir, runDir, prompt: "test", count: 3, cwd,
   members: [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" })),
   startIdeaId: 0, startFactId: 0, startedAt: Date.now(), stopped: true, userStop: true, cleanStopNames: ["member-1"],
   controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [], solvedValidatedBy: "member-2" };
-await finalize.finalizeRun({ disposed: false, active: run, pi: { sendMessage: () => {} } }, run);
+const swarm = { id: runId, dir: undefined, hordeDir, cwd, prompt: "test", hordes: 1, count: 3, startedAt: run.startedAt, runs: [run] };
+await finalize.finalizeRun({ disposed: false, active: swarm, pi: { sendMessage: () => {} } }, swarm, run);
 assert.equal(run.solvedValidatedBy, undefined);
 assert.equal(run.solvedContested, true);
 assert.match(fs.readFileSync(path.join(runDir, "ANSWER.md"), "utf8"), /Status: contested by member-3/);
@@ -173,7 +174,7 @@ assert.equal(fs.readdirSync(path.join(runDir, "answers")).length, 1);
 assert.match(fs.readFileSync(path.join(runDir, "REPORT.md"), "utf8"), /outcome: solved-contested/);
 
 // Escaped, read-only human audit and JSON twin; historical data is not invented.
-const source = { hordeDir, getActive: () => undefined };
+const source = { hordeDir, getActive: () => [] };
 const web = dashboard.routeRequest(source, "GET", new URL(`http://127.0.0.1/runs/${runId}/collaboration`), "127.0.0.1");
 assert.equal(web.status, 200);
 assert.match(web.body, /Event audit/);
