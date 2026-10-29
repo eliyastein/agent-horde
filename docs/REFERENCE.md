@@ -248,7 +248,10 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   still `respond` to a deferred request, and the requester then resolves it. A challenger can
   withdraw its own blocking challenge on an F# or A# before any response by recording a
   supporting review of the current revision and resolving with evidence on it; limits that
-  review discloses remain acceptance debt. Acceptance names an open blocker as `blocked by Q#`.
+  review discloses remain acceptance debt. A blocking request about the sender's own work (a
+  re-review after a correction) resolves on the recipient's supporting review of the current
+  revision, full-scope for an A#, since the owner may not review it. Acceptance names an open
+  blocker as `blocked by Q#`.
 - **Verifier.** The verifier's idea claims are refused while other members' findings await its
   review at their current revision; the pending F# list follows every review, reattest and board
   post. A verifier whose session closes with critical or high-importance findings unreviewed is

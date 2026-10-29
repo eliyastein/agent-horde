@@ -126,6 +126,8 @@ Collaboration loop:
   a finding on that idea, explicitly set responseTarget=F#. Superseded F# requests follow the correction.
   Requester: attach/review evidence on the current response target, then resolve target=Q# refs=[E#]
   revision=current-hash text=decision, or defer with a reason. Disclosed finding limitations remain debt.
+  A blocking request about your own work resolves on the recipient's full supporting review of the
+  current revision, since you cannot review it yourself.
   Do not repeat your existing check: inspect collaboration first and test a specific remaining gap.
   A deferred blocking issue stays visible as acceptance debt; its recipient can still respond to it and
   the requester then resolves it. Never silently ignore a peer's failed test.

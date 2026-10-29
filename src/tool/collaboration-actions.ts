@@ -107,11 +107,12 @@ function responseSubject(c: CollaborationCommand, m: PeerMessage): string {
 }
 
 /**
- * A blocking request closes on the recipient's response plus the sender's own supporting check of
- * the current revision. Before any response the sender may still withdraw its own challenge on an
- * F# or A#: a challenger that verified the claim itself, or watched others verify it, records a
- * supporting review of the current revision and cites evidence on it. Limits that review
- * discloses stay acceptance debt on the review record; the withdrawal clears only the dispute.
+ * A blocking request closes on the recipient's response plus a supporting check of the current
+ * revision: the sender's own review on a challenge, or the recipient's review when the sender owns
+ * the target and so may not review it. Before any response the sender may still withdraw its own
+ * challenge on an F# or A#: a challenger that verified the claim itself, or watched others verify
+ * it, records a supporting review of the current revision and cites evidence on it. Limits that
+ * review discloses stay acceptance debt on the review record; the withdrawal clears only the dispute.
  */
 function validateResolution(c: CollaborationCommand, m: PeerMessage, refs: string[]): void {
   if (m.sender === m.to) throw new Error("horde: a blocking request needs an independent resolver");
@@ -121,13 +122,19 @@ function validateResolution(c: CollaborationCommand, m: PeerMessage, refs: strin
   if (refs.length === 0 || (withdrawal && !reviewable) || (!withdrawal && !["responded", "deferred"].includes(m.state))) {
     throw new Error("horde: blocking resolution needs a response and evidence");
   }
-  const revision = targetInfo(c.ctx, c.state, target).revision;
+  const { owner, revision } = targetInfo(c.ctx, c.state, target);
   if ((c.params.revision ?? m.responseRevision ?? revision) !== revision) throw new Error(`horde: response is stale; explicitly review and resolve ${target}@${revision}, or ask the owner to respond again`);
   if (!refs.some((id) => c.state.evidence.some((e) => e.id === id && e.target === target && e.revision === revision))) {
     const detail = staleEvidence(c.state, refs, target, revision) ?? `none of ${refs.join(", ")} targets ${target}@${revision.slice(0, 12)}`;
     throw new Error(`horde: resolution evidence must address the current response target revision: ${detail}; attach evidence to that revision first`);
   }
   if (!reviewable) return;
+  if (owner === c.ctx.actor) requireRecipientReview(c, m, target, revision, withdrawal);
+  else requireOwnReview(c, target, revision, withdrawal);
+}
+
+/** A challenger settles its own dispute: its latest review of the current revision must support. */
+function requireOwnReview(c: CollaborationCommand, target: string, revision: string, withdrawal: boolean): void {
   const review = c.state.reviews.findLast((r) => r.target === target && r.revision === revision && r.actor === c.ctx.actor);
   if (!review || review.verdict !== "supports") {
     throw new Error(withdrawal
@@ -135,6 +142,24 @@ function validateResolution(c: CollaborationCommand, m: PeerMessage, refs: strin
       : "horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
   }
   if (!withdrawal && target.startsWith("A") && review.unchecked) throw new Error("horde: resolve requires your supporting review of the current revision; finding limitations remain acceptance debt");
+}
+
+/**
+ * The owner of the target cannot review it, so a request it sent about its own work (a re-review
+ * after a correction) resolves on the recipient's supporting review of the current revision. The
+ * refusal names what is missing, since telling the owner to review its own artifact leads nowhere.
+ */
+function requireRecipientReview(c: CollaborationCommand, m: PeerMessage, target: string, revision: string, withdrawal: boolean): void {
+  const review = c.state.reviews.findLast((r) => r.target === target && r.revision === revision && r.actor === m.to);
+  const short = `${target}@${revision.slice(0, 12)}`;
+  const prefix = `horde: ${target} is yours, so ${m.id} resolves on ${m.to}'s review`;
+  if (!review || review.verdict !== "supports") {
+    const missing = review ? `${review.id} is ${review.verdict}, not supports` : `no supporting review of ${short} by ${m.to} yet`;
+    throw new Error(`${prefix}: ${missing}; ask ${m.to} to review the current revision`);
+  }
+  if (!withdrawal && target.startsWith("A") && review.unchecked) {
+    throw new Error(`${prefix}: ${review.id} left unchecked: ${review.unchecked}; ask ${m.to} for a full review of ${short}`);
+  }
 }
 
 function attachEvidence(c: CollaborationCommand): EventDraft {
