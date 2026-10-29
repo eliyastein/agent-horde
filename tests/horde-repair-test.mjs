@@ -23,7 +23,14 @@ if (process.argv.includes("--mode")) {
     }, 25);
     await new Promise(() => {});
   }
-  for (const q of inboxFor(ctx)) {
+  // The "stall" scenario: member-2 completes without touching its inbox; member-3 defers member-2's
+  // blocker on its sender's behalf, so that one held thread changes and re-qualifies member-2.
+  const stalling = process.env.PI_HORDE_FIXTURE_REPAIR === "stall" && ctx.actor === "member-2";
+  if (process.env.PI_HORDE_FIXTURE_REPAIR === "stall" && ctx.actor === "member-3") {
+    const blocker = collaborationState(ctx.hordeDir, ctx.runId).messages.find((m) => m.kind === "blocker" && m.to === "member-2" && m.state !== "deferred");
+    if (blocker) await runCollaborationAction({ ...ctx, actor: blocker.sender }, { action: "defer", target: blocker.id, text: "parked while the owner reworks it" });
+  }
+  for (const q of stalling ? [] : inboxFor(ctx)) {
     const artifact = collaborationState(ctx.hordeDir, ctx.runId).artifacts.find((a) => a.id === q.target);
     if (ctx.actor === artifact.owner) {
       await act({ action: "ack", target: q.id, text: "fixing the scanner" });
@@ -257,6 +264,49 @@ if (process.argv.includes("--mode")) {
   const orderStarts = readEvents(hordeDir, orderId).filter((e) => e.action === "repair-start").map((e) => e.actor);
   assert.deepEqual(orderStarts, ["member-2", "member-1", "member-3"], "the owner's new blocker is served before the pending question, in the single round");
   assert.ok(collaborationState(hordeDir, orderId).messages.some((m) => m.kind === "challenge" && m.to === "member-1" && m.state === "responded"), "the owner answered the challenge raised mid-round");
+
+  // A thread that a completed attempt left unchanged is held back from that member in later rounds
+  // (issue #28): member-2 ignores its blocker, member-3 answers nothing on its question. Only the
+  // deferral of the blocker, a change by another member, earns member-2 a second attempt.
+  const stallId = "20261028-300001";
+  const stallDir = path.join(hordeDir, "runs", stallId);
+  fs.mkdirSync(path.join(stallDir, "artifacts"), { recursive: true });
+  fs.writeFileSync(path.join(stallDir, "TASK.md"), "Members: 3\n");
+  fs.writeFileSync(path.join(stallDir, "SYSTEM.md"), "fixture");
+  fs.writeFileSync(path.join(stallDir, "artifacts/probe.txt"), "fixed: positive and negative controls\n");
+  const stallArtifact = JSON.parse((await runCollaborationAction({ hordeDir, runId: stallId, actor: "member-1" }, { action: "artifact", artifactPath: "artifacts/probe.txt", criteria: "positive and negative controls" })).text).artifact;
+  const stallBlocker = JSON.parse((await runCollaborationAction({ hordeDir, runId: stallId, actor: "member-1" }, { action: "message", target: stallArtifact.id, to: "member-2", kind: "blocker", text: "rerun the negative control" })).text).message;
+  const stallQuestion = JSON.parse((await runCollaborationAction({ hordeDir, runId: stallId, actor: "member-1" }, { action: "message", target: stallArtifact.id, to: "member-3", kind: "question", text: "is the control set complete?" })).text).message;
+  const stallMembers = [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" }));
+  const stallRun = { ...run, id: stallId, runDir: stallDir, members: stallMembers, count: 3, verifier: "member-3", repairTokens: 0, repairSkipped: undefined, controller: new AbortController(), controllers: new Map(), procs: new Map() };
+  const stallEnv = { ...process.env };
+  try {
+    process.env.PI_HORDE_FIXTURE_REPAIR = "stall";
+    process.env.PI_HORDE_REPAIR_ROUNDS = "3";
+    process.env.PI_HORDE_REPAIR_TOKENS = "50000";
+    process.env.PI_HORDE_REPAIR_MS = "90000";
+    process.env.PI_HORDE_REPAIR_MIN_TOKENS = "1";
+    process.env.PI_HORDE_REPAIR_MIN_MS = "1";
+    await drainRepairs({ ...launch, run: stallRun, roles: Array(3).fill("fixture") });
+  } finally {
+    for (const key of ["PI_HORDE_FIXTURE_REPAIR", "PI_HORDE_REPAIR_ROUNDS", "PI_HORDE_REPAIR_TOKENS", "PI_HORDE_REPAIR_MS", "PI_HORDE_REPAIR_MIN_TOKENS", "PI_HORDE_REPAIR_MIN_MS"]) {
+      if (stallEnv[key] === undefined) delete process.env[key]; else process.env[key] = stallEnv[key];
+    }
+  }
+  const stallEvents = readEvents(hordeDir, stallId);
+  const stallStarts = stallEvents.filter((e) => e.action === "repair-start");
+  assert.deepEqual(stallStarts.map((e) => e.actor), ["member-2", "member-3", "member-2"], "three rounds, three attempts: the unchanged question is never retried, the blocker only after its deferral");
+  assert.deepEqual(stallStarts[2].payload.messages, [stallBlocker.id], "the deferred blocker re-qualified member-2 on its own");
+  assert.equal(collaborationState(hordeDir, stallId).messages.find((m) => m.id === stallBlocker.id).state, "deferred");
+  const stallEnds = stallEvents.filter((e) => e.action === "repair-end");
+  assert.deepEqual(stallEnds.filter((e) => e.actor === "member-2").map((e) => e.payload.unchanged), [[stallBlocker.id], [stallBlocker.id]], "each completed attempt records what it left unchanged");
+  assert.ok(stallEnds.find((e) => e.actor === "member-3").payload.unchanged.includes(stallQuestion.id), "member-3 reviewed the artifact but never answered the question");
+  const stalls = stallEvents.filter((e) => e.action === "repair-skipped" && e.payload.reason === "no-progress");
+  assert.deepEqual(stalls.map((e) => e.payload.members[0].member), ["member-2", "member-3", "member-2"], "a member whose whole queue is held is recorded as stalled");
+  assert.deepEqual(stalls[0].payload.members[0].messages, [stallBlocker.id]);
+  assert.deepEqual(stallRun.repairStalled, ["member-2", "member-3"], "the summary learns who stalled");
+  assert.equal(stallMembers[1].repairs, 2);
+  assert.equal(stallMembers[2].repairs, 1);
 
   // Hard stops never schedule repair sessions, even with work pending.
   await runCollaborationAction({ hordeDir, runId: id, actor: "member-2" }, { action: "message", target: artifact.id, kind: "challenge", text: "new unresolved issue" });

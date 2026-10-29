@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { inboxFor } from "../tool/inbox.js";
 import type { PeerMessage } from "../ledger/collaboration.js";
 import { recordEvent } from "../ledger/events.js";
+import type { EventContext } from "../ledger/events.js";
 import { recordPhase } from "./lifecycle.js";
 import { envNumber } from "../format.js";
 import { resetMemberState } from "../member.js";
@@ -24,9 +25,68 @@ function repairPriority(message: PeerMessage): number {
   return 3;
 }
 
-function queueFor(launch: RunLaunch, member: MemberState): PeerMessage[] {
-  return inboxFor({ hordeDir: launch.run.hordeDir, runId: launch.run.id, actor: member.name })
+/** The repair phase's scheduling state, shared by every round. */
+interface RepairPhase {
+  launch: RunLaunch;
+  floors: RepairFloors;
+  /**
+   * Threads a member's completed attempt left exactly as it found them, by member then message
+   * id, with the signature each was stuck at. The thread is held back from that member until its
+   * signature changes, which only another member's action or a new response can cause.
+   */
+  stalled: Map<string, Map<string, string>>;
+}
+
+function memberContext(phase: RepairPhase, member: MemberState): EventContext {
+  return { hordeDir: phase.launch.run.hordeDir, runId: phase.launch.run.id, actor: member.name };
+}
+
+/**
+ * What an attempt can change on a thread: its state and the revision it was answered with.
+ * Delivery receipts and a re-worded response on the same revision are not progress, so neither
+ * the inbox read of a fresh attempt nor a recipient repeating itself re-qualifies a thread.
+ */
+function threadSignature(m: PeerMessage): string {
+  return `${m.state}:${m.responseRevision ?? ""}:${m.responseTarget ?? ""}`;
+}
+
+function isStalled(phase: RepairPhase, member: MemberState, m: PeerMessage): boolean {
+  return phase.stalled.get(member.name)?.get(m.id) === threadSignature(m);
+}
+
+/** The threads an attempt for the member would be handed: its inbox minus the threads held back. */
+function queueFor(phase: RepairPhase, member: MemberState): PeerMessage[] {
+  return inboxFor(memberContext(phase, member)).filter((m) => !isStalled(phase, member, m))
     .sort((a, b) => repairPriority(a) - repairPriority(b) || a.createdAt.localeCompare(b.createdAt));
+}
+
+/**
+ * A completed attempt that left a thread as it found it will not move it with the same inbox
+ * again, so the thread is held back from this member. A killed attempt keeps its threads: it may
+ * have been about to act. Returns the ids held back by this attempt.
+ */
+function holdUnchanged(phase: RepairPhase, member: MemberState, queue: PeerMessage[]): string[] {
+  if (member.endCause !== "completed") return [];
+  const after = new Map(inboxFor(memberContext(phase, member)).map((m) => [m.id, threadSignature(m)]));
+  const unchanged = queue.filter((m) => after.get(m.id) === threadSignature(m));
+  const held = phase.stalled.get(member.name) ?? new Map<string, string>();
+  for (const m of unchanged) held.set(m.id, threadSignature(m));
+  phase.stalled.set(member.name, held);
+  return unchanged.map((m) => m.id);
+}
+
+/**
+ * Once every thread in the member's inbox is one its own completed attempt could not move, later
+ * rounds skip the member and its threads drop out of the demand that sizes the shares, until
+ * another member changes one. Recorded so the post-mortem sees why the member stopped appearing.
+ */
+async function recordStalled(phase: RepairPhase, member: MemberState): Promise<void> {
+  const ctx = memberContext(phase, member);
+  const held = inboxFor(ctx).filter((m) => isStalled(phase, member, m)).map((m) => m.id);
+  if (!held.length || queueFor(phase, member).length) return;
+  const { run } = phase.launch;
+  run.repairStalled = [...new Set([...(run.repairStalled ?? []), member.name])];
+  await recordEvent({ ...ctx, actor: "parent", attempt: "scheduler" }, "repair-skipped", { payload: { reason: "no-progress", members: [{ member: member.name, messages: held }] } });
 }
 
 /**
@@ -114,10 +174,10 @@ export function repairBudget(demands: number[], floors: RepairFloors, rounds: nu
 
 type SkipReason = "insufficient-budget" | "insufficient-time";
 
-async function recordSkipped(launch: RunLaunch, pending: MemberState[], reason: SkipReason, detail: Record<string, number>): Promise<void> {
-  const { run } = launch;
+async function recordSkipped(phase: RepairPhase, pending: MemberState[], reason: SkipReason, detail: Record<string, number>): Promise<void> {
+  const { run } = phase.launch;
   const ctx = { hordeDir: run.hordeDir, runId: run.id, actor: "parent", attempt: "scheduler" };
-  const members = pending.map((member) => ({ member: member.name, messages: queueFor(launch, member).map((m) => m.id) }))
+  const members = pending.map((member) => ({ member: member.name, messages: queueFor(phase, member).map((m) => m.id) }))
     .filter((entry) => entry.messages.length);
   if (!members.length) return;
   run.repairSkipped = [...new Set([...(run.repairSkipped ?? []), ...members.map((entry) => entry.member)])];
@@ -143,10 +203,11 @@ interface FirstTurnCost {
  * share is the allowance recorded and the deadline is derived from it once, so the record cannot
  * read a millisecond under the floor the share was raised to.
  */
-async function repairMember(launch: RunLaunch, member: MemberState, ms: number, limits: RepairLimits, floors: RepairFloors): Promise<void> {
+async function repairMember(phase: RepairPhase, member: MemberState, ms: number, limits: RepairLimits): Promise<void> {
+  const { launch, floors } = phase;
   const { run } = launch;
-  const ctx = { hordeDir: run.hordeDir, runId: run.id, actor: member.name };
-  const queue = queueFor(launch, member);
+  const ctx = memberContext(phase, member);
+  const queue = queueFor(phase, member);
   if (!queue.length || stopReason(launch)) return;
   const prior = { turns: member.turns, toolCalls: member.toolCalls, usage: { ...member.usage }, startedAt: member.startedAt };
   resetMemberState(member);
@@ -181,7 +242,8 @@ async function repairMember(launch: RunLaunch, member: MemberState, ms: number, 
   const timeout = setTimeout(() => halt("time"), Math.max(1, deadline - Date.now()));
   const watchdog = setInterval(check, 100);
   try {
-    await recordEvent({ ...ctx, attempt: member.attempt }, "repair-start", { payload: { messages: queue.map((m) => m.id), demand: repairDemand(queue), prior, allowance, floors } });
+    const held = [...(phase.stalled.get(member.name)?.keys() ?? [])];
+    await recordEvent({ ...ctx, attempt: member.attempt }, "repair-start", { payload: { messages: queue.map((m) => m.id), demand: repairDemand(queue), prior, allowance, floors, ...(held.length ? { held } : {}) } });
     if (stopReason(launch) || Date.now() >= deadline) {
       halt(stopReason(launch) ?? "time");
       member.status = "stopped";
@@ -191,10 +253,12 @@ async function repairMember(launch: RunLaunch, member: MemberState, ms: number, 
       // Enforce a share on every usage update, rather than waiting for the next poll.
       await spawnOne(launch, member, undefined, check);
     }
+    const unchanged = holdUnchanged(phase, member, queue);
     await recordEvent({ ...ctx, attempt: member.attempt }, "repair-end", { payload: {
       cause: member.endCause, stopReason: member.repairStopReason, allowance, usage: member.usage, turns: member.turns, firstTurn,
-      messages: queue.map((m) => m.id),
+      messages: queue.map((m) => m.id), unchanged,
     } });
+    if (unchanged.length) await recordStalled(phase, member);
   } finally {
     clearTimeout(timeout);
     clearInterval(watchdog);
@@ -223,8 +287,8 @@ export async function drainRepairs(launch: RunLaunch): Promise<void> {
   }
 }
 
-function eligibleMembers(launch: RunLaunch): Array<{ member: MemberState; queue: PeerMessage[] }> {
-  return launch.run.members.map((member) => ({ member, queue: queueFor(launch, member) })).filter((entry) => entry.queue.length)
+function eligibleMembers(phase: RepairPhase): Array<{ member: MemberState; queue: PeerMessage[] }> {
+  return phase.launch.run.members.map((member) => ({ member, queue: queueFor(phase, member) })).filter((entry) => entry.queue.length)
     .sort((a, b) => repairPriority(a.queue[0]!) - repairPriority(b.queue[0]!) ||
       (a.member.repairs ?? 0) - (b.member.repairs ?? 0) || a.queue[0]!.createdAt.localeCompare(b.queue[0]!.createdAt));
 }
@@ -233,9 +297,9 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
   const { run } = launch;
   const rounds = Math.max(0, Math.min(6, envNumber("PI_HORDE_REPAIR_ROUNDS", 4)));
   if (rounds === 0 || stopReason(launch)) return;
-  const floors = repairFloors();
+  const phase: RepairPhase = { launch, floors: repairFloors(), stalled: new Map() };
   await scheduleCollaboration(launch, { settleMs: 0, liveOnly: false });
-  const budget = repairBudget(eligibleMembers(launch).map((entry) => repairDemand(entry.queue)), floors, rounds);
+  const budget = repairBudget(eligibleMembers(phase).map((entry) => repairDemand(entry.queue)), phase.floors, rounds);
   if (budget.queued === 0) return;
   const deadline = Date.now() + budget.ms;
   const exhausted = () => stopReason(launch) || Date.now() >= deadline || (run.repairTokens ?? 0) >= budget.tokens;
@@ -248,7 +312,7 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
     const served = new Set<string>();
     for (;;) {
       if (exhausted()) return;
-      const pending = eligibleMembers(launch).filter((entry) => !served.has(entry.member.name));
+      const pending = eligibleMembers(phase).filter((entry) => !served.has(entry.member.name));
       if (!pending.length) break;
       const next = pending[0]!;
       const pendingUnits = pending.reduce((sum, entry) => sum + repairDemand(entry.queue), 0);
@@ -256,23 +320,23 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
       const unserved = pending.map((entry) => entry.member);
       const remaining = budget.tokens - (run.repairTokens ?? 0);
       const laterRounds = rounds - round - 1;
-      const tokens = repairAllowance(repairShare(remaining, pendingUnits, laterRounds, units), remaining, floors.tokens);
+      const tokens = repairAllowance(repairShare(remaining, pendingUnits, laterRounds, units), remaining, phase.floors.tokens);
       if (tokens === undefined) {
         await begin(budget);
-        await recordSkipped(launch, unserved, "insufficient-budget", { remaining, floor: floors.tokens });
+        await recordSkipped(phase, unserved, "insufficient-budget", { remaining, floor: phase.floors.tokens });
         return;
       }
       const remainingMs = Math.max(0, deadline - Date.now());
-      const fundable = Math.floor(remaining / Math.max(1, floors.tokens));
-      const ms = repairAllowance(repairTimeShare(remainingMs, pendingUnits, laterRounds, fundable, units), remainingMs, floors.ms);
+      const fundable = Math.floor(remaining / Math.max(1, phase.floors.tokens));
+      const ms = repairAllowance(repairTimeShare(remainingMs, pendingUnits, laterRounds, fundable, units), remainingMs, phase.floors.ms);
       if (ms === undefined || ms < 1) {
         await begin(budget);
-        await recordSkipped(launch, unserved, "insufficient-time", { remainingMs, floorMs: floors.ms });
+        await recordSkipped(phase, unserved, "insufficient-time", { remainingMs, floorMs: phase.floors.ms });
         return;
       }
       await begin(budget);
       served.add(next.member.name);
-      await repairMember(launch, next.member, ms, { tokens, turns: budget.turns }, floors);
+      await repairMember(phase, next.member, ms, { tokens, turns: budget.turns });
     }
   }
 }

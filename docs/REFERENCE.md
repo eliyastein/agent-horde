@@ -42,7 +42,11 @@ synthesize it.
    The default totals follow the queues' demand (one floor per queue plus one per further review
    request or blocking challenge), each attempt's share is cut in proportion to its demand, and
    every attempt gets at least a floor; the phase start records the budget, `repair-start` the
-   attempt's demand, and `repair-end` its turns and first-turn cost. A user stop skips this phase.
+   attempt's demand, and `repair-end` its turns, first-turn cost and the threads it left
+   `unchanged`. A thread a completed attempt did not move (same state and response revision) is
+   held back from that member until another member changes it; a member whose whole queue is
+   held is recorded as `repair-skipped` with reason `no-progress` and costs later rounds nothing.
+   A user stop skips this phase.
 4. **Finalize.** Acceptance is frozen (`ACCEPTANCE.*`, `snapshot/`), resource cleanup commands
    run, `SUMMARY.md` and `REPORT.md` are written, then a synthesis member writes `DELIVERABLE.md`
    and a read-only reviewer writes `POSTMORTEM.md`. The widget shows `synthesizing` until both
