@@ -38,6 +38,8 @@ export interface HordeRun extends MemberRunInfo {
   repairTokens?: number;
   /** Members whose queued repair work was skipped because the budget could not fund an attempt. */
   repairSkipped?: string[];
+  /** Members whose remaining repair threads their own completed attempt could not move. */
+  repairStalled?: string[];
   /** True when a user command or session shutdown ended the run. */
   userStop?: boolean | undefined;
   /** Human-readable stop reason for the report, e.g. "stopped by user". */
