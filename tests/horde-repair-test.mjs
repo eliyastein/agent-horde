@@ -265,9 +265,9 @@ if (process.argv.includes("--mode")) {
   assert.deepEqual(orderStarts, ["member-2", "member-1", "member-3"], "the owner's new blocker is served before the pending question, in the single round");
   assert.ok(collaborationState(hordeDir, orderId).messages.some((m) => m.kind === "challenge" && m.to === "member-1" && m.state === "responded"), "the owner answered the challenge raised mid-round");
 
-  // A thread that a completed attempt left unchanged is held back from that member in later rounds
-  // (issue #28): member-2 ignores its blocker, member-3 answers nothing on its question. Only the
-  // deferral of the blocker, a change by another member, earns member-2 a second attempt.
+  // A thread that two consecutive completed attempts left unchanged is held back from that member
+  // in later rounds (issue #28): member-2 ignores its blocker, member-3 never answers its question.
+  // The deferral of the blocker in round one, a change by another member, restarts member-2's count.
   const stallId = "20261028-300001";
   const stallDir = path.join(hordeDir, "runs", stallId);
   fs.mkdirSync(path.join(stallDir, "artifacts"), { recursive: true });
@@ -282,9 +282,9 @@ if (process.argv.includes("--mode")) {
   const stallEnv = { ...process.env };
   try {
     process.env.PI_HORDE_FIXTURE_REPAIR = "stall";
-    process.env.PI_HORDE_REPAIR_ROUNDS = "3";
+    process.env.PI_HORDE_REPAIR_ROUNDS = "4";
     process.env.PI_HORDE_REPAIR_TOKENS = "50000";
-    process.env.PI_HORDE_REPAIR_MS = "90000";
+    process.env.PI_HORDE_REPAIR_MS = "120000";
     process.env.PI_HORDE_REPAIR_MIN_TOKENS = "1";
     process.env.PI_HORDE_REPAIR_MIN_MS = "1";
     await drainRepairs({ ...launch, run: stallRun, roles: Array(3).fill("fixture") });
@@ -295,18 +295,20 @@ if (process.argv.includes("--mode")) {
   }
   const stallEvents = readEvents(hordeDir, stallId);
   const stallStarts = stallEvents.filter((e) => e.action === "repair-start");
-  assert.deepEqual(stallStarts.map((e) => e.actor), ["member-2", "member-3", "member-2"], "three rounds, three attempts: the unchanged question is never retried, the blocker only after its deferral");
-  assert.deepEqual(stallStarts[2].payload.messages, [stallBlocker.id], "the deferred blocker re-qualified member-2 on its own");
+  assert.deepEqual(stallStarts.map((e) => e.actor), ["member-2", "member-3", "member-2", "member-3", "member-2"],
+    "four rounds, five attempts: the question is retried once then held; the blocker's deferral restarts its count, so it takes two more misses");
+  assert.deepEqual(stallStarts[2].payload.messages, [stallBlocker.id], "the deferred blocker is member-2's whole queue again");
   assert.equal(collaborationState(hordeDir, stallId).messages.find((m) => m.id === stallBlocker.id).state, "deferred");
   const stallEnds = stallEvents.filter((e) => e.action === "repair-end");
-  assert.deepEqual(stallEnds.filter((e) => e.actor === "member-2").map((e) => e.payload.unchanged), [[stallBlocker.id], [stallBlocker.id]], "each completed attempt records what it left unchanged");
-  assert.ok(stallEnds.find((e) => e.actor === "member-3").payload.unchanged.includes(stallQuestion.id), "member-3 reviewed the artifact but never answered the question");
+  assert.deepEqual(stallEnds.filter((e) => e.actor === "member-2").map((e) => e.payload.unchanged), [[stallBlocker.id], [stallBlocker.id], [stallBlocker.id]], "each completed attempt records what it left unchanged");
+  assert.ok(stallEnds.filter((e) => e.actor === "member-3").every((e) => e.payload.unchanged.includes(stallQuestion.id)), "member-3 reviewed the artifact but never answered the question");
   const stalls = stallEvents.filter((e) => e.action === "repair-skipped" && e.payload.reason === "no-progress");
-  assert.deepEqual(stalls.map((e) => e.payload.members[0].member), ["member-2", "member-3", "member-2"], "a member whose whole queue is held is recorded as stalled");
-  assert.deepEqual(stalls[0].payload.members[0].messages, [stallBlocker.id]);
-  assert.deepEqual(stallRun.repairStalled, ["member-2", "member-3"], "the summary learns who stalled");
-  assert.equal(stallMembers[1].repairs, 2);
-  assert.equal(stallMembers[2].repairs, 1);
+  assert.deepEqual(stalls.map((e) => e.payload.members[0].member), ["member-3", "member-2"], "a member is recorded as stalled once its whole queue is held");
+  assert.deepEqual(stalls[1].payload.members[0].messages, [stallBlocker.id]);
+  assert.deepEqual(stallRun.repairStalled, ["member-3", "member-2"], "the summary learns who stalled");
+  assert.ok(stallStarts[4].payload.held === undefined, "nothing was held from member-2 before its third attempt");
+  assert.equal(stallMembers[1].repairs, 3);
+  assert.equal(stallMembers[2].repairs, 2);
 
   // Hard stops never schedule repair sessions, even with work pending.
   await runCollaborationAction({ hordeDir, runId: id, actor: "member-2" }, { action: "message", target: artifact.id, kind: "challenge", text: "new unresolved issue" });

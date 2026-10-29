@@ -30,12 +30,25 @@ interface RepairPhase {
   launch: RunLaunch;
   floors: RepairFloors;
   /**
-   * Threads a member's completed attempt left exactly as it found them, by member then message
-   * id, with the signature each was stuck at. The thread is held back from that member until its
-   * signature changes, which only another member's action or a new response can cause.
+   * Threads a member's completed attempts left exactly as they found them, by member then
+   * message id: the signature the thread was stuck at and how many consecutive attempts left it
+   * there. The thread is held back from that member once the count reaches `UNMOVED_ATTEMPTS`,
+   * until its signature changes, which only another member's action or a new response can cause.
    */
-  stalled: Map<string, Map<string, string>>;
+  stalled: Map<string, Map<string, UnmovedThread>>;
 }
+
+interface UnmovedThread {
+  signature: string;
+  attempts: number;
+}
+
+/**
+ * Completed attempts that may leave a thread untouched before it is held. One miss is routine: a
+ * member that answered the rest of its queue, or re-answered the task, often clears the thread on
+ * its next attempt within seconds. Two misses on the same signature are the loop this guards.
+ */
+const UNMOVED_ATTEMPTS = 2;
 
 function memberContext(phase: RepairPhase, member: MemberState): EventContext {
   return { hordeDir: phase.launch.run.hordeDir, runId: phase.launch.run.id, actor: member.name };
@@ -51,7 +64,13 @@ function threadSignature(m: PeerMessage): string {
 }
 
 function isStalled(phase: RepairPhase, member: MemberState, m: PeerMessage): boolean {
-  return phase.stalled.get(member.name)?.get(m.id) === threadSignature(m);
+  const unmoved = phase.stalled.get(member.name)?.get(m.id);
+  return unmoved !== undefined && unmoved.signature === threadSignature(m) && unmoved.attempts >= UNMOVED_ATTEMPTS;
+}
+
+/** The threads currently held back from the member, in inbox order. */
+function heldThreads(phase: RepairPhase, member: MemberState): string[] {
+  return inboxFor(memberContext(phase, member)).filter((m) => isStalled(phase, member, m)).map((m) => m.id);
 }
 
 /** The threads an attempt for the member would be handed: its inbox minus the threads held back. */
@@ -61,18 +80,24 @@ function queueFor(phase: RepairPhase, member: MemberState): PeerMessage[] {
 }
 
 /**
- * A completed attempt that left a thread as it found it will not move it with the same inbox
- * again, so the thread is held back from this member. A killed attempt keeps its threads: it may
- * have been about to act. Returns the ids held back by this attempt.
+ * Counts, per thread, the consecutive completed attempts that left it as they found it; a thread
+ * the attempt moved starts over. A killed attempt counts nothing: it may have been about to act.
+ * Returns the ids this attempt left unchanged.
  */
-function holdUnchanged(phase: RepairPhase, member: MemberState, queue: PeerMessage[]): string[] {
+function noteUnchanged(phase: RepairPhase, member: MemberState, queue: PeerMessage[]): string[] {
   if (member.endCause !== "completed") return [];
   const after = new Map(inboxFor(memberContext(phase, member)).map((m) => [m.id, threadSignature(m)]));
-  const unchanged = queue.filter((m) => after.get(m.id) === threadSignature(m));
-  const held = phase.stalled.get(member.name) ?? new Map<string, string>();
-  for (const m of unchanged) held.set(m.id, threadSignature(m));
-  phase.stalled.set(member.name, held);
-  return unchanged.map((m) => m.id);
+  const unmoved = phase.stalled.get(member.name) ?? new Map<string, UnmovedThread>();
+  const unchanged: string[] = [];
+  for (const m of queue) {
+    const signature = threadSignature(m);
+    if (after.get(m.id) !== signature) { unmoved.delete(m.id); continue; }
+    const previous = unmoved.get(m.id);
+    unmoved.set(m.id, { signature, attempts: previous?.signature === signature ? previous.attempts + 1 : 1 });
+    unchanged.push(m.id);
+  }
+  phase.stalled.set(member.name, unmoved);
+  return unchanged;
 }
 
 /**
@@ -81,12 +106,11 @@ function holdUnchanged(phase: RepairPhase, member: MemberState, queue: PeerMessa
  * another member changes one. Recorded so the post-mortem sees why the member stopped appearing.
  */
 async function recordStalled(phase: RepairPhase, member: MemberState): Promise<void> {
-  const ctx = memberContext(phase, member);
-  const held = inboxFor(ctx).filter((m) => isStalled(phase, member, m)).map((m) => m.id);
+  const held = heldThreads(phase, member);
   if (!held.length || queueFor(phase, member).length) return;
   const { run } = phase.launch;
   run.repairStalled = [...new Set([...(run.repairStalled ?? []), member.name])];
-  await recordEvent({ ...ctx, actor: "parent", attempt: "scheduler" }, "repair-skipped", { payload: { reason: "no-progress", members: [{ member: member.name, messages: held }] } });
+  await recordEvent({ ...memberContext(phase, member), actor: "parent", attempt: "scheduler" }, "repair-skipped", { payload: { reason: "no-progress", members: [{ member: member.name, messages: held }] } });
 }
 
 /**
@@ -242,7 +266,7 @@ async function repairMember(phase: RepairPhase, member: MemberState, ms: number,
   const timeout = setTimeout(() => halt("time"), Math.max(1, deadline - Date.now()));
   const watchdog = setInterval(check, 100);
   try {
-    const held = [...(phase.stalled.get(member.name)?.keys() ?? [])];
+    const held = heldThreads(phase, member);
     await recordEvent({ ...ctx, attempt: member.attempt }, "repair-start", { payload: { messages: queue.map((m) => m.id), demand: repairDemand(queue), prior, allowance, floors, ...(held.length ? { held } : {}) } });
     if (stopReason(launch) || Date.now() >= deadline) {
       halt(stopReason(launch) ?? "time");
@@ -253,7 +277,7 @@ async function repairMember(phase: RepairPhase, member: MemberState, ms: number,
       // Enforce a share on every usage update, rather than waiting for the next poll.
       await spawnOne(launch, member, undefined, check);
     }
-    const unchanged = holdUnchanged(phase, member, queue);
+    const unchanged = noteUnchanged(phase, member, queue);
     await recordEvent({ ...ctx, attempt: member.attempt }, "repair-end", { payload: {
       cause: member.endCause, stopReason: member.repairStopReason, allowance, usage: member.usage, turns: member.turns, firstTurn,
       messages: queue.map((m) => m.id), unchanged,
