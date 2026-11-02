@@ -104,14 +104,16 @@ function fileNamedUnder(dir: string, name: string, depth = 6): boolean {
 
 /**
  * True when a cited file cannot be resolved to an existing file on disk. Paths
- * are tried against the repo root, the run directory, its artifacts directory,
- * and the directory of the citing file. Because generated artifacts usually cite
- * retained files by a relative name, and a deliverable cites the reviewed project's
+ * are tried against the repo root, the horde directory (where `runs/<id>/...`
+ * references resolve, in a single run and in a swarm horde alike), the run
+ * directory, its artifacts directory, and the directory of the citing file; a
+ * path without a file extension may name a directory. Because generated artifacts
+ * usually cite retained files by a relative name, and a deliverable cites the reviewed project's
  * own files by bare name, a basename match in this run's tree or in the project tree
  * also counts, which keeps the warning precise instead of noisy.
  */
 function citedFileMissing(run: HordeRun, ref: string, baseDir?: string): boolean {
-  const roots = [run.cwd, run.runDir, path.join(run.runDir, "artifacts")];
+  const roots = [run.cwd, run.hordeDir, run.runDir, path.join(run.runDir, "artifacts")];
   if (baseDir) roots.push(baseDir);
   const mustBeFile = FILE_EXT.test(ref);
   for (const root of roots) {
