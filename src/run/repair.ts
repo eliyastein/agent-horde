@@ -317,6 +317,29 @@ function eligibleMembers(phase: RepairPhase): Array<{ member: MemberState; queue
       (a.member.repairs ?? 0) - (b.member.repairs ?? 0) || a.queue[0]!.createdAt.localeCompare(b.queue[0]!.createdAt));
 }
 
+/** The queue a member was handed this round, by message id, at the signature it was handed. */
+type HandedQueues = Map<string, Map<string, string>>;
+
+/**
+ * True when every blocking thread left belongs to a member already served this round, and one of
+ * them is new or moved since that member was handed its queue. A correction answered mid-round
+ * leaves its requester to recheck it; finishing the round on administrative rechecks first spent
+ * the clock that recheck needed, so when a later round exists it starts now. A blocker the member
+ * left as it was handed is no reason to serve it again early; the last round serves everyone.
+ */
+export function blockedOnServed(eligible: Array<{ member: MemberState; queue: PeerMessage[] }>, handed: HandedQueues): boolean {
+  let moved = false;
+  for (const { member, queue } of eligible) {
+    const seen = handed.get(member.name);
+    for (const m of queue) {
+      if (repairPriority(m) !== 0) continue;
+      if (!seen) return false;
+      if (seen.get(m.id) !== threadSignature(m)) moved = true;
+    }
+  }
+  return moved;
+}
+
 async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) => Promise<void>): Promise<void> {
   const { run } = launch;
   const rounds = Math.max(0, Math.min(6, envNumber("PI_HORDE_REPAIR_ROUNDS", 4)));
@@ -333,11 +356,12 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
     // One attempt per member per round, picked in priority order re-read before each attempt:
     // a thread that became blocking during an attempt moves its recipient ahead of the
     // administrative queues that were ordered first at round start.
-    const served = new Set<string>();
+    const handed: HandedQueues = new Map();
     for (;;) {
       if (exhausted()) return;
-      const pending = eligibleMembers(phase).filter((entry) => !served.has(entry.member.name));
-      if (!pending.length) break;
+      const eligible = eligibleMembers(phase);
+      const pending = eligible.filter((entry) => !handed.has(entry.member.name));
+      if (!pending.length || (round < rounds - 1 && blockedOnServed(eligible, handed))) break;
       const next = pending[0]!;
       const pendingUnits = pending.reduce((sum, entry) => sum + repairDemand(entry.queue), 0);
       const units = repairDemand(next.queue);
@@ -359,7 +383,7 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
         return;
       }
       await begin(budget);
-      served.add(next.member.name);
+      handed.set(next.member.name, new Map(next.queue.map((m) => [m.id, threadSignature(m)])));
       await repairMember(phase, next.member, ms, { tokens, turns: budget.turns });
     }
   }

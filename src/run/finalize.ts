@@ -20,7 +20,7 @@ import { clusterFindings } from "../ledger/clusters.js";
 import { listFacts } from "../ledger/facts.js";
 import type { FactEntry } from "../ledger/facts.js";
 import { readHordeFile } from "../ledger/files.js";
-import { listFindingsForRun, parseFindings, supersededCitations } from "../ledger/findings.js";
+import { listFindingsForRun, parseFindings, staleAnswerFor } from "../ledger/findings.js";
 import type { FindingEntry } from "../ledger/findings.js";
 import { countIdeas, parseIdeas, reconcileOwnedIdeas } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
@@ -137,19 +137,18 @@ interface SettledAnswer {
   status: string;
 }
 
-/** Findings the proposal names that a later finding corrected; labeled, not re-versioned. */
 /**
  * The proposal body is the member's verbatim text and can predate later challenges and corrections.
- * The status names the blockers still open at freeze and the findings a later finding superseded,
- * and, once synthesis wrote it, points the operator at DELIVERABLE.md as the reconciled output.
+ * The status names the blockers still open at freeze and the citations that changed after the
+ * proposal pinned them (superseded or amended findings, republished artifacts), and, once
+ * synthesis wrote it, points the operator at DELIVERABLE.md as the reconciled output.
  */
-function annotateAnswer(run: HordeRun, answer: SettledAnswer, acceptance: { hash: string; issues: string[] }, findings: FindingEntry[]): void {
+function annotateAnswer(run: HordeRun, answer: SettledAnswer, acceptance: { hash: string; issues: string[] }, stale: string[]): void {
   const blockers = acceptance.issues.filter((issue) => /^Q\d+ .*: \w+ blocking /.test(issue)).map((issue) => issue.replace(/:/, ""));
   const parts = [answer.status];
   if (acceptance.issues.length) parts.push("acceptance incomplete");
   if (blockers.length) parts.push(`open blocking at freeze: ${blockers.join(", ")}`);
-  const superseded = supersededCitations(answer.proposal.text, findings);
-  if (superseded.length) parts.push(`cites superseded ${superseded.join(", ")}`);
+  if (stale.length) parts.push(`cites ${stale.join(", ")}`);
   parts.push(`see ACCEPTANCE.md (snapshot ${acceptance.hash})`);
   if (run.deliverable) parts.push("reconciled operator output: DELIVERABLE.md; the proposal text below is verbatim and may be superseded there");
   try {
@@ -559,16 +558,16 @@ export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun
     run.acceptance = acceptance.status;
     run.snapshotHash = acceptance.hash;
     await recordLifecycle(run, "acceptance", { status: acceptance.status, hash: acceptance.hash, issues: acceptance.issues.length });
-    const annotate = answer !== undefined &&
-      (acceptance.issues.length > 0 || supersededCitations(answer.proposal.text, ledgers.findings).length > 0);
-    if (annotate) annotateAnswer(run, answer, acceptance, ledgers.findings);
+    const stale = answer ? staleAnswerFor(run.hordeDir, run.id, answer.proposal.text, answer.proposal.cites) : [];
+    const annotate = answer !== undefined && (acceptance.issues.length > 0 || stale.length > 0);
+    if (annotate) annotateAnswer(run, answer, acceptance, stale);
     // Workers and bounded repairs have exited; only now may their labs be torn down.
     const cleanups = await runCleanups(run);
     const reportInput = writeRunReports(run, ledgers, releasedIdeas, cleanups, now);
     // Free the slot before the (possibly slow) synthesis so a new run can start.
     noteRunReported(state, swarm, run);
     await synthesize(state, run, ledgers, reportInput, now);
-    if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, ledgers.findings);
+    if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, stale);
     sendReport(state, swarm, run, ledgers, now);
     await recordLifecycle(run, "run-end", { outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel });
     writeRunGraph(run);

@@ -265,6 +265,29 @@ if (process.argv.includes("--mode")) {
   assert.deepEqual(orderStarts, ["member-2", "member-1", "member-3"], "the owner's new blocker is served before the pending question, in the single round");
   assert.ok(collaborationState(hordeDir, orderId).messages.some((m) => m.kind === "challenge" && m.to === "member-1" && m.state === "responded"), "the owner answered the challenge raised mid-round");
 
+  // With a later round to take it, the reviewer's recheck of the answered challenge is the only
+  // blocking work left, so round one ends there instead of spending the clock on the question
+  // first (issue #37); the question follows in round two.
+  const recheckId = "20261101-500005";
+  const recheckDir = path.join(hordeDir, "runs", recheckId);
+  fs.mkdirSync(path.join(recheckDir, "artifacts"), { recursive: true });
+  fs.writeFileSync(path.join(recheckDir, "TASK.md"), "Members: 3\n");
+  fs.writeFileSync(path.join(recheckDir, "SYSTEM.md"), "fixture");
+  fs.writeFileSync(path.join(recheckDir, "artifacts/scanner.txt"), "broken: negative=tracker\n");
+  const recheckArtifact = JSON.parse((await runCollaborationAction({ hordeDir, runId: recheckId, actor: "member-1" }, { action: "artifact", artifactPath: "artifacts/scanner.txt", criteria: "negative unknown; positive tracker" })).text).artifact;
+  await runCollaborationAction({ hordeDir, runId: recheckId, actor: "member-1" }, { action: "message", target: recheckArtifact.id, to: "member-3", kind: "question", text: "is the control set complete?" });
+  const recheckMembers = [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" }));
+  const recheckRun = { ...run, id: recheckId, runDir: recheckDir, members: recheckMembers, count: 3, verifier: "member-2", repairTokens: 0, repairSkipped: undefined, controller: new AbortController(), controllers: new Map(), procs: new Map() };
+  try {
+    process.env.PI_HORDE_REPAIR_ROUNDS = "2";
+    await drainRepairs({ ...launch, run: recheckRun, roles: Array(3).fill("fixture") });
+  } finally {
+    if (orderEnv.PI_HORDE_REPAIR_ROUNDS === undefined) delete process.env.PI_HORDE_REPAIR_ROUNDS; else process.env.PI_HORDE_REPAIR_ROUNDS = orderEnv.PI_HORDE_REPAIR_ROUNDS;
+  }
+  const recheckStarts = readEvents(hordeDir, recheckId).filter((e) => e.action === "repair-start").map((e) => e.actor);
+  assert.deepEqual(recheckStarts.slice(0, 4), ["member-2", "member-1", "member-2", "member-3"], "the recheck of the answered challenge runs before the question");
+  assert.ok(collaborationState(hordeDir, recheckId).messages.some((m) => m.kind === "challenge" && m.state === "resolved"), "the reviewer resolved the corrected challenge");
+
   // A thread that two consecutive completed attempts left unchanged is held back from that member
   // in later rounds (issue #28): member-2 ignores its blocker, member-3 never answers its question.
   // The deferral of the blocker in round one, a change by another member, restarts member-2's count.

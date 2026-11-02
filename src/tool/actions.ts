@@ -7,7 +7,7 @@ import type { FactEntry } from "../ledger/facts.js";
 import * as path from "node:path";
 import { CLUSTER_THRESHOLD } from "../ledger/clusters.js";
 import { collaborationState } from "../ledger/collaboration.js";
-import { addFinding, amendFinding, answerCitations, findingReviewState, findingRevision, findingSummaries, listFindingsForRun, pendingReviewsForMember, staleAnswerCitations, verifyFinding } from "../ledger/findings.js";
+import { addFinding, amendFinding, answerCitations, findingReviewState, findingRevision, findingSummaries, listFindingsForRun, pendingReviewsForMember, staleAnswerFor, verifyFinding } from "../ledger/findings.js";
 import { textOverlap } from "../ledger/text-match.js";
 import { addIdea, claimIdea, dropIdea, finishIdea, listIdeas, ruleOutIdea } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
@@ -466,13 +466,13 @@ function resourcesAction({ hordeDir, siblings }: ActionContext): ActionResult {
 }
 
 /**
- * An answer that cites a superseded finding, or one amended since the proposal pinned it, ships a
- * stale reading as the run's result. The proposer cites the current text instead; a validator is
- * refused until the proposer re-proposes.
+ * An answer that cites a superseded finding, or a finding amended or an artifact republished since
+ * the proposal pinned it, ships a stale reading as the run's result. The proposer cites the
+ * current text instead; a validator is refused until the proposer re-proposes.
  */
 function staleAnswer(ctx: ActionContext, text: string, cites?: Record<string, string>): string | undefined {
   const runId = requireRun(ctx);
-  const stale = staleAnswerCitations(listFindingsForRun(ctx.hordeDir, runId), text, cites);
+  const stale = staleAnswerFor(ctx.hordeDir, runId, text, cites);
   if (!stale.length) return undefined;
   return `cites ${stale.join(", ")}`;
 }
@@ -489,7 +489,7 @@ async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
     runId,
     ctx.member,
     ctx.params.text,
-    answerCitations(listFindingsForRun(ctx.hordeDir, runId), text),
+    answerCitations(listFindingsForRun(ctx.hordeDir, runId), text, collaborationState(ctx.hordeDir, runId).artifacts),
   );
   return {
     text: alreadySolved

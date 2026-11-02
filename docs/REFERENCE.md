@@ -46,7 +46,9 @@ synthesize it.
    `unchanged`. A thread that two consecutive completed attempts did not move (same state and
    response revision) is held back from that member until another member changes it; a member
    whose whole queue is held is recorded as `repair-skipped` with reason `no-progress` and costs
-   later rounds nothing.
+   later rounds nothing. Each round serves a member at most once, but a round other than the last
+   ends early when the only blocking threads left belong to members it already served, so a
+   requester rechecks a correction before unserved members' non-blocking threads.
    A user stop skips this phase.
 4. **Finalize.** Acceptance is frozen (`ACCEPTANCE.*`, `snapshot/`), resource cleanup commands
    run, `SUMMARY.md` and `REPORT.md` are written, then a synthesis member writes `DELIVERABLE.md`
@@ -230,9 +232,12 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   other member running, or no validation within `PI_HORDE_SOLVED_CONFIRM_MS`, an uncontested
   proposal commits as `solved-unvalidated`. Findings no other member reproduced hold wind-down
   while other members run, unless `PI_HORDE_ALLOW_UNVERIFIED=1`. A proposal pins the revision of
-  every finding it cites. An answer that cites a superseded F# or quotes a provisional T# is
-  refused at `solved` and at `confirm-solved`; a pending proposal whose cited finding is
-  superseded or amended later is withdrawn (`solved-withdrawn`) for re-proposal. A contest that names idea ids reopens the proposal under a new revision
+  every finding and artifact it cites. An answer that cites a superseded F# or quotes a provisional
+  T# is refused at `solved` and at `confirm-solved`; a pending proposal whose cited finding is
+  superseded or amended later, or whose cited A# is republished, is withdrawn (`solved-withdrawn`)
+  for re-proposal, and ANSWER.md's status says so instead of keeping an earlier validation. At
+  finalize, ANSWER.md's status names every citation that changed after the proposal pinned it. A
+  contest that names idea ids reopens the proposal under a new revision
   (`solved-reopened`) once every named idea is done or ruled out, with the citations it pinned;
   if a cited finding changed or a quoted fact is still provisional by then, it is withdrawn instead. Repair serves a request about
   the pending answer (`target=answer`) with the blockers.
@@ -358,7 +363,9 @@ for an abnormal end after measurable work; distinct finding clusters with review
 superseded findings in their own section, and any resets; claim states; this run's facts split
 from carried context; resources and cleanup results; coverage (released and still-open ideas,
 the solved answer); late board posts; and consistency warnings for missing metadata,
-mixed-concern clusters, unknown R# citations, and cited paths that do not exist. A killed
+mixed-concern clusters, unknown R# citations, and cited paths that do not exist (rooted URL paths
+and templates with a date or placeholder slot, such as `logs/gate-YYYY-MM-DD.jsonl` or
+`out/<id>.json`, are not checked). A killed
 member's summary is reconstructed from its last board post. The message injected into the parent
 carries a one-line diagnosis and, when generated, the post-mortem text.
 
