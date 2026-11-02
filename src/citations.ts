@@ -32,6 +32,12 @@ const DATA_EXT =
 /** Path roots that are worth checking even without a file extension. */
 const RUN_ROOT = /^(?:\.horde|\.tmp|runs|artifacts)(?:[/-]|$)/;
 
+/**
+ * A path with a date or placeholder slot (`logs/gate-YYYY-MM-DD.jsonl`, `out/<id>.json`,
+ * `%Y%m%d.log`) names a pattern the code writes, not one file that must exist.
+ */
+const PATH_TEMPLATE = /(?:^|[^A-Za-z])(?:YYYY|YYYYMMDD|yyyy|yyyymmdd)(?:[^A-Za-z]|$)|<[^<>]+>|%[YmdHMS]/;
+
 /** Host-anchored references such as docs.example.com/page are URLs, not local paths. */
 const HOST_PATH = /^(?:[a-z0-9-]+\.)+[a-z]{2,}\//i;
 
@@ -57,6 +63,7 @@ export function citedDataFiles(text: string): string[] {
     if (ref === "") return;
     if (ref.startsWith("/") || /^[a-z][a-z0-9+.-]*:\/\//i.test(ref)) return;
     if (/[{}*$]/.test(ref)) return;
+    if (PATH_TEMPLATE.test(ref)) return;
     if (HOST_PATH.test(ref)) return;
     const isRooted = RUN_ROOT.test(ref);
     // Under a run root, any extension is a member artifact worth checking. Off a
@@ -66,7 +73,9 @@ export function citedDataFiles(text: string): string[] {
     out.add(ref);
   };
   for (const match of text.matchAll(/`([^`\s]+)`/g)) consider(match[1] ?? "");
-  for (const match of text.matchAll(/(?<![\w:/.])(?:\.{1,2}\/)?[\w.-]+(?:\/[\w.-]+)+(?:\.[A-Za-z0-9]{1,6})?/g)) {
+  // A match never starts inside a hyphenated word: `/standalone-client-gate/logs` is one URL path,
+  // not a relative `client-gate/logs` with its leading slash cut off.
+  for (const match of text.matchAll(/(?<![\w:/.-])(?:\.{1,2}\/)?[\w.-]+(?:\/[\w.-]+)+(?:\.[A-Za-z0-9]{1,6})?/g)) {
     consider(match[0] ?? "", text[(match.index ?? 0) + match[0].length] ?? "");
   }
   for (const match of text.matchAll(/(?<![\w/.-])([\w-]+\.[A-Za-z0-9]{1,6})\b/g)) consider(match[1] ?? "");

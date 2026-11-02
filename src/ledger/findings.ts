@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { createHash } from "node:crypto";
 import { collaborationState } from "./collaboration.js";
-import type { PeerMessage, ReviewRecord } from "./collaboration.js";
+import type { ArtifactRecord, PeerMessage, ReviewRecord } from "./collaboration.js";
 import { formatClock } from "../format.js";
 import { RUN_HEADING } from "./board.js";
 import { registerConcern } from "./concerns.js";
@@ -558,26 +558,45 @@ export function supersededCitations(text: string, findings: FindingEntry[]): str
     .map((finding) => `F${finding.id} (now F${finding.supersededBy})`);
 }
 
-/** The current revision of every live finding a text cites, pinned so a later amend is visible. */
-export function answerCitations(findings: FindingEntry[], text: string): Record<string, string> {
+/**
+ * The current revision of every live finding and published artifact a text cites, pinned so a
+ * later amend or republish is visible.
+ */
+export function answerCitations(findings: FindingEntry[], text: string, artifacts: ArtifactRecord[] = []): Record<string, string> {
   const cites: Record<string, string> = {};
   for (const finding of findings) {
     if (finding.supersededBy === undefined && new RegExp(`\\bF${finding.id}\\b`).test(text)) cites[`F${finding.id}`] = findingRevision(finding);
+  }
+  for (const artifact of artifacts) {
+    if (new RegExp(`\\b${artifact.id}\\b`).test(text)) cites[artifact.id] = artifact.hash;
   }
   return cites;
 }
 
 /**
- * Citations an answer can no longer stand on: findings superseded since it was written, and
- * findings amended since the revisions it pinned. Both ship a stale reading as the result.
+ * Citations an answer can no longer stand on: findings superseded since it was written, findings
+ * amended and artifacts republished since the revisions it pinned. Each ships a stale reading as
+ * the result.
  */
-export function staleAnswerCitations(findings: FindingEntry[], text: string, cites: Record<string, string> = {}): string[] {
+export function staleAnswerCitations(
+  findings: FindingEntry[],
+  text: string,
+  cites: Record<string, string> = {},
+  artifacts: ArtifactRecord[] = [],
+): string[] {
   const stale = supersededCitations(text, findings).map((citation) => `superseded ${citation}`);
   for (const [target, revision] of Object.entries(cites)) {
     const finding = findings.find((entry) => `F${entry.id}` === target);
     if (finding && finding.supersededBy === undefined && findingRevision(finding) !== revision) stale.push(`amended ${target}`);
+    const artifact = artifacts.find((entry) => entry.id === target);
+    if (artifact && artifact.hash !== revision) stale.push(`republished ${target}`);
   }
   return stale;
+}
+
+/** The answer's stale citations against this run's current findings and artifacts. */
+export function staleAnswerFor(hordeDir: string, runId: string, text: string, cites?: Record<string, string>): string[] {
+  return staleAnswerCitations(listFindingsForRun(hordeDir, runId), text, cites, collaborationState(hordeDir, runId).artifacts);
 }
 
 /** A body line that reads as a verification note would move the subject boundary the revision hashes. */

@@ -277,7 +277,8 @@ Protocol:
     proposal reopens for validation once every idea it named is done or ruled out. Pass the revision
     from ANSWER.md or 'horde inspect' target=answer to either action, so stale reviews cannot approve
     a newer proposal. An answer that cites a superseded F# or quotes a provisional T# is refused, and a
-    pending proposal is withdrawn for re-proposal when a finding it cites is superseded. A request to
+    pending proposal is withdrawn for re-proposal when a finding it cites is superseded or amended,
+    or an artifact it cites is republished. A request to
     the proposer or a validator about the pending answer (target=answer) is served with the blockers.
     The parent enforces coverage before wind-down.
 

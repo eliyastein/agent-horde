@@ -4,7 +4,7 @@ import { loadCollaborationReport } from "../collaboration-report.js";
 import { openMessages } from "../ledger/collaboration.js";
 import { postBoard } from "../ledger/board.js";
 import { unsettledFactCitations } from "../ledger/facts.js";
-import { listFindingsForRun, staleAnswerCitations, unverifiedFindings } from "../ledger/findings.js";
+import { staleAnswerFor, unverifiedFindings } from "../ledger/findings.js";
 import { listIdeas } from "../ledger/ideas.js";
 import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
@@ -80,14 +80,27 @@ function dropContested(run: HordeRun, proposal: SolvedSignal, contest: SolvedSig
 }
 
 /**
- * A proposal that cites a finding superseded or amended after it was made would ship the stale
- * reading as the answer. It is withdrawn for re-proposal rather than validated; the board names
- * the successor or the amendment.
+ * ANSWER.md keeps the withdrawn text for the record, but its status must stop naming the
+ * validation it held, or the run reads as validated after the proposal is gone.
+ */
+function recordWithdrawn(run: HordeRun, proposal: SolvedSignal, reason: string): void {
+  void recordLifecycle(run, "solved-withdrawn", { member: proposal.member, reason });
+  try {
+    writeAnswer(run.runDir, run.id, proposal, `withdrawn: it ${reason}; no validation carries over and no proposal is pending`);
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not write ANSWER.md (${oneLine(String(error), 200)})`, "error");
+  }
+}
+
+/**
+ * A proposal that cites a finding superseded or amended, or an artifact republished, after it was
+ * made would ship the stale reading as the answer. It is withdrawn for re-proposal rather than
+ * validated; the board names the successor, the amendment, or the republish.
  */
 function withdrawStale(run: HordeRun, proposal: SolvedSignal, stale: string[]): void {
   const reason = `cites ${stale.join(", ")}`;
   safeNotify(run, `horde ${run.id}: solved proposal withdrawn; it ${reason}`, "warning");
-  void recordLifecycle(run, "solved-withdrawn", { member: proposal.member, reason });
+  recordWithdrawn(run, proposal, reason);
   void postBoard(
     run.hordeDir,
     "parent",
@@ -111,13 +124,13 @@ function reopenContested(run: HordeRun): void {
   // The proposal returns with the citations it pinned when it was made; what went stale or
   // unsettled meanwhile makes it a re-proposal for its author, not a reopening.
   const stale = [
-    ...staleAnswerCitations(listFindingsForRun(run.hordeDir, run.id), contest.proposal.text, contest.proposal.cites),
+    ...staleAnswerFor(run.hordeDir, run.id, contest.proposal.text, contest.proposal.cites),
     ...unsettledFactCitations(run.hordeDir, contest.proposal.text).map((citation) => `provisional ${citation}`),
   ];
   run.solvedContest = undefined;
   if (stale.length) {
     const why = `cites ${stale.join(", ")}`;
-    void recordLifecycle(run, "solved-withdrawn", { member: contest.proposal.member, reason: why });
+    recordWithdrawn(run, contest.proposal, why);
     void postBoard(run.hordeDir, "parent", `SOLVED proposal by ${contest.proposal.member} is not re-opened after ${reason}: it ${why}. ${contest.proposal.member}: propose again citing the current findings.`);
     return;
   }
@@ -262,7 +275,7 @@ export function checkSolved(run: HordeRun, ctx: ExtensionCommandContext): void {
     dropContested(run, solved, state.contest);
     return;
   }
-  const stale = staleAnswerCitations(listFindingsForRun(run.hordeDir, run.id), solved.text, solved.cites);
+  const stale = staleAnswerFor(run.hordeDir, run.id, solved.text, solved.cites);
   if (stale.length && !run.solvedCommitted) {
     withdrawStale(run, solved, stale);
     return;
