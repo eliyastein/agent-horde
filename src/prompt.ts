@@ -34,6 +34,8 @@ export interface RunSummaryInput {
   solvedCommitted?: boolean | undefined;
   /** Members whose queued repair work was skipped for budget. */
   repairSkipped?: string[] | undefined;
+  /** Members held back from later rounds because their attempt left every thread unchanged. */
+  repairStalled?: string[] | undefined;
   /** The REPORT.md outcome, so SUMMARY.md states the same end cause. */
   outcome?: string | undefined;
   /** One-line run diagnosis shown in the report message. */
@@ -464,10 +466,12 @@ export function runEndSentence(run: RunSummaryInput): string {
   const attempts = run.members.reduce((n, m) => n + (m.repairs ?? 0), 0);
   const killed = run.members.filter((m) => ["tokens", "turns", "time"].includes(m.repairStopReason ?? ""));
   const skipped = run.repairSkipped ?? [];
+  const stalled = run.repairStalled ?? [];
   if (attempts > 0 || skipped.length > 0) {
     const detail = [
       killed.length ? `${killed.length} killed on budget (${killed.map((m) => `${m.name}: ${m.repairStopReason}`).join(", ")})` : "",
       skipped.length ? `${skipped.length} skipped for budget (${skipped.join(", ")})` : "",
+      stalled.length ? `${stalled.length} held after no progress (${stalled.join(", ")})` : "",
     ].filter(Boolean).join(", ");
     parts.push(`Repair: ${attempts} attempt(s)${detail ? `, ${detail}` : ""}.`);
   }
