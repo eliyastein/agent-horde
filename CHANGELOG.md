@@ -4,6 +4,33 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-03
+
+### Changed
+
+- `solved` pins the revision of every A# the answer cites, as it already did for F#. A
+  republished artifact is refused at `confirm-solved` and withdraws the pending proposal (#37).
+- A repair round other than the last ends early when every blocking thread left belongs to a
+  member the round already served and one of them moved since that member got its queue, so the
+  recheck runs next round ahead of unserved members' non-blocking threads (#37).
+
+### Fixed
+
+- A blocking request whose sender owns the target can be resolved: the resolution rests on the
+  recipient's latest supporting review of the current revision, and the refusal names what is
+  missing instead of telling the owner to review its own artifact (#27).
+- Repair no longer reschedules a member on threads it left unchanged: after two consecutive
+  completed attempts leave a thread at the same state, revision and target, the thread is held
+  from that member until another member moves it. Held members are logged as `repair-skipped`
+  with reason `no-progress` and named in the run summary (#28).
+- When a pending proposal is withdrawn, `ANSWER.md` says so instead of keeping an earlier
+  `validated by` status, and at finalize it lists every citation that changed after the proposal
+  pinned it (#37).
+- The cited-path check skips template paths (`YYYY`, `<id>`, `%Y`), no longer starts a match
+  inside a hyphenated word, and resolves `runs/<id>/...` paths against the horde directory in
+  single runs and swarms, so `REPORT.md` and `DELIVERABLE.md` stop flagging existing files
+  (#37, #39).
+
 ## [0.2.0] - 2026-10-28
 
 ### Added
