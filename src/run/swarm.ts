@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatDateTime, formatRunId, taskHash } from "../format.js";
+import { formatDateTime, formatRunId, formatUsd, taskHash } from "../format.js";
 import { hordePaths, initHordeDirAt } from "../ledger/files.js";
 import type { SiblingHorde } from "../member.js";
 import { hordeLabel } from "./types.js";
@@ -99,6 +99,7 @@ export function swarmMarkdown(swarm: Swarm): string {
     `Hordes: ${swarm.hordes} x ${swarm.count} members (${hordeLabel(1)} .. ${hordeLabel(swarm.hordes)})`,
     `Model: ${swarm.runs[0]?.model ?? "parent default"}`,
     `Until stop: ${swarm.untilStop ? "yes (every horde continues until stop-clean or stop-hard)" : "no"}`,
+    `Budget: ${swarm.budget === undefined ? "none" : `${formatUsd(swarm.budget)} across every horde`}`,
     `Partition: ${swarm.plan ? "plan layers dealt round-robin" : "planner helper"}`,
     `Task-SHA256: ${taskHash(swarm.prompt)}`,
     "",

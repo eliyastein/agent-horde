@@ -154,7 +154,7 @@ const ideaById = (id) => ideas.listIdeas(hordeDir).find((idea) => idea.id === id
   const later = graph.nodes.find((n) => n.action === "confirm-solved" && n.lane === "member-3");
   assert.equal(later.outcome, "applied");
   assert.ok(graph.edges.some((edge) => edge.from === later.id && edge.label === "confirms (additional)"));
-  const member = { name: "member-1", index: 1, status: "done", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() };
+  const member = { name: "member-1", index: 1, status: "done", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() };
   const report = prompt.runReportMarkdown({
     id: runId, prompt: "p", count: 3, members: [member], startedAt: Date.now(), stopped: false, outcome: "completed",
     findings: [], clusters: [], claims: [], facts: [], resources: [],

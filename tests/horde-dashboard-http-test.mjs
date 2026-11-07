@@ -138,7 +138,7 @@ assert.equal(dash.resolveDashboardPort(undefined), 7433);
 // Live run: overview and member pages refresh, transcript only when tailing.
 const live = {
   id: RUN, hordeDir: HORDE, runDir: `${HORDE}/runs/${RUN}`, prompt: "p", count: 1, startedAt: Date.now(), stopped: false,
-  startFactId: 0, members: [{ name: "member-1", index: 1, status: "running", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "hi", finalText: "", startedAt: Date.now() }],
+  startFactId: 0, members: [{ name: "member-1", index: 1, status: "running", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "hi", finalText: "", startedAt: Date.now() }],
 };
 const liveSource = { hordeDir: HORDE, getActive: () => [live] };
 const liveHtml = (path) => dash.routeRequest(liveSource, "GET", new URL(`http://127.0.0.1${path}`), "127.0.0.1").body;

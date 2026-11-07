@@ -126,3 +126,16 @@ assert.equal(legacy.endCause, undefined);
 const errLog = member.parseMemberLog("[horde] spawn error: ENOENT\nnoise\n");
 assert.deepEqual(errLog.spawnErrors, ["[horde] spawn error: ENOENT"]);
 console.log("PASS: horde-events-test");
+
+// Lifetime usage survives a reset; the session's usage does not.
+const slot = member.newMemberState(1);
+const spend = (cost) => member.applyEvent(slot, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "t" }], usage: { input: 10, output: 2, cost: { total: cost } }, stopReason: "stop" } });
+spend(0.3);
+member.resetMemberState(slot);
+assert.equal(slot.usage.cost, 0, "a fresh session starts at zero");
+assert.deepEqual(slot.lifetime, { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.3 }, "the slot keeps what the dead session spent");
+spend(0.3);
+assert.equal(slot.usage.cost, 0.3);
+assert.equal(slot.lifetime.cost, 0.6);
+assert.deepEqual(prompt.totalUsage([slot]), { turns: 1, input: 20, output: 4, cost: 0.6 }, "totals read the lifetime figures");
+console.log("PASS: horde-events-test lifetime usage");

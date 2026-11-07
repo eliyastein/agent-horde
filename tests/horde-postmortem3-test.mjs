@@ -116,6 +116,7 @@ const member = (name) => ({
   turns: 1,
   toolCalls: 1,
   usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 },
+  lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 },
   lastText: "",
   finalText: "",
   startedAt: 0,

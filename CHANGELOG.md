@@ -4,6 +4,22 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Added
+
+- `--budget=<usd>` launch flag: once the members' combined spend reaches the amount, the parent
+  performs a clean stop on its own, reported as `stopped at budget`. In a swarm the ceiling covers
+  every horde. TASK.md, SWARM.md and the `run-start`, `run-end` and `stop-clean` events record the
+  budget and the spend (#44).
+
+### Changed
+
+- Usage totals (widget, status, dashboard, REPORT.md, SUMMARY.md, swarm report) sum every session a
+  member slot has had instead of the current one, so resets and `--until-stop` continuations no
+  longer hide earlier spend. The dashboard's view of a finished run sums every session file per
+  member instead of the newest. `member-exit` events record the session's cost (#44).
+- The notice a member gets when the tool refuses new work during a clean stop no longer says the
+  user requested it, since a deadline, a budget or a solve can request one too.
+
 ## [0.2.1] - 2026-11-03
 
 ### Changed

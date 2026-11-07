@@ -1,4 +1,4 @@
-import { formatClock, formatDateTime, formatElapsed, formatTokens, oneLine, taskHash } from "./format.js";
+import { formatClock, formatDateTime, formatElapsed, formatTokens, formatUsd, oneLine, taskHash } from "./format.js";
 import type { BoardEntry } from "./ledger/board.js";
 import type { ClaimEntry } from "./ledger/claims.js";
 import type { FindingCluster } from "./ledger/clusters.js";
@@ -26,6 +26,8 @@ export interface RunSummaryInput {
   userStop?: boolean | undefined;
   /** Human-readable stop reason, e.g. "stopped by user" or "stopped at deadline". */
   stopLabel?: string | undefined;
+  /** The `--budget` in dollars the run (or its swarm) clean-stops at. */
+  budget?: number | undefined;
   /** Set when a member reported the goal solved; the end sentence states whether the run wound down on it. */
   solved?: SolvedSignal | undefined;
   /** The other member that validated the proposal, if any. */
@@ -299,10 +301,16 @@ export function taskMarkdown(input: {
   startedAt: number;
   verifier?: string | undefined;
   untilStop?: boolean | undefined;
+  /** `--budget` in dollars; a swarm's budget covers every horde. */
+  budget?: number | undefined;
   /** Set for a horde of a larger swarm: which horde this is and its workstream. */
   swarm?: { id: string; horde: number; hordes: number; slice?: string | undefined } | undefined;
 }): string {
   const swarm = input.swarm;
+  const budget =
+    input.budget === undefined
+      ? "none"
+      : `${formatUsd(input.budget)} (the run clean-stops when member spend${swarm ? " across the swarm" : ""} reaches it)`;
   return [
     `# Horde run ${input.id}`,
     "",
@@ -312,6 +320,7 @@ export function taskMarkdown(input: {
     `Thinking: ${input.thinkingLevel ?? "parent default"}`,
     `Verifier: ${input.verifier ?? "none"}`,
     `Until stop: ${input.untilStop ? "yes (the run continues until stop-clean or stop-hard)" : "no"}`,
+    `Budget: ${budget}`,
     ...(swarm ? [`Swarm: ${swarm.id} (horde h${swarm.horde} of ${swarm.hordes})`] : []),
     ...(swarm?.slice ? [`Workstream: ${swarm.slice}`] : []),
     `Task-SHA256: ${taskHash(input.prompt)}`,
@@ -331,6 +340,8 @@ interface TaskInfo {
   model?: string | undefined;
   thinking?: string | undefined;
   hash?: string | undefined;
+  /** The `--budget` in dollars, when the run was started with one. */
+  budget?: number | undefined;
   prompt: string;
 }
 
@@ -342,13 +353,17 @@ export function parseTaskMarkdown(content: string): TaskInfo {
   for (const line of lines.slice(0, promptAt === -1 ? lines.length : promptAt)) {
     const title = /^# Horde run (\S+)$/.exec(line);
     if (title) info.id = title[1];
-    const field = /^(Started|Members|Model|Thinking|Task-SHA256): (.*)$/.exec(line);
+    const field = /^(Started|Members|Model|Thinking|Budget|Task-SHA256): (.*)$/.exec(line);
     if (!field) continue;
     const value = field[2] ?? "";
     if (field[1] === "Started") info.started = value;
     else if (field[1] === "Members") info.count = Number(/^\d+/.exec(value)?.[0] ?? NaN) || undefined;
     else if (field[1] === "Model") info.model = value;
     else if (field[1] === "Thinking") info.thinking = value;
+    else if (field[1] === "Budget") {
+      const amount = Number(/^\$(\d+(?:\.\d+)?)/.exec(value)?.[1] ?? NaN);
+      if (amount > 0) info.budget = amount;
+    }
     else if (field[1] === "Task-SHA256") info.hash = value;
   }
   return info;
@@ -374,13 +389,14 @@ export interface UsageTotals {
   cost: number;
 }
 
+/** Run totals over every session each member has had; turns count the current sessions only. */
 export function totalUsage(members: MemberState[]): UsageTotals {
   return members.reduce(
     (acc, m) => ({
       turns: acc.turns + m.turns,
-      input: acc.input + m.usage.input,
-      output: acc.output + m.usage.output,
-      cost: acc.cost + m.usage.cost,
+      input: acc.input + m.lifetime.input,
+      output: acc.output + m.lifetime.output,
+      cost: acc.cost + m.lifetime.cost,
     }),
     { turns: 0, input: 0, output: 0, cost: 0 },
   );
@@ -586,6 +602,9 @@ export function formatStatusReport(run: RunSummaryInput, now: number = Date.now(
     const left = Math.max(0, Math.ceil((run.cleanStopUntil - now) / 1000));
     lines.push(`clean stop requested: members wrap up now, hard stop in ${left}s`);
   }
+  if (run.budget !== undefined) {
+    lines.push(`budget: ${formatUsd(totalUsage(run.members).cost)} of ${formatUsd(run.budget)} spent`);
+  }
   for (const m of run.members) {
     lines.push(
       `${m.name.padEnd(10)} ${m.status.padEnd(8)} ${memberActivity(m)}  ` +
@@ -653,7 +672,8 @@ function reportHeader(input: RunReportInput, now: number): string[] {
   if (input.model) lines.push(`Model: ${input.model}`);
   lines.push(
     `Usage: ${usage.turns} turns, ${formatTokens(usage.input)} in / ` +
-      `${formatTokens(usage.output)} out, $${usage.cost.toFixed(4)} cost`,
+      `${formatTokens(usage.output)} out, $${usage.cost.toFixed(4)} cost` +
+      (input.budget === undefined ? "" : ` (budget ${formatUsd(input.budget)})`),
   );
   return lines;
 }
