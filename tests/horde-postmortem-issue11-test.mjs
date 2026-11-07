@@ -68,7 +68,7 @@ const fileFinding = async (runId, author, text, n, meta = {}) =>
   const long = await fileFinding(runId, "member-1", body, 1);
   const successor = await fileFinding(runId, "member-1", `${body} Superseding note.`, 1, { supersedes: long.id });
   const list = findings.listFindingsForRun(hordeDir, runId);
-  const member = { name: "member-1", index: 1, status: "done", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() };
+  const member = { name: "member-1", index: 1, status: "done", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() };
   const report = prompt.runReportMarkdown({
     id: runId, prompt: "p", count: 1, members: [member], startedAt: Date.now(), stopped: false, outcome: "completed",
     findings: list, clusters: clusters.clusterFindings(list), claims: [], facts: [], resources: [],

@@ -19,7 +19,7 @@ const CLEAN_STOP_ACTIVE_GRACE_MS = Number(process.env.PI_HORDE_ACTIVE_GRACE_MS) 
 const SOLVED_STOP_MS = Number(process.env.PI_HORDE_SOLVED_STOP_MS) || 30_000;
 
 /** Why a clean stop was requested; selects the report's stop label. */
-type CleanStopLabel = "stop-clean" | "deadline" | "solved";
+type CleanStopLabel = "stop-clean" | "deadline" | "solved" | "budget";
 
 interface CleanStopOptions {
   graceMs?: number | undefined;
@@ -168,6 +168,7 @@ export function setPaused(
 
 function stopLabelFor(label: CleanStopLabel): string {
   if (label === "deadline") return "stopped at deadline";
+  if (label === "budget") return "stopped at budget";
   if (label === "solved") return "stopped during solved wind-down";
   return "stopped by user";
 }

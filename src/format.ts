@@ -43,6 +43,11 @@ export function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
+/** A dollar amount for the widget, status and reports, e.g. `$1.20`. */
+export function formatUsd(amount: number): string {
+  return `$${amount.toFixed(2)}`;
+}
+
 export function oneLine(text: string, max: number): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (collapsed.length <= max) return collapsed;

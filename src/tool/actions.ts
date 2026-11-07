@@ -23,7 +23,7 @@ import { readEvents, recordEvent } from "../ledger/events.js";
 import type { EventContext } from "../ledger/events.js";
 
 const CLEAN_STOP_NOTICE =
-  "A clean stop was requested by the user. Stop starting new work. Mark your claimed ideas done " +
+  "A clean stop is in effect for this run. Stop starting new work. Mark your claimed ideas done " +
   "or drop them, post a one-line status to BOARD.md, then write your final summary and make no " +
   "further tool calls.";
 

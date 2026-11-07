@@ -76,6 +76,7 @@ if (process.argv.includes("--mode")) {
         turns: 3,
         endedAt: Date.now() - 1_000,
         usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0 },
+        lifetime: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0 },
       }),
     ],
   };

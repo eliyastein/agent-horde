@@ -106,7 +106,8 @@ if (process.argv.includes("--mode")) {
   // ---- E. per-member metrics in SUMMARY.md ---------------------------------
   const member = (name) => ({
     name, index: Number(name.split("-")[1]), status: "stopped", turns: 1, toolCalls: 1,
-    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "done", startedAt: Date.now(),
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    lastText: "", finalText: "done", startedAt: Date.now(),
   });
   const summary = prompt.summaryMarkdown({
     id: "R1", prompt: "p", count: 2, members: [member("member-1"), member("member-2")],

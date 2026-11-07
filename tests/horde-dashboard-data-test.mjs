@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { createJiti, DEPS, PI } from "./harness.mjs";
 
 const jiti = createJiti(import.meta.url, {
@@ -113,7 +115,12 @@ const live = {
   startFactId: 0, model: "x/y", canary: "ok",
   members: [
     mk(1, { status: "running", currentTool: "bash", currentArg: "ls", turns: 3, toolCalls: 4 }),
-    mk(2, { status: "done", turns: 5, endedAt: now - 5_000, usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.5 } }),
+    mk(2, {
+      status: "done", turns: 5, endedAt: now - 5_000,
+      // The current session spent 0.2; an earlier session of the slot spent 0.3 before a reset.
+      usage: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.2 },
+      lifetime: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.5 },
+    }),
   ],
 };
 const activeSrc = { hordeDir: HORDE, getActive: () => [live], now: () => now };
@@ -154,3 +161,20 @@ assert.equal(status(() => data.loadIdeas(idle, "member-99")), 400);
 assert.equal(status(() => data.loadBoard(idle, "x", "newest")), 400);
 assert.equal(status(() => data.loadFacts(idle, "bad")), 400);
 console.log("PASS: horde-dashboard-data-test");
+
+// A finished run's member row sums every session file of the member, not just the newest.
+const sessionLine = (stamp, cost) => JSON.stringify({
+  type: "message", timestamp: stamp,
+  message: { role: "assistant", stopReason: "stop", usage: { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: cost } }, content: [{ type: "text", text: "x" }] },
+});
+const memberDir = path.join(HORDE, "runs", RUN, "sessions", "member-2");
+fs.mkdirSync(memberDir, { recursive: true });
+fs.writeFileSync(path.join(memberDir, "2026-09-13T05-03-50-000Z_first.jsonl"), `${sessionLine("2026-09-13T05:03:50.000Z", 0.3)}\n`);
+fs.writeFileSync(path.join(memberDir, "2026-09-13T05-04-50-000Z_second.jsonl"), `${sessionLine("2026-09-13T05:04:50.000Z", 0.2)}\n${sessionLine("2026-09-13T05:05:50.000Z", 0.1)}\n`);
+const summed = data.loadRunOverview(idle, RUN).members.find((m) => m.name === "member-2");
+assert.equal(summed.usage.cost.toFixed(2), "0.60");
+assert.equal(summed.usage.input, 30);
+assert.equal(summed.turns, 3);
+assert.equal(summed.elapsedMs, 120_000, "elapsed spans the first session's start to the last session's end");
+assert.equal(summed.sessionFile, "2026-09-13T05-04-50-000Z_second.jsonl", "the newest file is still the one linked");
+console.log("PASS: horde-dashboard-data-test summed sessions");

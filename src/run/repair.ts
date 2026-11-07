@@ -7,7 +7,7 @@ import { recordEvent } from "../ledger/events.js";
 import type { EventContext } from "../ledger/events.js";
 import { recordPhase } from "./lifecycle.js";
 import { envNumber } from "../format.js";
-import { resetMemberState } from "../member.js";
+import { resetMemberState, USAGE_KEYS } from "../member.js";
 import type { MemberState } from "../member.js";
 import { hardStopMembers } from "./controls.js";
 import { scheduleCollaboration, stopReason } from "./schedule.js";
@@ -289,7 +289,7 @@ async function repairMember(phase: RepairPhase, member: MemberState, ms: number,
     run.repairTokens = (run.repairTokens ?? 0) + spent();
     member.turns += prior.turns;
     member.toolCalls += prior.toolCalls;
-    for (const key of ["input", "output", "cacheRead", "cacheWrite", "cost"] as const) member.usage[key] += prior.usage[key];
+    for (const key of USAGE_KEYS) member.usage[key] += prior.usage[key];
     member.startedAt = prior.startedAt;
   }
 }
