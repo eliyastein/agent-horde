@@ -1,6 +1,18 @@
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { Type, type TUnsafe } from "typebox";
 import { FINDING_CONFIDENCES, FINDING_IMPORTANCE, FINDING_SUPPORT } from "../ledger/findings.js";
+
+/**
+ * A string enum schema whose static type is the union of its values.
+ *
+ * pi-ai's StringEnum returns a pi-schema type since pi 1.5, which TypeBox's `Type.Object`
+ * cannot infer a static type from, so the schema is built here with TypeBox directly.
+ */
+function StringEnum<T extends readonly string[]>(
+  values: T,
+  options: { description?: string } = {},
+): TUnsafe<T[number]> {
+  return Type.Unsafe<T[number]>({ type: "string", enum: [...values], ...options });
+}
 
 export const HordeParams = Type.Object({
   action: StringEnum(
