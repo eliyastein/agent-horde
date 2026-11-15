@@ -4,7 +4,7 @@ export const MAX_MEMBERS = 12;
 export const MAX_HORDES = 4;
 
 export const USAGE = [
-  "usage: /agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] <count> <prompt>",
+  "usage: /agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] [--budget=<usd>] <count> <prompt>",
   "                                          spawn <count> members with the same prompt;",
   "                                          <count> may be H/M: H hordes of M members, the",
   "                                          task partitioned between the hordes by a planner",
@@ -30,6 +30,8 @@ export const USAGE = [
   "--until-stop keeps the whole horde working until you run stop-clean or stop-hard: a",
   "validated solve is banked as the current answer and a member that finishes gets a fresh",
   "session told to add new ideas.",
+  "--budget=<usd> clean-stops the run (every horde of a swarm) once the members' combined",
+  "spend reaches that many dollars.",
 ].join("\n");
 
 /** One token of a control target: a horde, a member in every horde, or a member of one horde. */
@@ -72,6 +74,8 @@ type HordeArgs =
       noVerifier?: boolean | undefined;
       /** Present (true) only when `--until-stop` was given. */
       untilStop?: boolean | undefined;
+      /** Dollar spend at which the run clean-stops itself; present only when `--budget` was given. */
+      budget?: number | undefined;
     };
 
 export type HordeRunArgs = Extract<HordeArgs, { kind: "run" }>;
@@ -155,7 +159,9 @@ function parseStopRest(
 const DASHBOARD_FLAG = /^--dashboard(?:=(\S*))?(?=\s|$)/;
 const NO_VERIFIER_FLAG = /^--no-verifier(?=\s|$)/;
 const UNTIL_STOP_FLAG = /^--until-stop(?=\s|$)/;
+const BUDGET_FLAG = /^--budget(?:=(\S*)|\s+(\S+))?(?=\s|$)/;
 const DASHBOARD_ERROR = "invalid --dashboard; use --dashboard or --dashboard=<port 1-65535>";
+const BUDGET_ERROR = "invalid --budget; use --budget=<usd>, a positive dollar amount";
 
 /** Launch flags found at one position of the command; `rest` is the remaining text. */
 interface LaunchFlags {
@@ -163,6 +169,7 @@ interface LaunchFlags {
   dashboard?: DashboardOption | undefined;
   noVerifier?: boolean | undefined;
   untilStop?: boolean | undefined;
+  budget?: number | undefined;
   error?: string | undefined;
 }
 
@@ -174,7 +181,14 @@ function parseDashboardFlag(port: string | undefined): DashboardOption | { error
   return { port: value };
 }
 
-/** Strip leading `--dashboard[=<port>]`, `--no-verifier`, and `--until-stop` tokens, in any order. */
+function parseBudgetFlag(amount: string | undefined): number | { error: string } {
+  if (amount === undefined || !/^\d+(?:\.\d+)?$/.test(amount)) return { error: BUDGET_ERROR };
+  const value = Number(amount);
+  if (value <= 0) return { error: BUDGET_ERROR };
+  return value;
+}
+
+/** Strip leading `--dashboard[=<port>]`, `--no-verifier`, `--until-stop` and `--budget` tokens, in any order. */
 function takeLaunchFlags(text: string): LaunchFlags {
   const flags: LaunchFlags = { rest: text.trim() };
   for (;;) {
@@ -184,6 +198,14 @@ function takeLaunchFlags(text: string): LaunchFlags {
       if ("error" in option) return { ...flags, error: option.error };
       flags.dashboard = option;
       flags.rest = flags.rest.slice(dashboard[0].length).trim();
+      continue;
+    }
+    const budget = BUDGET_FLAG.exec(flags.rest);
+    if (budget) {
+      const value = parseBudgetFlag(budget[1] ?? budget[2]);
+      if (typeof value !== "number") return { ...flags, error: value.error };
+      flags.budget = value;
+      flags.rest = flags.rest.slice(budget[0].length).trim();
       continue;
     }
     const noVerifier = NO_VERIFIER_FLAG.exec(flags.rest);
@@ -209,6 +231,7 @@ function mergeLaunchFlags(leading: LaunchFlags, trailing: LaunchFlags): LaunchFl
     dashboard: leading.dashboard ?? trailing.dashboard,
     noVerifier: leading.noVerifier === true || trailing.noVerifier === true ? true : undefined,
     untilStop: leading.untilStop === true || trailing.untilStop === true ? true : undefined,
+    budget: leading.budget ?? trailing.budget,
     error: leading.error ?? trailing.error,
   };
 }
@@ -242,6 +265,7 @@ function runArgs(parsed: CountedRun, prompt: string, plan?: string[]): HordeRunA
   if (flags.dashboard) args.dashboard = flags.dashboard;
   if (flags.noVerifier) args.noVerifier = true;
   if (flags.untilStop) args.untilStop = true;
+  if (flags.budget !== undefined) args.budget = flags.budget;
   return args;
 }
 
@@ -269,7 +293,9 @@ export function parseHordeArgs(raw: string): HordeArgs {
   const leading = takeLaunchFlags(raw);
   if (leading.error) return { kind: "usage", error: leading.error };
   const trimmed = leading.rest;
-  const hasFlags = leading.dashboard !== undefined || leading.noVerifier === true || leading.untilStop === true;
+  const hasFlags =
+    leading.dashboard !== undefined || leading.noVerifier === true || leading.untilStop === true ||
+    leading.budget !== undefined;
   if (trimmed === "") {
     return hasFlags ? { kind: "usage", error: "count is required" } : { kind: "usage" };
   }

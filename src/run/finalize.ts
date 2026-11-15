@@ -29,7 +29,7 @@ import type { PendingCleanup } from "../ledger/resources.js";
 import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
 import { childEnv, execPi } from "../member.js";
-import { reportText, runReportMarkdown, summaryMarkdown } from "../prompt.js";
+import { reportText, runReportMarkdown, summaryMarkdown, totalUsage } from "../prompt.js";
 import { buildRunGraph } from "../run-graph.js";
 import { runGraphMarkdown } from "../run-graph-mermaid.js";
 import type { CleanupStatus, ReportResource, RunReportInput } from "../prompt.js";
@@ -569,7 +569,10 @@ export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun
     await synthesize(state, run, ledgers, reportInput, now);
     if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, stale);
     sendReport(state, swarm, run, ledgers, now);
-    await recordLifecycle(run, "run-end", { outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel });
+    await recordLifecycle(run, "run-end", {
+      outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel,
+      spent: totalUsage(run.members).cost, budget: run.budget,
+    });
     writeRunGraph(run);
   } catch (error) {
     safeNotify(run, `horde ${run.id} failed to finalize: ${errorMessage(error)}`, "error");

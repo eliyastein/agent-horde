@@ -171,7 +171,7 @@ if (process.argv.includes("--mode")) {
     { action: "idea", text: "should not be added" },
     runId,
   );
-  assert.match(refused.text, /clean stop was requested/i);
+  assert.match(refused.text, /clean stop is in effect/i);
   const listed = await actions.runHordeAction(hordeDir, "member-1", { action: "list" }, runId);
   assert.match(listed.text, /clean stop claim probe/);
 

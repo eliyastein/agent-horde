@@ -191,7 +191,7 @@ if (process.argv.includes("--mode")) {
   assert.match(report, /- solved: member-2 proposed the goal answered \(validated by member-3\): flag Z\+\{x\}/);
   const summary = prompt.summaryMarkdown({
     id: "R1", prompt: "p", count: 1,
-    members: [{ name: "member-2", index: 2, status: "stopped", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() }],
+    members: [{ name: "member-2", index: 2, status: "stopped", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() }],
     startedAt: Date.now() - 1000, stopped: true, stopLabel: "stopped during solved wind-down", solved: ledger.readSolved(runD),
     solvedValidatedBy: "member-3", solvedCommitted: true,
   });

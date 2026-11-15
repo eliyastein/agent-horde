@@ -115,7 +115,7 @@ const report = prompt.runReportMarkdown({
   id: "R1",
   prompt: "p",
   count: 1,
-  members: [ledger.listIdeas(hordeDir) && { name: "member-1", index: 1, status: "done", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() }],
+  members: [ledger.listIdeas(hordeDir) && { name: "member-1", index: 1, status: "done", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: Date.now() }],
   startedAt: Date.now(),
   stopped: false,
   outcome: "completed",

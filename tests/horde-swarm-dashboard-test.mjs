@@ -156,7 +156,12 @@ assert.ok(get(`/swarms/${layout.id}/graph`).body.includes("<svg"));
 // A live swarm reports its state from memory and its graph runs to now.
 const liveRun = (i) => ({
   id: layout.runIds[i], hordeDir: layout.hordeDirs[i], runDir: layout.runDirs[i], prompt: "split task", count: 1, startedAt, stopped: false,
-  members: [{ name: "member-1", status: "running", turns: 1, toolCalls: 0, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt }],
+  members: [{
+    name: "member-1", status: "running", turns: 1, toolCalls: 0,
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    lastText: "", finalText: "", startedAt,
+  }],
   startFactId: 0, horde: i + 1, hordes: 2,
 });
 const liveSwarm = { id: layout.id, dir: layout.dir, hordes: 2, count: 1, prompt: "split task", startedAt, runs: [liveRun(0), liveRun(1)], partition: ["slice 1", "slice 2"] };

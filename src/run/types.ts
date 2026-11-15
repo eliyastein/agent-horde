@@ -83,6 +83,8 @@ export interface HordeRun extends MemberRunInfo {
   solvedContest?: { proposal: SolvedSignal; blockers: number[] } | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */
   solvedVerificationNotice?: boolean | undefined;
+  /** The swarm's `--budget` in dollars, recorded per run for TASK.md and the events. */
+  budget?: number | undefined;
   /** Solves banked so far in an `--until-stop` run. */
   solveRounds?: number | undefined;
   /** The latest banked solve of an `--until-stop` run: the answer unless a later proposal is validated. */
@@ -116,6 +118,10 @@ export interface Swarm {
   /** Per-horde workstream, indexed by horde - 1; absent for a swarm of one. */
   partition?: string[] | undefined;
   untilStop?: boolean | undefined;
+  /** `--budget`: combined member spend in dollars at which every horde is clean-stopped. */
+  budget?: number | undefined;
+  /** True once the budget tripped, so the stop is requested exactly once. */
+  budgetHit?: boolean | undefined;
   dashboardUrl?: string | undefined;
   /** Generated merged deliverable across the hordes' deliverables. */
   deliverable?: string | undefined;

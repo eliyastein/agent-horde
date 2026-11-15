@@ -456,6 +456,7 @@ function overviewHeader(vm: RunOverviewVm): string {
     const left = vm.cleanStop.secondsLeft === undefined ? "" : `hard stop in ${vm.cleanStop.secondsLeft}s: `;
     rows.push(["clean stop", e(`${left}${who}`)]);
   }
+  if (vm.budget !== undefined) rows.push(["budget", `${cost(vm.totals.cost)} of ${cost(vm.budget)} spent`]);
   if (vm.canary) rows.push(["canary", e(vm.canary + (vm.canaryError ? ` (${vm.canaryError})` : ""))]);
   if (vm.diagnosis) rows.push(["diagnosis", e(vm.diagnosis)]);
   if (vm.plan && vm.plan.length > 0) rows.push(["plan", pre(vm.plan.join("\n"))]);
@@ -981,6 +982,9 @@ function swarmHeader(vm: SwarmVm): string {
     ["until stop", vm.untilStop ? "yes" : "no"],
     ["merge", e(vm.merge)],
   ];
+  if (vm.budget !== undefined) {
+    rows.push(["budget", `${cost(vm.rows.reduce((sum, row) => sum + row.totals.cost, 0))} of ${cost(vm.budget)} spent`]);
+  }
   if (vm.notStarted) rows.push(["not started", e(vm.notStarted)]);
   if (vm.partition.length > 0) {
     rows.push(["partition", pre(vm.partition.map((slice, index) => `h${index + 1}: ${slice}`).join("\n"))]);

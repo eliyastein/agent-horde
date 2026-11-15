@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { formatDateTime, formatElapsed, formatTokens, oneLine } from "../format.js";
+import { formatDateTime, formatElapsed, formatTokens, formatUsd, oneLine } from "../format.js";
 import { listFindingsForRun } from "../ledger/findings.js";
 import { statusCounts, totalUsage } from "../prompt.js";
 import { hordeLabel } from "./types.js";
@@ -96,6 +96,7 @@ export function swarmReportMarkdown(swarm: Swarm, now: number = Date.now()): str
     `- elapsed: ${formatElapsed(now - swarm.startedAt)}`,
     `- hordes: ${swarm.hordes} x ${swarm.count} members`,
     `- until stop: ${swarm.untilStop ? "yes" : "no"}`,
+    ...(swarm.budget === undefined ? [] : [`- budget: ${formatUsd(swarm.budget)} across every horde`]),
     `- outcomes: ${rows.map((row) => `${row.label} ${row.outcome}`).join(", ")}`,
     `- merged deliverable: ${swarm.deliverable ? "DELIVERABLE.md" : "not written"}`,
     "",

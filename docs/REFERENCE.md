@@ -7,7 +7,7 @@ at one problem beat a single linear one: research, audits, design exploration, R
 ## Usage
 
 ```
-/agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] <count> <prompt>
+/agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] [--budget=<usd>] <count> <prompt>
 /agent-horde plan [--dashboard] <count> <layer; layer; ...>
 /agent-horde status [target]
 /agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
@@ -68,7 +68,14 @@ unfinished ideas return to the open pool.
 A clean stop still produces the deliverable; add `postmortem` to also run the reviewer. Runs
 that end on their own (all members finished, solved, canary or provider failure) get both.
 `PI_HORDE_MAX_MINUTES` forces a clean stop at a wall-clock deadline, reported as
-`stopped at deadline`.
+`stopped at deadline`. `--budget=<usd>` forces one when the members' combined spend reaches that
+many dollars, reported as `stopped at budget`; in a swarm the ceiling covers every horde and every
+horde still working is stopped. The check runs on every usage update a member reports, so it fires
+on the model call that crosses the line, during discovery or repair alike. The spend counted is the
+members' own, summed over every session a member slot has had (resets, continuations and repair
+attempts included); the planner, deliverable, post-mortem and merge helpers are not counted, and
+the clean-stop grace period lets members finish, so the final total overshoots the ceiling by what
+the wind-down costs.
 
 Members and helper agents are children of the pi session. Quitting or reloading pi sends every
 live child SIGTERM, and each child polls `PI_HORDE_PARENT_PID` every two seconds and exits on its
@@ -303,7 +310,11 @@ resets in the report. A session that finished within `PI_HORDE_CONTINUE_COOLDOWN
 60000) of starting waits out the remainder first, so a member that finds nothing to do cannot spin.
 Crash and stall resets apply as usual. `stop-clean` and `stop-hard` end the run as usual and
 `stop-clean` produces the report, deliverable, and postmortem; the last banked answer stands unless
-a later proposal was validated too.
+a later proposal was validated too. `--budget=<usd>` bounds such a run by spend (see Stopping).
+
+Usage totals in the widget, status, dashboard and reports are summed over every session each
+member slot has had, so a reset or continuation never hides what the replaced session spent. The
+per-session figures stay in the `member-exit` events and the per-member report sections.
 
 ## Horde of hordes
 
@@ -456,6 +467,7 @@ run/                  the parent-side run lifecycle, sharing one HordeState
   swarm-report.ts     per-horde totals: the swarm REPORT.md and the injected message
   launch.ts           dashboard, deadline, partition, staggered canary preflights, fan-out
   supervise.ts        member spawn, reset on exit, stall detection
+  budget.ts           `--budget`: swarm-wide spend check, clean stop when it is reached
   schedule.ts         artifact review assignment and superseded-dependency handoffs
   repair.ts           bounded post-discovery reviews, owner repair, and recheck attempts
   solved.ts           two-phase SOLVED poll

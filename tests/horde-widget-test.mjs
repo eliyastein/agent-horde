@@ -26,7 +26,11 @@ const run = {
   members: [
     mk(1, { status: "running", currentTool: "bash", currentArg: 'grep -rn "jwt" src', turns: 3 }),
     mk(2, { status: "running", streaming: "text", turns: 2 }),
-    mk(3, { status: "done", turns: 3, endedAt: now - 24_000, usage: { input: 12_000, output: 400, cacheRead: 0, cacheWrite: 0, cost: 0 } }),
+    mk(3, {
+      status: "done", turns: 3, endedAt: now - 24_000,
+      usage: { input: 12_000, output: 400, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      lifetime: { input: 12_000, output: 400, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    }),
     mk(4, { status: "failed", error: "exit 1: ECONNREFUSED", endedAt: now - 60_000 }),
     mk(5, { status: "starting" }),
   ],
@@ -78,3 +82,18 @@ assert.ok(prompt.memberSystemPrompt({ hordeDir: "/x/.horde", count: 4 }).include
 const withUrl = widget.widgetLines(swarmOf({ ...run, dashboardUrl: "http://127.0.0.1:7433/" }), now, 160, theme);
 assert.match(withUrl[0], /02:15  http:\/\/127\.0\.0\.1:7433\/runs\/20260913-140200  \/agent-horde status/);
 console.log("PASS: horde-widget-test");
+
+// --budget: the header shows spend over every session against the ceiling; nothing without one.
+const spent = { ...run, budget: 1, members: run.members.map((m, i) => (i === 2 ? { ...m, lifetime: { ...m.lifetime, cost: 0.6 } } : m)) };
+const budgetLines = widget.widgetLines(swarmOf(spent), now, 160, theme);
+assert.match(budgetLines[0], /^horde 20260913-140200  3 running  1 done  1 failed  02:15  \$0\.60 of \$1\.00  \/agent-horde status/);
+assert.doesNotMatch(lines[0], /\$/);
+assert.match(prompt.formatStatusReport(spent, now), /^budget: \$0\.60 of \$1\.00 spent$/m);
+assert.doesNotMatch(prompt.formatStatusReport(run, now), /budget/);
+const swarmLines = widget.widgetLines(
+  { id: "sw", startedAt: now - 10_000, budget: 2, runs: [{ ...spent, horde: 1 }, { ...spent, id: "r2", horde: 2 }] },
+  now, 200, theme,
+);
+assert.match(swarmLines[0], /^swarm sw  2 hordes  6 running  2 done  2 failed  00:10  \$1\.20 of \$2\.00  \/agent-horde status/);
+assert.match(swarmLines[1], /\$0\.60  running$/);
+console.log("PASS: horde-widget-test budget");
