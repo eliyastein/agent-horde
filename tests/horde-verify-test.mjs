@@ -99,7 +99,7 @@ if (process.argv.includes("--mode")) {
   assert.match(ledger.findingSummaries(hordeDir, "R1"), /Weak but real.*\+member-3 verified by member-2/);
 
   // The report shows the verifier, the verified count, and the per-finding tag.
-  const member = (name) => ({ name, index: 1, status: "done", turns: 1, toolCalls: 1, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: 0 });
+  const member = (name) => ({ name, index: 1, status: "done", turns: 1, toolCalls: 1, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lifetime: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0 }, lastText: "", finalText: "", startedAt: 0 });
   const report = prompt.runReportMarkdown({
     id: "R1", prompt: "verify probe", count: 3, members: [member("member-1"), member("member-2"), member("member-3")],
     startedAt: 0, stopped: false, outcome: "completed", findings, clusters, claims: [], facts: [], verifier: "member-3", resets: [],

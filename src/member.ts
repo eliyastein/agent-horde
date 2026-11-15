@@ -35,7 +35,10 @@ export interface MemberState {
   streaming?: "text" | "thinking" | undefined;
   turns: number;
   toolCalls: number;
+  /** Usage of the current session; zeroed by every reset, continuation and repair attempt. */
   usage: MemberUsage;
+  /** Usage across every session of this member slot; never reset. Totals and the budget read it. */
+  lifetime: MemberUsage;
   lastText: string;
   finalText: string;
   /** In-progress assistant text retained if termination interrupts the final message. */
@@ -120,6 +123,7 @@ interface SpawnMemberInput {
   onFirstOutput?: () => void;
 }
 
+export const USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite", "cost"] as const;
 const LAST_TEXT_CHARS = 80;
 const STDERR_TAIL_LINES = 20;
 const KILL_GRACE_MS = 5_000;
@@ -254,11 +258,16 @@ export function newMemberState(index: number): MemberState {
     status: "starting",
     turns: 0,
     toolCalls: 0,
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    usage: emptyUsage(),
+    lifetime: emptyUsage(),
     lastText: "",
     finalText: "",
     startedAt: Date.now(),
   };
+}
+
+export function emptyUsage(): MemberUsage {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 }
 
 /** Reset a member to its initial state so it can be respawned (canary retry, stall reset). */
@@ -268,7 +277,7 @@ export function resetMemberState(member: MemberState): void {
   member.attempt = randomUUID();
   member.turns = 0;
   member.toolCalls = 0;
-  member.usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  member.usage = emptyUsage();
   member.lastText = "";
   member.finalText = "";
   member.draftText = undefined;
@@ -419,11 +428,17 @@ function applyAssistantMessageEnd(member: MemberState, message: Record<string, u
   member.streaming = undefined;
   const usage = (message.usage ?? {}) as Record<string, unknown>;
   const num = (v: unknown): number => (typeof v === "number" ? v : 0);
-  member.usage.input += num(usage.input);
-  member.usage.output += num(usage.output);
-  member.usage.cacheRead += num(usage.cacheRead);
-  member.usage.cacheWrite += num(usage.cacheWrite);
-  member.usage.cost += num((usage.cost as Record<string, unknown> | undefined)?.total);
+  const delta: MemberUsage = {
+    input: num(usage.input),
+    output: num(usage.output),
+    cacheRead: num(usage.cacheRead),
+    cacheWrite: num(usage.cacheWrite),
+    cost: num((usage.cost as Record<string, unknown> | undefined)?.total),
+  };
+  for (const key of USAGE_KEYS) {
+    member.usage[key] += delta[key];
+    member.lifetime[key] += delta[key];
+  }
   const text = messageText(message);
   if (text.trim()) {
     member.finalText = text;

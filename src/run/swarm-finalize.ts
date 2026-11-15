@@ -15,6 +15,8 @@ export interface SwarmRecord {
   count: number;
   startedAt: number;
   untilStop: boolean;
+  /** The swarm's `--budget` in dollars, when one was given. */
+  budget?: number | undefined;
   partition: string[];
   runs: Array<{ label: string; runId: string; runDir: string; hordeDir: string; startedAt: number; endedAt?: number | undefined; outcome?: string | undefined }>;
   /** The merge step: when the swarm deliverable helper ran and whether it wrote anything. */
@@ -30,6 +32,7 @@ export function swarmRecord(swarm: Swarm): SwarmRecord {
     count: swarm.count,
     startedAt: swarm.startedAt,
     untilStop: swarm.untilStop === true,
+    budget: swarm.budget,
     partition: swarm.partition ?? [],
     runs: swarm.runs.map((run) => ({
       label: `h${run.horde}`,

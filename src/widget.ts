@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { formatElapsed, formatTokens } from "./format.js";
+import { formatElapsed, formatTokens, formatUsd } from "./format.js";
 import type { MemberState } from "./member.js";
 import { memberActivity, statusCounts, totalUsage } from "./prompt.js";
 
@@ -16,12 +16,15 @@ interface WidgetRun {
   reported?: boolean | undefined;
   finalized?: boolean | undefined;
   outcome?: string | undefined;
+  /** `--budget` in dollars; the header shows spend against it. */
+  budget?: number | undefined;
 }
 
 interface WidgetSwarm {
   id: string;
   runs: WidgetRun[];
   startedAt: number;
+  budget?: number | undefined;
   dashboardUrl?: string | undefined;
   /** The swarm step still running after every horde finalized, e.g. ["merge"]. */
   finalizing?: string[] | undefined;
@@ -56,6 +59,7 @@ export function headerLine(run: WidgetRun, now: number, theme: Theme): string {
   if (c.failed) parts.push(theme.fg("error", `${c.failed} failed`));
   if (c.stopped) parts.push(theme.fg("warning", `${c.stopped} stopped`));
   parts.push(formatElapsed(now - run.startedAt));
+  if (run.budget !== undefined) parts.push(budgetPart(run.members, run.budget, theme));
   if (run.cleanStopUntil !== undefined) {
     const left = Math.max(0, Math.ceil((run.cleanStopUntil - now) / 1000));
     parts.push(theme.fg("warning", `clean stop in ${left}s`));
@@ -65,6 +69,11 @@ export function headerLine(run: WidgetRun, now: number, theme: Theme): string {
   }
   if (run.dashboardUrl) parts.push(`${run.dashboardUrl}runs/${run.id}`);
   return `${parts.join("  ")}  ${theme.fg("dim", "/agent-horde status | stop-hard | stop-clean")}`;
+}
+
+/** `$1.20 of $5.00`: spend over every session so far against the `--budget`. */
+function budgetPart(members: MemberState[], budget: number, theme: Theme): string {
+  return theme.fg("dim", `${formatUsd(totalUsage(members).cost)} of ${formatUsd(budget)}`);
 }
 
 function memberLine(m: MemberState, now: number, frame: number, theme: Theme): string {
@@ -118,7 +127,7 @@ export function hordeLine(run: WidgetRun, now: number, frame: number, theme: The
   ];
   if (c.failed) parts.push(theme.fg("error", `${c.failed} failed`));
   if (c.stopped) parts.push(theme.fg("warning", `${c.stopped} stopped`));
-  parts.push(theme.fg("dim", `t${usage.turns}  ${formatTokens(usage.input + usage.output)} tok  $${usage.cost.toFixed(2)}`));
+  parts.push(theme.fg("dim", `t${usage.turns}  ${formatTokens(usage.input + usage.output)} tok  ${formatUsd(usage.cost)}`));
   parts.push(theme.fg("muted", hordeActivity(run, c)));
   return ` ${glyph} ${`h${run.horde}`.padEnd(3)} ${parts.join("  ")}`;
 }
@@ -135,6 +144,7 @@ function swarmHeader(swarm: WidgetSwarm, now: number, theme: Theme): string {
   if (c.failed) parts.push(theme.fg("error", `${c.failed} failed`));
   if (c.stopped) parts.push(theme.fg("warning", `${c.stopped} stopped`));
   parts.push(formatElapsed(now - swarm.startedAt));
+  if (swarm.budget !== undefined) parts.push(budgetPart(members, swarm.budget, theme));
   if (swarm.finalizing && swarm.finalizing.length > 0) {
     parts.push(theme.fg("warning", `synthesizing ${swarm.finalizing.join(", ")}`));
   }

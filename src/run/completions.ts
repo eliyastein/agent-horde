@@ -31,7 +31,12 @@ const UNTIL_STOP_COMPLETION = {
   description: "keep the whole horde working until stop-clean or stop-hard; validated solves are banked",
 };
 
-const LAUNCH_FLAG_COMPLETIONS = [DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION, UNTIL_STOP_COMPLETION];
+const BUDGET_COMPLETION = {
+  value: "--budget=5 ",
+  description: "clean-stop the run once the members' combined spend reaches this many dollars; edit the number",
+};
+
+const LAUNCH_FLAG_COMPLETIONS = [DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION, UNTIL_STOP_COMPLETION, BUDGET_COMPLETION];
 
 /** Argument completions that are not member targets. */
 const EXTRA_COMPLETIONS: Record<string, Array<{ value: string; description: string }>> = {

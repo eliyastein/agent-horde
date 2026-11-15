@@ -190,3 +190,27 @@ assert.deepEqual(parseHordeArgs("3 --until-stop x"), untilStop);
 assert.deepEqual(parseHordeArgs("--no-verifier --until-stop 3 x"), { ...untilStop, noVerifier: true });
 assert.equal(parseHordeArgs("--until-stop status").kind, "usage");
 console.log("PASS: horde-args-test until-stop flag");
+
+// --budget launch flag: a positive dollar amount, in either spelling and any position.
+const budget = { kind: "run", hordes: 1, count: 3, prompt: "x", budget: 5 };
+assert.deepEqual(parseHordeArgs("--budget 5 3 x"), budget);
+assert.deepEqual(parseHordeArgs("--budget=5 3 x"), budget);
+assert.deepEqual(parseHordeArgs("3 --budget 5 x"), budget);
+assert.deepEqual(parseHordeArgs("--budget=0.50 3 x"), { ...budget, budget: 0.5 });
+assert.deepEqual(parseHordeArgs("--budget 1 3 --budget 2 x"), { ...budget, budget: 1 }, "a leading flag wins");
+assert.deepEqual(parseHordeArgs("--until-stop --budget=20 --dashboard 2/3 x"), {
+  kind: "run", hordes: 2, count: 3, prompt: "x", dashboard: {}, untilStop: true, budget: 20,
+});
+assert.deepEqual(parseHordeArgs("plan --budget 2 2 a; b"), {
+  kind: "run", hordes: 1, count: 2, prompt: "a; b", plan: ["a", "b"], budget: 2,
+});
+assert.deepEqual(parseHordeArgs("3 spend --budget 5 wisely"), {
+  kind: "run", hordes: 1, count: 3, prompt: "spend --budget 5 wisely",
+});
+for (const bad of ["--budget 0 3 x", "--budget=-1 3 x", "--budget abc 3 x", "--budget= 3 x", "3 --budget x", "--budget"]) {
+  assert.equal(parseHordeArgs(bad).kind, "usage", bad);
+  assert.match(parseHordeArgs(bad).error, /invalid --budget/, bad);
+}
+assert.match(parseHordeArgs("--budget 5").error, /count is required/);
+assert.match(parseHordeArgs("--budget 5 status").error, /launch flags only apply/);
+console.log("PASS: horde-args-test budget flag");

@@ -64,7 +64,7 @@ if (process.argv.includes("--mode")) {
   const artifact = JSON.parse((await runCollaborationAction({ hordeDir, runId: id, actor: "member-1" }, { action: "artifact", artifactPath: "artifacts/scanner.txt", criteria: "negative unknown; positive tracker" })).text).artifact;
   const members = [1, 2].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed", turns: 2, toolCalls: 1 }));
   const run = { id, runDir, hordeDir, count: 2, cwd, prompt: "repair fixture", members, stopped: false, startedAt: Date.now(), cleanStopNames: [], controllers: new Map(), procs: new Map(), controller: new AbortController(), verifier: "member-2" };
-  const launch = { run, state: { disposed: false }, roles: ["owner", "review"], ctx: { cwd, hasUI: false, isProjectTrusted: () => true } };
+  const launch = { run, swarm: { id, runs: [run] }, state: { disposed: false }, roles: ["owner", "review"], ctx: { cwd, hasUI: false, isProjectTrusted: () => true } };
   await drainRepairs(launch);
   assert.equal(members[0].repairs, 1, "completed owner was restarted for repair");
   assert.equal(members[1].repairs, 2, "reviewer was restarted for initial and revised review");

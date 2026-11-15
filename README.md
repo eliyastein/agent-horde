@@ -137,6 +137,16 @@ extend, stress-test, or deepen the work.
 /agent-horde --dashboard --until-stop 8 find every way an unauthenticated request reaches the database
 ```
 
+`--budget=<usd>` puts a dollar ceiling on a run: once the members' combined spend, counted across
+every session they have had, reaches it, the parent performs a clean stop on its own and the
+report says `stopped at budget`. It pairs with `--until-stop` to bound an open-ended run. The
+spend counted is what the members' model calls report; the planner, deliverable and post-mortem
+helpers are not included, and members still get the clean-stop grace period to wrap up.
+
+```
+/agent-horde --until-stop --budget=20 8 find every way an unauthenticated request reaches the database
+```
+
 A count of `H/M` runs a swarm: H hordes of M members on one task, at most four hordes. A planner
 helper first splits the task into H disjoint workstreams with acceptance criteria and each horde
 works only its slice, with its own ledgers under `.horde/swarms/<id>/hN/`; if the planner cannot
@@ -145,7 +155,8 @@ the planner and deals the layers round-robin to the hordes. Members read the oth
 rule-outs and resources through the `horde` tool but write only to their own horde. The hordes
 start a few seconds apart, run the normal lifecycle independently, and when the last one has
 finished a synthesis helper merges their deliverables into the swarm's `DELIVERABLE.md`, each
-claim attributed to its horde. `--until-stop` applies to every horde.
+claim attributed to its horde. `--until-stop` applies to every horde, and `--budget` is one ceiling
+for all hordes combined.
 
 ```
 /agent-horde --dashboard=1234 3/12 audit the service for authorization bugs

@@ -9,6 +9,7 @@ import { reconcileOwnedIdeas } from "../ledger/ideas.js";
 import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/run-signals.js";
 import { resetMemberState, spawnMember } from "../member.js";
 import type { MemberState } from "../member.js";
+import { checkBudget } from "./budget.js";
 import { hardStopMembers } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
 import type { HordeRun, HordeState, Swarm } from "./types.js";
@@ -72,7 +73,7 @@ export async function spawnOne(
     approve: ctx.isProjectTrusted(),
     signal: controller.signal,
     role: launch.roles[member.index - 1],
-    onChange: () => { onProgress?.(); refreshRun(run); },
+    onChange: () => { onProgress?.(); checkBudget(launch); refreshRun(run); },
     onSpawn: (proc) => run.procs.set(member.name, proc),
     onExit: () => {
       run.controller.signal.removeEventListener("abort", onMasterAbort);
@@ -84,7 +85,7 @@ export async function spawnOne(
   await recordLifecycle(run, "member-exit", {
     member: member.name, attempt: member.attempt, status: member.status, endCause: member.endCause,
     exitCode: member.exitCode, turns: member.turns, toolCalls: member.toolCalls,
-    tokens: member.usage.input + member.usage.output, partial: member.partial === true,
+    tokens: member.usage.input + member.usage.output, cost: member.usage.cost, partial: member.partial === true,
   });
 }
 

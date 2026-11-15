@@ -26,7 +26,7 @@ import { buildRunGraph } from "./run-graph.js";
 import { buildSwarmGraph } from "./swarm-graph.js";
 import type { RunGraph } from "./run-graph.js";
 import { readCleanStop } from "./ledger/run-signals.js";
-import { memberSessionDir, parseMemberLog } from "./member.js";
+import { emptyUsage, memberSessionDir, parseMemberLog, USAGE_KEYS } from "./member.js";
 import type { MemberEndCause, MemberState, MemberStatus, MemberUsage } from "./member.js";
 import { memberActivity, parseReportOutcome, parseTaskMarkdown, statusCounts, totalUsage } from "./prompt.js";
 import type { RunSummaryInput, UsageTotals } from "./prompt.js";
@@ -72,6 +72,7 @@ export interface LiveSwarm {
   runs: LiveRun[];
   partition?: string[] | undefined;
   untilStop?: boolean | undefined;
+  budget?: number | undefined;
   /** The swarm step still running after every horde finalized. */
   finalizing?: string[] | undefined;
   deliverable?: string | undefined;
@@ -383,6 +384,7 @@ interface SwarmRecordOnDisk {
   count?: number;
   startedAt?: number;
   untilStop?: boolean;
+  budget?: number;
   partition?: string[];
   runs?: Array<{ label?: string; runId?: string; startedAt?: number; endedAt?: number; outcome?: string }>;
   merge?: { startedAt?: number; endedAt?: number; written?: boolean };
@@ -500,7 +502,7 @@ function liveMemberRow(m: MemberState, now: number, runDir: string): MemberRowVm
     paused: m.paused === true,
     turns: m.turns,
     toolCalls: m.toolCalls,
-    usage: { ...m.usage },
+    usage: { ...m.lifetime },
     elapsedMs: (m.endedAt ?? now) - m.startedAt,
     endCause: m.endCause,
     partial: m.partial === true,
@@ -521,10 +523,28 @@ function safeSessionStats(filePath: string): SessionStats | undefined {
   }
 }
 
+/** Stats over every session file of a member (resets and continuations leave one each); oversized files are skipped. */
+function memberSessionStats(runDir: string, name: string): SessionStats | undefined {
+  const dir = memberSessionDir(runDir, name);
+  const all = listSessionFiles(dir).map((file) => safeSessionStats(path.join(dir, file.name)));
+  const parts = all.filter((stats): stats is SessionStats => stats !== undefined);
+  if (parts.length === 0) return undefined;
+  const total: SessionStats = { entries: 0, turns: 0, toolCalls: 0, usage: emptyUsage() };
+  for (const stats of parts) {
+    total.entries += stats.entries;
+    total.turns += stats.turns;
+    total.toolCalls += stats.toolCalls;
+    for (const key of USAGE_KEYS) total.usage[key] += stats.usage[key];
+    if (stats.first && (!total.first || stats.first < total.first)) total.first = stats.first;
+    if (stats.last && (!total.last || stats.last > total.last)) total.last = stats.last;
+  }
+  return total;
+}
+
 function diskMemberRow(runDir: string, name: string): MemberRowVm {
   const log = parseMemberLog(readOptional(path.join(runDir, `${name}.log`)) ?? "");
   const sessionFile = memberSessionFile(runDir, name);
-  const stats = sessionFile ? safeSessionStats(sessionFile) : undefined;
+  const stats = memberSessionStats(runDir, name);
   const elapsedMs =
     stats?.first && stats.last ? Date.parse(stats.last) - Date.parse(stats.first) : undefined;
   return {
@@ -535,7 +555,7 @@ function diskMemberRow(runDir: string, name: string): MemberRowVm {
     paused: false,
     turns: log.turns ?? stats?.turns ?? 0,
     toolCalls: log.toolCalls ?? stats?.toolCalls ?? 0,
-    usage: stats?.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    usage: stats?.usage ?? emptyUsage(),
     elapsedMs,
     endCause: log.endCause,
     partial: log.partial,
@@ -572,6 +592,8 @@ export interface RunOverviewVm {
   outcome?: string | undefined;
   stopLabel?: string | undefined;
   cleanStop?: { secondsLeft?: number | undefined; members: string[] } | undefined;
+  /** `--budget` in dollars; the header shows `totals.cost` against it. */
+  budget?: number | undefined;
   plan?: string[] | undefined;
   canary?: string | undefined;
   canaryError?: string | undefined;
@@ -617,6 +639,7 @@ function liveOverview(src: DashboardSource, live: LiveRun): RunOverviewVm {
     outcome: liveOutcome(live),
     stopLabel: live.stopLabel,
     cleanStop: liveCleanStop(live, now),
+    budget: live.budget,
     plan: live.plan,
     canary: live.canary,
     canaryError: live.canaryError,
@@ -658,6 +681,7 @@ function diskOverview(runId: string, runDir: string): RunOverviewVm {
     elapsedMs: elapsed.length > 0 ? Math.max(...elapsed) : undefined,
     outcome: runStateOnDisk(runDir) === "pending" ? "pending" : diskOutcome(runDir),
     cleanStop: cleanStop ? { members: cleanStop.members } : undefined,
+    budget: task.budget,
     plan: readOptional(path.join(runDir, "PLAN.md"))
       ?.split("\n")
       .filter((line) => line.startsWith("- layer ")),
@@ -1095,6 +1119,8 @@ export interface SwarmVm {
   started?: string | undefined;
   elapsedMs?: number | undefined;
   untilStop: boolean;
+  /** `--budget` in dollars across every horde; the header shows the hordes' summed cost against it. */
+  budget?: number | undefined;
   partition: string[];
   /** What the merge step is doing or did: "pending", "merging", "merged", "no deliverable". */
   merge: string;
@@ -1175,6 +1201,7 @@ export function loadSwarm(src: DashboardSource, swarmId: string): SwarmVm {
     started: startedAt !== undefined ? formatDateTime(new Date(startedAt)) : undefined,
     elapsedMs: startedAt !== undefined ? (endedAt ?? nowOf(src)) - startedAt : undefined,
     untilStop: live?.untilStop === true || record?.untilStop === true,
+    budget: live?.budget ?? record?.budget,
     partition,
     merge: mergeLabel(live, record, rows),
     rows,
