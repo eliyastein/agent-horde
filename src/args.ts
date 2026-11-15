@@ -15,7 +15,7 @@ export const USAGE = [
   "                                          additionally run a post-mortem on the run",
   "       /agent-horde pause [target]        suspend members (SIGSTOP)",
   "       /agent-horde resume [target]       resume suspended members (SIGCONT)",
-  `       /agent-horde plan [--dashboard] <count> <a; b; ...>`,
+  "       /agent-horde plan [--dashboard[=<port>]] [--no-verifier] [--until-stop] [--budget=<usd>] <count> <a; b; ...>",
   "                                          partition members across workstreams; with H/M",
   "                                          the layers go round-robin to the hordes",
   "       /agent-horde help                  show this text",

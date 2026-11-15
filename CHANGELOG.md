@@ -2,7 +2,7 @@
 
 Notable changes to agent-horde. The format follows Keep a Changelog; versions follow semver.
 
-## [Unreleased]
+## [0.3.0] - 2026-11-14
 
 ### Added
 
@@ -13,6 +13,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- Tool parameter enums are built with TypeBox directly instead of pi-ai's `StringEnum`, which
+  returns a pi-schema type since pi 1.5 that TypeBox cannot infer a static type from; the JSON
+  schema the model sees is unchanged (#42).
 - Usage totals (widget, status, dashboard, REPORT.md, SUMMARY.md, swarm report) sum every session a
   member slot has had instead of the current one, so resets and `--until-stop` continuations no
   longer hide earlier spend. The dashboard's view of a finished run sums every session file per
