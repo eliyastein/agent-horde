@@ -70,6 +70,10 @@ assert.deepEqual(prompt.parseTaskMarkdown(task), {
   prompt: "evaluate\nthe thing",
 });
 assert.deepEqual(prompt.parseTaskMarkdown(""), { prompt: "" });
+assert.match(task, /^Context cap: none$/m);
+const cappedTask = prompt.taskMarkdown({ id: "R2", prompt: "p", count: 2, startedAt: 0, budget: 3, contextCap: 100000 });
+assert.match(cappedTask, /^Context cap: 100000 tokens \(members compact their context once it passes this size\)$/m);
+assert.equal(prompt.parseTaskMarkdown(cappedTask).budget, 3);
 assert.equal(prompt.parseReportOutcome("# Run report\n\n## Diagnosis\n\n- outcome: stopped-clean\n- canary: ok\n"), "stopped-clean");
 assert.equal(prompt.parseReportOutcome("no outcome here"), undefined);
 console.log("PASS: horde-board-parse-test");

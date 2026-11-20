@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { formatDateTime, formatRunId, formatUsd, taskHash } from "../format.js";
 import { hordePaths, initHordeDirAt } from "../ledger/files.js";
 import type { SiblingHorde } from "../member.js";
+import { contextCapLine } from "../prompt.js";
 import { hordeLabel } from "./types.js";
 import type { Swarm } from "./types.js";
 
@@ -100,6 +101,7 @@ export function swarmMarkdown(swarm: Swarm): string {
     `Model: ${swarm.runs[0]?.model ?? "parent default"}`,
     `Until stop: ${swarm.untilStop ? "yes (every horde continues until stop-clean or stop-hard)" : "no"}`,
     `Budget: ${swarm.budget === undefined ? "none" : `${formatUsd(swarm.budget)} across every horde`}`,
+    `Context cap: ${contextCapLine(swarm.runs[0]?.contextCap)}`,
     `Partition: ${swarm.plan ? "plan layers dealt round-robin" : "planner helper"}`,
     `Task-SHA256: ${taskHash(swarm.prompt)}`,
     "",

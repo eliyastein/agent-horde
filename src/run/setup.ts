@@ -94,7 +94,7 @@ export function createRun(
     path.join(runDir, "TASK.md"),
     taskMarkdown({
       id, prompt, count, model, thinkingLevel: ctx.thinkingLevel, startedAt, verifier, untilStop: parsed.untilStop,
-      budget: parsed.budget, swarm,
+      budget: parsed.budget, contextCap: parsed.contextCap, swarm,
     }),
     "utf-8",
   );
@@ -125,6 +125,7 @@ export function createRun(
     verifier,
     untilStop: parsed.untilStop === true ? true : undefined,
     budget: parsed.budget,
+    contextCap: parsed.contextCap,
     resets: [],
     dashboardUrl,
   };

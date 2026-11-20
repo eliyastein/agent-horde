@@ -97,6 +97,8 @@ export interface MemberRunInfo {
   count: number;
   /** True when started with `--until-stop`: the run continues until the user stops it. */
   untilStop?: boolean | undefined;
+  /** `--context-cap` in tokens; the member compacts its context once it passes this size. */
+  contextCap?: number | undefined;
   /** 1-based horde index in the swarm and the swarm's size; a single run is horde 1 of 1. */
   horde?: number | undefined;
   hordes?: number | undefined;
@@ -363,6 +365,7 @@ export function memberEnv(input: SpawnMemberInput): NodeJS.ProcessEnv {
     PI_HORDE_NAME: input.member.name,
     PI_HORDE_RUN: input.run.id,
     PI_HORDE_ROLE: input.role ?? "",
+    PI_HORDE_CONTEXT_CAP: input.run.contextCap === undefined ? "" : String(input.run.contextCap),
     PI_HORDE_ATTEMPT: input.member.attempt ??= randomUUID(),
     PI_HORDE_SIBLINGS: siblings.length > 0 ? JSON.stringify(siblings.map((s) => ({ label: s.label, hordeDir: s.hordeDir }))) : "",
   });

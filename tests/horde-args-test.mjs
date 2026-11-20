@@ -214,3 +214,32 @@ for (const bad of ["--budget 0 3 x", "--budget=-1 3 x", "--budget abc 3 x", "--b
 assert.match(parseHordeArgs("--budget 5").error, /count is required/);
 assert.match(parseHordeArgs("--budget 5 status").error, /launch flags only apply/);
 console.log("PASS: horde-args-test budget flag");
+
+// --context-cap launch flag: a positive whole number of tokens, in either spelling and any position.
+const cap = { kind: "run", hordes: 1, count: 3, prompt: "x", contextCap: 100000 };
+assert.deepEqual(parseHordeArgs("--context-cap 100000 3 x"), cap);
+assert.deepEqual(parseHordeArgs("--context-cap=100000 3 x"), cap);
+assert.deepEqual(parseHordeArgs("3 --context-cap 100000 x"), cap);
+assert.deepEqual(parseHordeArgs("3 --context-cap=100000 x"), cap);
+assert.deepEqual(
+  parseHordeArgs("--context-cap 50000 3 --context-cap 90000 x"), { ...cap, contextCap: 50000 }, "a leading flag wins",
+);
+assert.deepEqual(parseHordeArgs("--until-stop --context-cap=80000 2/3 --budget 5 x"), {
+  kind: "run", hordes: 2, count: 3, prompt: "x", untilStop: true, budget: 5, contextCap: 80000,
+});
+assert.deepEqual(parseHordeArgs("plan --context-cap 60000 2 a; b"), {
+  kind: "run", hordes: 1, count: 2, prompt: "a; b", plan: ["a", "b"], contextCap: 60000,
+});
+assert.deepEqual(parseHordeArgs("3 keep --context-cap 5 small"), {
+  kind: "run", hordes: 1, count: 3, prompt: "keep --context-cap 5 small",
+});
+for (const bad of [
+  "--context-cap 0 3 x", "--context-cap=-1 3 x", "--context-cap 1.5 3 x", "--context-cap abc 3 x",
+  "--context-cap= 3 x", "--context-cap=100k 3 x", "3 --context-cap x", "--context-cap",
+]) {
+  assert.equal(parseHordeArgs(bad).kind, "usage", bad);
+  assert.match(parseHordeArgs(bad).error, /invalid --context-cap/, bad);
+}
+assert.match(parseHordeArgs("--context-cap 100000").error, /count is required/);
+assert.match(parseHordeArgs("--context-cap 100000 status").error, /launch flags only apply/);
+console.log("PASS: horde-args-test context-cap flag");

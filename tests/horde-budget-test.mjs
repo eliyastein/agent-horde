@@ -18,7 +18,7 @@ if (process.argv.includes("--mode")) {
       message: {
         role: "assistant",
         content: [{ type: "text", text: "spent a little" }],
-        usage: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.3 } },
+        usage: { input: 5, output: 1, cacheRead: 7, cacheWrite: 0, cost: { total: 0.3 } },
         stopReason: "stop",
       },
     }) + "\n",
@@ -112,6 +112,8 @@ if (process.argv.includes("--mode")) {
   const exits = events.filter((e) => e.action === "member-exit");
   assert.ok(exits.length >= 3, "the continuations kept spending until the budget tripped");
   assert.ok(exits.every((e) => Math.abs(e.payload.cost - 0.3) < 1e-9), "member-exit records the session's own cost");
+  assert.ok(exits.every((e) => e.payload.cacheRead === 7 && e.payload.cacheWrite === 0), "member-exit records the session's cache reads and writes");
+  assert.match(report, /^Usage: \d+ turns, \S+ in \(\S+ cached, \d+% hit\) \/ \S+ out, /m);
 
   assert.ok(notifications.some((n) => /budget reached \(\$\d+\.\d+ of \$1\.00\); stopping/.test(n)), notifications.join("\n"));
   assert.ok(notifications.some((n) => /budget: 2 member\(s\) wrapping up/.test(n)), notifications.join("\n"));

@@ -119,7 +119,7 @@ const live = {
       status: "done", turns: 5, endedAt: now - 5_000,
       // The current session spent 0.2; an earlier session of the slot spent 0.3 before a reset.
       usage: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.2 },
-      lifetime: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.5 },
+      lifetime: { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, cost: 0.5 },
     }),
   ],
 };
@@ -133,6 +133,7 @@ assert.equal(liveOverview.members[0].activity, "bash: ls");
 assert.equal(liveOverview.members[0].elapsedMs, 65_000);
 assert.equal(liveOverview.members[1].elapsedMs, 60_000);
 assert.equal(liveOverview.totals.cost, 0.5);
+assert.equal(liveOverview.totals.cacheRead, 30, "totals carry the cached prefix tokens");
 assert.equal(liveOverview.prompt, "live prompt");
 assert.equal(liveOverview.thinking, "medium", "thinking still comes from TASK.md on disk");
 assert.equal(data.listRuns(activeSrc).activeId, RUN);

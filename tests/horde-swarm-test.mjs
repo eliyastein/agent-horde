@@ -14,7 +14,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (process.argv.includes("--mode")) {
   const envFile = path.join(process.env.PI_HORDE_DIR, "runs", process.env.PI_HORDE_RUN, `${process.env.PI_HORDE_NAME}.env.json`);
-  fs.writeFileSync(envFile, JSON.stringify({ siblings: process.env.PI_HORDE_SIBLINGS ?? "", role: process.env.PI_HORDE_ROLE ?? "" }));
+  fs.writeFileSync(envFile, JSON.stringify({
+    siblings: process.env.PI_HORDE_SIBLINGS ?? "",
+    role: process.env.PI_HORDE_ROLE ?? "",
+    contextCap: process.env.PI_HORDE_CONTEXT_CAP,
+  }));
   process.stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
   process.stdout.write(
     JSON.stringify({
@@ -35,6 +39,7 @@ if (process.argv.includes("--mode")) {
   delete process.env.PI_HORDE_NAME;
   delete process.env.PI_HORDE_RUN;
   delete process.env.PI_HORDE_SIBLINGS;
+  delete process.env.PI_HORDE_CONTEXT_CAP;
   process.env.PI_HORDE_POSTMORTEM = "off";
   process.env.PI_HORDE_DELIVERABLE = "off";
   process.env.PI_HORDE_CANARY_MS = "2000";
@@ -93,7 +98,7 @@ if (process.argv.includes("--mode")) {
   const since = (from) => notifications.slice(from);
 
   // ---- launch: layout, partition, identity, siblings ----------------------------
-  await command.handler("plan 2/2 --until-stop alpha; beta; gamma; delta", ctx);
+  await command.handler("plan 2/2 --until-stop --context-cap 50000 alpha; beta; gamma; delta", ctx);
   const swarmsDir = path.join(hordeDir, "swarms");
   const swarmId = fs.readdirSync(swarmsDir)[0];
   assert.ok(swarmId, `a swarm directory was created:\n${notifications.join("\n")}`);
@@ -113,10 +118,12 @@ if (process.argv.includes("--mode")) {
   assert.match(swarmMd, /^- h1: alpha; gamma$/m, "layers are dealt round-robin");
   assert.match(swarmMd, /^- h2: beta; delta$/m);
   assert.match(swarmMd, /^Until stop: yes/m);
+  assert.match(swarmMd, /^Context cap: 50000 tokens \(members compact their context once it passes this size\)$/m);
   const task1 = fs.readFileSync(path.join(runDirs[0], "TASK.md"), "utf-8");
   assert.match(task1, new RegExp(`^Swarm: ${swarmId} \\(horde h1 of 2\\)$`, "m"));
   assert.match(task1, /^Workstream: alpha; gamma$/m);
   assert.match(task1, /^Until stop: yes/m);
+  assert.match(task1, /^Context cap: 50000 tokens /m);
   assert.match(fs.readFileSync(path.join(runDirs[0], "PLAN.md"), "utf-8"), /layer 1 \(owner member-1\): alpha\n- layer 2 \(owner member-2\): gamma/);
   const system1 = fs.readFileSync(path.join(runDirs[0], "SYSTEM.md"), "utf-8");
   assert.match(system1, /one of 2 hordes working the same task/);
@@ -137,11 +144,13 @@ if (process.argv.includes("--mode")) {
       const siblings = JSON.parse(env.siblings);
       assert.deepEqual(siblings, [{ label: i === 0 ? "h2" : "h1", hordeDir: hordeDirs[i === 0 ? 1 : 0] }]);
       assert.doesNotMatch(env.role, /horde is h/, "the slice is not part of the role");
+      assert.equal(env.contextCap, "50000", "every member of every horde gets the cap");
     }
     const runStart = fs.readFileSync(path.join(runDir, "events.jsonl"), "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.action === "run-start");
     assert.equal(runStart.payload.swarm, swarmId);
     assert.equal(runStart.payload.horde, i + 1);
     assert.equal(runStart.payload.untilStop, true);
+    assert.equal(runStart.payload.contextCap, 50000);
     assert.ok(!fs.existsSync(path.join(runDir, "REPORT.md")), `${runIds[i]} keeps running until stopped`);
   }
   assert.match(fs.readFileSync(path.join(runDirs[0], "member-1.log"), "utf-8"), /alpha/, "h1 member-1 owns layer alpha");

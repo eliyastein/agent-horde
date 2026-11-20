@@ -7,7 +7,8 @@ at one problem beat a single linear one: research, audits, design exploration, R
 ## Usage
 
 ```
-/agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] [--budget=<usd>] <count> <prompt>
+/agent-horde [--dashboard[=<port>]] [--no-verifier] [--until-stop] [--budget=<usd>]
+             [--context-cap=<tokens>] <count> <prompt>
 /agent-horde plan [--dashboard] <count> <layer; layer; ...>
 /agent-horde status [target]
 /agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
@@ -76,6 +77,21 @@ members' own, summed over every session a member slot has had (resets, continuat
 attempts included); the planner, deliverable, post-mortem and merge helpers are not counted, and
 the clean-stop grace period lets members finish, so the final total overshoots the ceiling by what
 the wind-down costs.
+
+`--context-cap=<tokens>` (opt-in) makes every member compact its own context once it passes that
+many tokens. pi compacts only when the context comes within `compaction.reserveTokens` of the
+model's window, which on a 1M-token model rarely happens, so a long session re-reads a growing
+cached prefix on every call. With the cap, each member switches at session start to a copy of its
+model that advertises a window of `cap + reserveTokens`, so pi's own threshold compaction runs
+before the next request once the context passes the cap, and the run continues. The first request
+after a compaction misses the cache on the new, shorter prefix. The cap is not applied, and the
+member logs a warning to stderr, when pi's compaction is disabled or the cap is below
+`reserveTokens + keepRecentTokens` (36384 with pi's defaults); output limits are clamped per request to the smaller window, so near the cap a single
+response is limited to roughly `reserveTokens`. TASK.md, SWARM.md and the `run-start` event
+record the cap. Without code, `compaction.modelOverrides` in `~/.pi/agent/settings.json` or
+`<project>/.pi/settings.json` does the same, and also applies to the parent session in that
+project: `{"compaction":{"modelOverrides":{"deepseek/deepseek-flash":{"reserveTokens":900000}}}}`
+compacts above about 100k tokens.
 
 Members and helper agents are children of the pi session. Quitting or reloading pi sends every
 live child SIGTERM, and each child polls `PI_HORDE_PARENT_PID` every two seconds and exits on its
@@ -314,7 +330,10 @@ a later proposal was validated too. `--budget=<usd>` bounds such a run by spend 
 
 Usage totals in the widget, status, dashboard and reports are summed over every session each
 member slot has had, so a reset or continuation never hides what the replaced session spent. The
-per-session figures stay in the `member-exit` events and the per-member report sections.
+per-session figures stay in the `member-exit` events and the per-member report sections. Input
+tokens are the billed ones; the prompt tokens the provider served from its cache are shown
+separately as cached, with the hit rate (cached over cached plus billed input) in REPORT.md,
+SUMMARY.md and the dashboard totals row, and as `cacheRead`/`cacheWrite` on `member-exit`.
 
 ## Horde of hordes
 
@@ -406,6 +425,7 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_POSTMORTEM` | on | `off` skips the automatic post-mortem |
 | `PI_HORDE_POSTMORTEM_MS` | 300000 | post-mortem reviewer timeout |
 | `PI_HORDE_CLEANUP` | on | `off` skips resource teardown |
+| `PI_HORDE_CONTEXT_CAP` | unset | member: set by the parent from `--context-cap`; the context size in tokens at which the member compacts |
 | `PI_HORDE_REMIND_CALLS` | 8 | member: tool calls between goal reminders; `0` disables |
 | `PI_HORDE_REMIND_MS` | 600000 | member: time between goal reminders; `0` disables |
 | `PI_HORDE_INBOX_TURNS` | 12 | member: extra turns a session may take to read targeted messages |
@@ -456,6 +476,7 @@ tool/                 the member-side `horde` tool
   collaboration-target.ts   owner and revision lookup, retained artifact copies
   collaboration-view.ts     paged collaboration summaries and compact write receipts
   inbox.ts            turn-boundary delivery and persisted receipts
+  context-cap.ts      `--context-cap`: a smaller advertised context window so pi compacts at the cap
   resource-contract.ts      resource generations, readiness, leases, and port coordination
 
 run/                  the parent-side run lifecycle, sharing one HordeState

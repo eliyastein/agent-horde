@@ -1,4 +1,4 @@
-import { formatClock, formatDateTime, formatElapsed, formatTokens, formatUsd, oneLine, taskHash } from "./format.js";
+import { formatCacheHit, formatClock, formatDateTime, formatElapsed, formatTokens, formatUsd, oneLine, taskHash } from "./format.js";
 import type { BoardEntry } from "./ledger/board.js";
 import type { ClaimEntry } from "./ledger/claims.js";
 import type { FindingCluster } from "./ledger/clusters.js";
@@ -9,7 +9,8 @@ import type { PeerMessage, ReviewRecord } from "./ledger/collaboration.js";
 import type { Idea } from "./ledger/ideas.js";
 import type { ResourceEntry } from "./ledger/resources.js";
 import type { SolvedSignal } from "./ledger/run-signals.js";
-import type { MemberReset, MemberState, SiblingHorde } from "./member.js";
+import { emptyUsage, USAGE_KEYS } from "./member.js";
+import type { MemberReset, MemberState, MemberUsage, SiblingHorde } from "./member.js";
 
 /** A resource with the non-owner members whose findings, evidence, reviews or leases cite it. */
 export type ReportResource = ResourceEntry & { citedBy?: string[] | undefined };
@@ -292,6 +293,12 @@ Do not modify repository files unless the task explicitly requires it.
 `;
 }
 
+/** The `Context cap:` value of TASK.md and SWARM.md: `none` or `<n> tokens (...)`. */
+export function contextCapLine(contextCap: number | undefined): string {
+  if (contextCap === undefined) return "none";
+  return `${contextCap} tokens (members compact their context once it passes this size)`;
+}
+
 export function taskMarkdown(input: {
   id: string;
   prompt: string;
@@ -303,6 +310,8 @@ export function taskMarkdown(input: {
   untilStop?: boolean | undefined;
   /** `--budget` in dollars; a swarm's budget covers every horde. */
   budget?: number | undefined;
+  /** `--context-cap` in tokens; members compact their context once it passes this size. */
+  contextCap?: number | undefined;
   /** Set for a horde of a larger swarm: which horde this is and its workstream. */
   swarm?: { id: string; horde: number; hordes: number; slice?: string | undefined } | undefined;
 }): string {
@@ -321,6 +330,7 @@ export function taskMarkdown(input: {
     `Verifier: ${input.verifier ?? "none"}`,
     `Until stop: ${input.untilStop ? "yes (the run continues until stop-clean or stop-hard)" : "no"}`,
     `Budget: ${budget}`,
+    `Context cap: ${contextCapLine(input.contextCap)}`,
     ...(swarm ? [`Swarm: ${swarm.id} (horde h${swarm.horde} of ${swarm.hordes})`] : []),
     ...(swarm?.slice ? [`Workstream: ${swarm.slice}`] : []),
     `Task-SHA256: ${taskHash(input.prompt)}`,
@@ -382,24 +392,30 @@ export function statusCounts(
   return counts;
 }
 
-export interface UsageTotals {
+export interface UsageTotals extends MemberUsage {
   turns: number;
-  input: number;
-  output: number;
-  cost: number;
+}
+
+/** Turn counts and usage records summed; a new usage field needs only `USAGE_KEYS`. */
+export function sumUsage(rows: ReadonlyArray<{ turns: number; usage: MemberUsage }>): UsageTotals {
+  const totals: UsageTotals = { turns: 0, ...emptyUsage() };
+  for (const row of rows) {
+    totals.turns += row.turns;
+    for (const key of USAGE_KEYS) totals[key] += row.usage[key];
+  }
+  return totals;
 }
 
 /** Run totals over every session each member has had; turns count the current sessions only. */
 export function totalUsage(members: MemberState[]): UsageTotals {
-  return members.reduce(
-    (acc, m) => ({
-      turns: acc.turns + m.turns,
-      input: acc.input + m.lifetime.input,
-      output: acc.output + m.lifetime.output,
-      cost: acc.cost + m.lifetime.cost,
-    }),
-    { turns: 0, input: 0, output: 0, cost: 0 },
-  );
+  return sumUsage(members.map((m) => ({ turns: m.turns, usage: m.lifetime })));
+}
+
+/** `N turns, X in (Y cached, P% hit) / Z out, $cost`, shared by SUMMARY.md and REPORT.md. */
+function usageLine(usage: UsageTotals): string {
+  return `${usage.turns} turns, ${formatTokens(usage.input)} in ` +
+    `(${formatTokens(usage.cacheRead)} cached, ${formatCacheHit(usage.cacheRead, usage.input)}) / ` +
+    `${formatTokens(usage.output)} out, $${usage.cost.toFixed(4)}`;
 }
 
 function memberElapsed(m: MemberState, now: number): string {
@@ -507,8 +523,7 @@ export function summaryMarkdown(run: RunSummaryInput, now: number = Date.now()):
     `Started ${formatClock(new Date(run.startedAt))}, finished ${formatClock(new Date(now))}` +
       ` (${formatElapsed(now - run.startedAt)}). ${counts.done} done, ${counts.failed} failed,` +
       ` ${counts.stopped} stopped.${end}`,
-    `Totals: ${usage.turns} turns, ${formatTokens(usage.input)} in, ` +
-      `${formatTokens(usage.output)} out, $${usage.cost.toFixed(4)}`,
+    `Totals: ${usageLine(usage)}`,
     "",
   ];
   const findings = run.findings ?? [];
@@ -671,8 +686,7 @@ function reportHeader(input: RunReportInput, now: number): string[] {
   ];
   if (input.model) lines.push(`Model: ${input.model}`);
   lines.push(
-    `Usage: ${usage.turns} turns, ${formatTokens(usage.input)} in / ` +
-      `${formatTokens(usage.output)} out, $${usage.cost.toFixed(4)} cost` +
+    `Usage: ${usageLine(usage)} cost` +
       (input.budget === undefined ? "" : ` (budget ${formatUsd(input.budget)})`),
   );
   return lines;

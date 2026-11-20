@@ -36,7 +36,15 @@ const BUDGET_COMPLETION = {
   description: "clean-stop the run once the members' combined spend reaches this many dollars; edit the number",
 };
 
-const LAUNCH_FLAG_COMPLETIONS = [DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION, UNTIL_STOP_COMPLETION, BUDGET_COMPLETION];
+const CONTEXT_CAP_COMPLETION = {
+  value: "--context-cap=100000 ",
+  description: "members compact their context once it passes this many tokens; edit the number",
+};
+
+const LAUNCH_FLAG_COMPLETIONS = [
+  DASHBOARD_COMPLETION, NO_VERIFIER_COMPLETION, UNTIL_STOP_COMPLETION, BUDGET_COMPLETION,
+  CONTEXT_CAP_COMPLETION,
+];
 
 /** Argument completions that are not member targets. */
 const EXTRA_COMPLETIONS: Record<string, Array<{ value: string; description: string }>> = {
