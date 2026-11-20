@@ -181,12 +181,42 @@ const openIdea = async (owner, text) => {
   assert.equal(signals.readSolvedState(runDir).confirm, undefined, "a different text is validated afresh");
   assert.equal(run.solvedValidatedBy, undefined);
 
-  // The validator's own re-proposal of the text it confirmed does not validate itself.
+  // The contest above named no open idea: the text it refuted, proposed again, is validated afresh.
+  assert.equal(run.solvedConfirmation, undefined, "a contest with nothing to wait on discards the confirmation");
   await act(runId, "member-2", { action: "contest-solved", text: "version range is wrong", revision: run.solved.revision });
   solved.checkSolved(run, ctxStub);
+  await act(runId, "member-1", { action: "solved", text });
+  solved.checkSolved(run, ctxStub);
+  assert.equal(run.solved?.member, "member-1");
+  assert.equal(signals.readSolvedState(runDir).confirm, undefined, "a refuted text does not get its old confirmation back");
+  assert.equal(run.solvedValidatedBy, undefined);
+}
+
+// ---- D2. the validator cannot carry its own confirmation; a withdrawal discards it ----------------
+{
+  const runId = "20261119-120006";
+  const runDir = await makeRun(runId);
+  const f1 = await fileFinding(runId, "member-2", "The ACME client accepts an expired account key\nread from the source");
+  const blocker = await openIdea("member-4", "check the DNS-01 solver for the same expiry handling");
+  const text = `One candidate survived: F${f1.id}`;
+  await act(runId, "member-1", { action: "solved", text });
+  const run = fakeRun(runId, runDir);
+  solved.checkSolved(run, ctxStub);
+  await act(runId, "member-3", { action: "confirm-solved", text: "reproduced", revision: run.solved.revision });
+  solved.checkSolved(run, ctxStub);
+  assert.equal(run.solvedConfirmation.validator, "member-3");
+  await act(runId, "member-2", { action: "contest-solved", text: `#${blocker.id} is still open`, revision: run.solved.revision });
+  solved.checkSolved(run, ctxStub);
+  assert.equal(run.solvedConfirmation.validator, "member-3", "a contest that waits on an open idea keeps the confirmation");
+  // The validator proposes the same text itself before the idea closes.
   await act(runId, "member-3", { action: "solved", text });
   solved.checkSolved(run, ctxStub);
   assert.equal(signals.readSolvedState(runDir).confirm, undefined, "the proposer cannot carry its own confirmation");
+  // A finding filed now withdraws the proposal and the confirmation with it.
+  await fileFinding(runId, "member-4", "The DNS-01 solver caches the expired key too\nread from the source");
+  solved.checkSolved(run, ctxStub);
+  assert.equal(run.solved, undefined);
+  assert.equal(run.solvedConfirmation, undefined, "a withdrawal discards the confirmation");
 }
 
 // ---- E. blocking requests unanswered at close reset their recipient once -------------------------

@@ -273,7 +273,10 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   A contest that names no open idea reopens nothing: it is answered by a changed answer, and the
   same text contested twice that way is refused at `solved`. A proposal whose text and pinned
   citations are those another member already confirmed keeps that confirmation under its new
-  revision (`solved-validation-carried`); a contest still overrides it. Repair serves a request about
+  revision (`solved-validation-carried`), which is how a proposal reopened by its blockers closing
+  stays validated; a contest still overrides it. A contest with no open idea to wait on, or a
+  withdrawal, discards the confirmation, so the same text proposed again is validated afresh.
+  Repair serves a request about
   the pending answer (`target=answer`) with the blockers.
 - **Reviews are revision-pinned.** A runnable artifact needs a full-scope `tested` or
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)

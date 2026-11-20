@@ -41,7 +41,9 @@ function sameAnswer(a: SolvedSignal, b: SolvedSignal): boolean {
 /**
  * A proposal whose text and pinned citations are those another member already confirmed keeps
  * that confirmation: a new revision id for the same content gives a validator nothing new to
- * check. A contest of the new revision still overrides it.
+ * check. Only a contest answered by its named ideas closing leaves a confirmation to carry; a
+ * contest with no open idea to wait on, or a withdrawal, discards it, so the same text proposed
+ * again is validated afresh. A contest of the new revision still overrides a carried one.
  */
 function carriedConfirmation(run: HordeRun, proposal: SolvedSignal): string | undefined {
   const earlier = run.solvedConfirmation;
@@ -113,6 +115,8 @@ function dropContested(run: HordeRun, proposal: SolvedSignal, contest: SolvedSig
     : repeats >= REPEAT_CONTEST_LIMIT
       ? ` This exact answer has now been contested ${repeats} times without an open idea to wait on; it is refused if proposed again unchanged. ${changed}`
       : ` The contest names no open idea, so nothing reopens this proposal: ${changed}`;
+  // Closing ideas cannot answer this contest, so the confirmation it overrode does not come back.
+  if (!blockers.length) run.solvedConfirmation = undefined;
   void recordLifecycle(run, "solved-contested", { member: contest.member, text: oneLine(contest.text, 200), blockers, repeats });
   void postBoard(
     run.hordeDir,
@@ -129,6 +133,7 @@ function dropContested(run: HordeRun, proposal: SolvedSignal, contest: SolvedSig
  * validation it held, or the run reads as validated after the proposal is gone.
  */
 function recordWithdrawn(run: HordeRun, proposal: SolvedSignal, reason: string): void {
+  run.solvedConfirmation = undefined;
   void recordLifecycle(run, "solved-withdrawn", { member: proposal.member, reason });
   try {
     writeAnswer(run.runDir, run.id, proposal, `withdrawn: it ${reason}; no validation carries over and no proposal is pending`);
