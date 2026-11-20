@@ -33,7 +33,7 @@ const run = (params) => actions.runHordeAction(hordeDir, "member-1", params, "R1
 const a = await run({ action: "idea", text: "claim state machine probe" });
 assert.equal(a.text, "Added idea #1: claim state machine probe");
 await run({ action: "claim", id: 1 });
-const ruled = await run({ action: "rule-out", id: 1, text: "dead end: no sink" });
+const ruled = await run({ action: "rule-out", id: 1, text: "dead end: no sink", unchecked: "" });
 assert.match(ruled.text, /Ruled out #1: dead end: no sink/);
 assert.equal(ledger.listIdeas(hordeDir).find((i) => i.id === 1).mark, "!");
 
