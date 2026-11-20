@@ -14,6 +14,18 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   cap, instead of only near the model's full window. Members get it as `PI_HORDE_CONTEXT_CAP`;
   TASK.md, SWARM.md and the `run-start` event record it (#46).
 
+### Fixed
+
+- A deliverable that cites an artifact ACCEPTANCE.md does not accept, without saying so in the
+  citing paragraph, gets a consistency warning (#37).
+- A V# cited for an artifact is checked against the artifact's current revision, also in a
+  sentence that names no finding (#37).
+- The verifier's idea claims wait for the artifact reviews assigned to it, as they already did
+  for other members' findings (#37).
+- Repair serves the parent's request to republish an artifact against a moved dependency before
+  review requests (#37).
+- COLLABORATION.md marks each review of a revision its target has since left (#37).
+
 ## [0.3.0] - 2026-11-14
 
 ### Added

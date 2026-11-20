@@ -123,15 +123,21 @@ function messageMarkdown(m: PeerMessage): string {
   return lines.join("\n");
 }
 
-function collaborationMarkdown(report: CollaborationReport): string {
+/** A review of a revision its target has since left: kept as history, not as current support. */
+function reviewRevisionNote(revision: string, current: string | undefined): string {
+  return current === undefined || current === revision ? "" : ` EARLIER REVISION (current @${current.slice(0, 12)})`;
+}
+
+function collaborationMarkdown(report: CollaborationReport, findingRevisions: Map<string, string>): string {
   const { state } = report;
+  const current = new Map([...findingRevisions, ...state.artifacts.map((a) => [a.id, a.hash] as const)]);
   return [
     `# Collaboration ${report.runId}`, `\nEvent high-water mark: ${report.sequence}. Delivery records context insertion, not comprehension.`,
     "\n## Acceptance issues", ...(report.issues.length ? report.issues.map((i) => `- ${i}`) : ["- No protocol-level issues recorded; task acceptance still requires coverage and review."]),
     "\n## Accepted with limits", ...(report.limits.length ? report.limits.map((l) => `- ${l}`) : ["- none disclosed"]),
     "\n## Questions, challenges and handoffs", ...state.messages.map(messageMarkdown),
     "\n## Artifact revisions", ...state.artifacts.map((a) => `- ${a.id} ${a.path}@${a.hash} owner=${a.owner} kind=${a.kind ?? "runnable"} snapshot=${a.snapshot} accepted=${report.acceptedArtifacts.includes(a.id)}\n  Criteria: ${a.criteria}\n  Dependencies: ${JSON.stringify(a.dependencies)}${a.changeNote ? `\n  Change: ${a.changeNote}` : ""}`),
-    "\n## Reviews", ...state.reviews.map((r) => `- ${r.id} ${r.target}@${r.revision} @${r.actor} ${r.verdict} [${r.support}] evidence=${r.evidence.join(",")}${r.reattests ? ` reattests=${r.reattests}` : ""}\n  Checked: ${r.checked}\n  Unchecked: ${r.unchecked || "none declared"}\n  Limits: ${r.limits || "none disclosed"}\n  ${r.text}`),
+    "\n## Reviews", ...state.reviews.map((r) => `- ${r.id} ${r.target}@${r.revision} @${r.actor} ${r.verdict} [${r.support}] evidence=${r.evidence.join(",")}${r.reattests ? ` reattests=${r.reattests}` : ""}${reviewRevisionNote(r.revision, current.get(r.target))}\n  Checked: ${r.checked}\n  Unchecked: ${r.unchecked || "none declared"}\n  Limits: ${r.limits || "none disclosed"}\n  ${r.text}`),
     "\n## Evidence", ...state.evidence.map((e) => `- ${e.id} ${e.target}@${e.revision} @${e.actor} ${e.relation}${e.path ? ` ${e.path}@${e.hash}` : ""}\n  ${e.text}`),
     "\n## Resources", ...state.resources.map((r) => `- ${r.target} ${r.state} generation=${r.generation} @${r.owner}/${r.attempt} ports=${r.ports.join(",")} lease=${new Date(r.leaseUntil).toISOString()}\n  Health: ${r.health}`),
     "\n## Metrics", ...Object.entries(report.metrics).map(([key, value]) => `- ${key}: ${value}`), "",
@@ -155,7 +161,8 @@ export function freezeAcceptance(hordeDir: string, runId: string, startIdeaId = 
   const snapshot = { report, findings, findingReviews, ideas, issues, limits: report.limits };
   const hash = hashText(JSON.stringify(snapshot));
   const status = issues.length ? "incomplete" : "reviewed";
-  writeFileAtomic(path.join(runDir, "COLLABORATION.md"), collaborationMarkdown(report));
+  const findingRevisions = new Map(findings.map((f) => [`F${f.id}`, findingRevision(f)]));
+  writeFileAtomic(path.join(runDir, "COLLABORATION.md"), collaborationMarkdown(report, findingRevisions));
   writeFileAtomic(path.join(runDir, "ACCEPTANCE.json"), JSON.stringify({ ...snapshot, hash, status }, null, 2));
   const limitsSection = report.limits.length ? `\n\n## Accepted with limits\n\n${report.limits.map((l) => `- ${l}`).join("\n")}` : "";
   writeFileAtomic(path.join(runDir, "ACCEPTANCE.md"), `# Acceptance ${runId}\n\nStatus: ${status}\nSnapshot: ${hash}\nEvent sequence: ${report.sequence}\n\n${issues.map((i) => `- ${i}`).join("\n")}${limitsSection}\n`);
