@@ -8,6 +8,7 @@ import { isVerifierRole, runHordeAction } from "./actions.js";
 import { pendingVerificationHint, solvedHint } from "./hints.js";
 import { HordeParams } from "./params.js";
 import { compactReceipt } from "./collaboration-view.js";
+import { registerContextCap } from "./context-cap.js";
 import { registerInbox } from "./inbox.js";
 
 /** Goal reminder cadence in horde-tool calls and in milliseconds; 0 disables a trigger. */
@@ -35,6 +36,8 @@ export function registerMemberTool(pi: ExtensionAPI): void {
   const siblings = parseSiblings(process.env.PI_HORDE_SIBLINGS);
   const activeRun = process.env.PI_HORDE_RUN;
   if (activeRun) registerInbox(pi, { hordeDir, runId: activeRun, actor: member, attempt });
+  const contextCap = envNumber("PI_HORDE_CONTEXT_CAP", 0);
+  if (contextCap > 0) registerContextCap(pi, contextCap);
   // One member per process, so one gate is the per-member reminder counter.
   const reminders = new ReminderGate(REMIND_CALLS, REMIND_MS);
   pi.registerTool({

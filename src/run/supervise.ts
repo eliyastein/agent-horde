@@ -85,7 +85,8 @@ export async function spawnOne(
   await recordLifecycle(run, "member-exit", {
     member: member.name, attempt: member.attempt, status: member.status, endCause: member.endCause,
     exitCode: member.exitCode, turns: member.turns, toolCalls: member.toolCalls,
-    tokens: member.usage.input + member.usage.output, cost: member.usage.cost, partial: member.partial === true,
+    tokens: member.usage.input + member.usage.output, cacheRead: member.usage.cacheRead,
+    cacheWrite: member.usage.cacheWrite, cost: member.usage.cost, partial: member.partial === true,
   });
 }
 

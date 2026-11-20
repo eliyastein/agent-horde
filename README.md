@@ -147,6 +147,14 @@ helpers are not included, and members still get the clean-stop grace period to w
 /agent-horde --until-stop --budget=20 8 find every way an unauthenticated request reaches the database
 ```
 
+`--context-cap=<tokens>` makes each member compact its own context once it passes that many
+tokens, so a long run on a large-window model stops re-reading its whole history on every call.
+[The reference](docs/REFERENCE.md) explains how it works.
+
+```
+/agent-horde --until-stop --budget=20 --context-cap=100000 8 audit the HTTP handlers under src/api
+```
+
 A count of `H/M` runs a swarm: H hordes of M members on one task, at most four hordes. A planner
 helper first splits the task into H disjoint workstreams with acceptance criteria and each horde
 works only its slice, with its own ledgers under `.horde/swarms/<id>/hN/`; if the planner cannot

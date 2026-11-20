@@ -48,6 +48,16 @@ export function formatUsd(amount: number): string {
   return `$${amount.toFixed(2)}`;
 }
 
+/**
+ * Share of prompt tokens the provider served from its prompt cache, e.g. `99% hit`.
+ * `cached` is the cache-read count and `uncached` the billed input count; no input at all is 0%.
+ */
+export function formatCacheHit(cached: number, uncached: number): string {
+  const total = cached + uncached;
+  const percent = total > 0 ? Math.round((cached / total) * 100) : 0;
+  return `${percent}% hit`;
+}
+
 export function oneLine(text: string, max: number): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (collapsed.length <= max) return collapsed;

@@ -29,7 +29,7 @@ import type {
 } from "./dashboard-data.js";
 import { RUN_FILES, SWARM_FILES } from "./dashboard-data.js";
 import { buildInfo } from "./build-info.js";
-import { detailKey, formatClock, formatElapsed, formatTokens, oneLine } from "./format.js";
+import { detailKey, formatCacheHit, formatClock, formatElapsed, formatTokens, oneLine } from "./format.js";
 import { renderRunGraphMermaid } from "./run-graph-mermaid.js";
 import { GRAPH_CSS, graphLegendHtml, renderRunGraphSvg } from "./run-graph-svg.js";
 import type { TranscriptEntry, TranscriptPart } from "./session-log.js";
@@ -413,6 +413,12 @@ export function renderRunIndex(vm: RunIndexVm, ctx: RenderContext): string {
   return page("horde runs", [{ text: "runs" }], swarmIndexTable(vm) + table(headers, rows, "no runs in .horde/runs"), ctx);
 }
 
+/** The `cache r/w` cell: cached and written tokens with the hit rate against billed input. */
+function cacheCell(usage: { input: number; cacheRead: number; cacheWrite: number }): string {
+  return `${formatTokens(usage.cacheRead)}/${formatTokens(usage.cacheWrite)} ` +
+    `(${formatCacheHit(usage.cacheRead, usage.input)})`;
+}
+
 function memberRow(runId: string, m: MemberRowVm): string[] {
   return [
     link(memberHref(runId, m.name), m.name),
@@ -423,7 +429,7 @@ function memberRow(runId: string, m: MemberRowVm): string[] {
     String(m.toolCalls),
     formatTokens(m.usage.input),
     formatTokens(m.usage.output),
-    `${formatTokens(m.usage.cacheRead)}/${formatTokens(m.usage.cacheWrite)}`,
+    cacheCell(m.usage),
     cost(m.usage.cost),
     m.elapsedMs === undefined ? "" : formatElapsed(m.elapsedMs),
     e(m.endCause ?? "") +
@@ -483,7 +489,8 @@ function overviewSessions(vm: RunOverviewVm): string {
 export function renderRunOverview(vm: RunOverviewVm, ctx: RenderContext): string {
   const totals = [
     "<b>total</b>", "", "", "", String(vm.totals.turns), String(vm.members.reduce((n, m) => n + m.toolCalls, 0)),
-    formatTokens(vm.totals.input), formatTokens(vm.totals.output), "", cost(vm.totals.cost), "", "", "",
+    formatTokens(vm.totals.input), formatTokens(vm.totals.output), cacheCell(vm.totals),
+    cost(vm.totals.cost), "", "", "",
   ];
   const body =
     overviewHeader(vm) +

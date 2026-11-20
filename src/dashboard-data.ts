@@ -28,7 +28,7 @@ import type { RunGraph } from "./run-graph.js";
 import { readCleanStop } from "./ledger/run-signals.js";
 import { emptyUsage, memberSessionDir, parseMemberLog, USAGE_KEYS } from "./member.js";
 import type { MemberEndCause, MemberState, MemberStatus, MemberUsage } from "./member.js";
-import { memberActivity, parseReportOutcome, parseTaskMarkdown, statusCounts, totalUsage } from "./prompt.js";
+import { memberActivity, parseReportOutcome, parseTaskMarkdown, statusCounts, sumUsage, totalUsage } from "./prompt.js";
 import type { RunSummaryInput, UsageTotals } from "./prompt.js";
 import {
   listSessionFiles,
@@ -652,18 +652,6 @@ function liveOverview(src: DashboardSource, live: LiveRun): RunOverviewVm {
   };
 }
 
-function usageTotalsOf(rows: MemberRowVm[]): UsageTotals {
-  return rows.reduce(
-    (acc, row) => ({
-      turns: acc.turns + row.turns,
-      input: acc.input + row.usage.input,
-      output: acc.output + row.usage.output,
-      cost: acc.cost + row.usage.cost,
-    }),
-    { turns: 0, input: 0, output: 0, cost: 0 },
-  );
-}
-
 function diskOverview(runId: string, runDir: string): RunOverviewVm {
   const task = parseTaskMarkdown(readOptional(path.join(runDir, "TASK.md")) ?? "");
   const members = memberNamesOnDisk(runDir).map((name) => diskMemberRow(runDir, name));
@@ -686,7 +674,7 @@ function diskOverview(runId: string, runDir: string): RunOverviewVm {
       ?.split("\n")
       .filter((line) => line.startsWith("- layer ")),
     counts: statusCounts(members.map((m) => ({ status: m.status === "unknown" ? "failed" : m.status }))),
-    totals: usageTotalsOf(members),
+    totals: sumUsage(members),
     members,
     files: runFilePresence(runDir),
     unmappedSessions: listSessionFiles(path.join(runDir, "sessions")),

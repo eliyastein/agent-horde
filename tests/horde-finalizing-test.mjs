@@ -212,7 +212,7 @@ if (process.argv.includes("--mode")) {
   });
   assert.match(report, /## Distinct findings \(ranked by review status, then legacy\/support ranking, then importance, then independent members\)/);
   assert.match(report, /deltas: member-3/);
-  assert.match(report, /^Usage: /m);
+  assert.match(report, /^Usage: \d+ turns, \S+ in \(\S+ cached, \d+% hit\) \/ \S+ out, /m);
   assert.match(report, /- deliverable: DELIVERABLE\.md/);
   assert.match(report, /## Late board posts retained from wind-down/);
   assert.match(report, /member-5: XSS control was negative/);

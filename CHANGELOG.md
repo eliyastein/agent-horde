@@ -2,6 +2,18 @@
 
 Notable changes to agent-horde. The format follows Keep a Changelog; versions follow semver.
 
+## [Unreleased]
+
+### Added
+
+- Usage totals carry the provider's cache reads and writes: REPORT.md and SUMMARY.md show the
+  cached tokens and the cache hit rate next to the billed input, the dashboard totals row fills
+  the cache column, and `member-exit` events record `cacheRead` and `cacheWrite` for the
+  session (#46).
+- `--context-cap=<tokens>` launch flag: members compact their own context once it passes the
+  cap, instead of only near the model's full window. Members get it as `PI_HORDE_CONTEXT_CAP`;
+  TASK.md, SWARM.md and the `run-start` event record it (#46).
+
 ## [0.3.0] - 2026-11-14
 
 ### Added

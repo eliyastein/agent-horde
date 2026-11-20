@@ -288,7 +288,8 @@ async function seedHorde(swarm: Swarm, run: HordeRun, roles: string[]): Promise<
   await seedRun(run);
   await recordLifecycle(run, "run-start", {
     count: run.count, model: run.model, verifier: run.verifier, plan: run.plan, untilStop: run.untilStop,
-    budget: run.budget, roles: roles.map((role) => oneLine(role, 120)), dashboardUrl: run.dashboardUrl,
+    budget: run.budget, contextCap: run.contextCap,
+    roles: roles.map((role) => oneLine(role, 120)), dashboardUrl: run.dashboardUrl,
     ...(swarm.hordes > 1 ? { swarm: swarm.id, horde: run.horde, hordes: swarm.hordes, slice: run.slice } : {}),
   });
   await recordPhase(run, "discovery", "start");
