@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { clusterFindings } from "./ledger/clusters.js";
+import { loadCollaborationReport } from "./collaboration-report.js";
 import { collaborationState } from "./ledger/collaboration.js";
-import type { CollaborationState, ReviewRecord } from "./ledger/collaboration.js";
+import type { ArtifactRecord, CollaborationState } from "./ledger/collaboration.js";
 import { findingReviewState, findingRevision } from "./ledger/findings.js";
 import type { FindingEntry } from "./ledger/findings.js";
 import { listResources, readRunResources } from "./ledger/resources.js";
@@ -234,14 +235,18 @@ export function ledgerCitationWarnings(
 /** The acceptance vocabulary for a finding nobody reviewed at its current revision. */
 const UNREVIEWED_LABEL = /unverified|unreviewed|no (?:independent|current-revision) review|not (?:independently )?reviewed/i;
 
+/** The acceptance vocabulary for an artifact ACCEPTANCE.md excludes from recommended outputs. */
+const UNACCEPTED_LABEL = /not (?:yet )?accepted|unaccepted|pending|unreviewed|not (?:independently )?reviewed|excluded|superseded/i;
+
 /**
- * True when the text cites F<id> and no citing paragraph carries the unreviewed label. One label
- * at the top of a document cannot cover every later citation; a label next to any citation can.
+ * True when the text cites the target (F# or A#) and no citing paragraph carries the label. One
+ * label at the top of a document cannot cover every later citation; a label next to any citation
+ * can.
  */
-function citedWithoutLabel(text: string, id: number): boolean {
-  const cite = new RegExp(`\\bF${id}\\b`);
+function citedWithoutLabel(text: string, target: string, label: RegExp): boolean {
+  const cite = new RegExp(`\\b${target}\\b`);
   const citing = text.split(/\n\s*\n/).filter((paragraph) => cite.test(paragraph));
-  return citing.length > 0 && !citing.some((paragraph) => UNREVIEWED_LABEL.test(paragraph));
+  return citing.length > 0 && !citing.some((paragraph) => label.test(paragraph));
 }
 
 /** A sentence ends at `.`, `!` or `?`, possibly inside closing emphasis or brackets, before a capitalised start. */
@@ -258,17 +263,24 @@ function citationUnits(text: string): string[] {
 }
 
 /**
- * A V# cited next to an F# must review that finding at its current revision. A review of the
- * finding it superseded, of an artifact that merely depends on it, or of an earlier revision is
- * not support for the claim it sits next to. A V# with no review record is left alone: "V8" in
- * prose is an engine, not a citation.
+ * A V# cited next to an F# or A# must review that target at its current revision. A review of the
+ * finding it superseded, of an artifact that merely depends on it, or of an earlier revision of
+ * the finding or the artifact is not support for the claim it sits next to. A V# with no review
+ * record is left alone: "V8" in prose is an engine, not a citation.
  */
-function reviewCitationWarnings(label: string, text: string, findings: FindingEntry[], reviews: ReviewRecord[]): string[] {
+function reviewCitationWarnings(
+  label: string,
+  text: string,
+  findings: FindingEntry[],
+  { reviews, artifacts }: Pick<CollaborationState, "reviews" | "artifacts">,
+): string[] {
   const warnings: string[] = [];
   for (const paragraph of citationUnits(text)) {
-    const cited = [...new Set([...paragraph.matchAll(/\bF(\d+)\b/g)].map((match) => `F${match[1]}`))];
-    if (cited.length === 0) continue;
-    const targets = new Set([...cited, ...[...paragraph.matchAll(/\bA(\d+)\b/g)].map((match) => `A${match[1]}`)]);
+    const citedFindings = [...new Set([...paragraph.matchAll(/\bF(\d+)\b/g)].map((match) => `F${match[1]}`))];
+    const targets = new Set([...citedFindings, ...[...paragraph.matchAll(/\bA(\d+)\b/g)].map((match) => `A${match[1]}`)]);
+    if (targets.size === 0) continue;
+    // The message names the findings when there are any, as it did before artifacts were checked alone.
+    const cited = citedFindings.length ? citedFindings : [...targets];
     for (const match of paragraph.matchAll(/\bV(\d+)\b/g)) {
       const id = `V${match[1]}`;
       const review = reviews.find((entry) => entry.id === id);
@@ -278,7 +290,8 @@ function reviewCitationWarnings(label: string, text: string, findings: FindingEn
         continue;
       }
       const finding = findings.find((entry) => `F${entry.id}` === review.target);
-      if (finding && review.revision !== findingRevision(finding)) {
+      const artifact = artifacts.find((entry) => entry.id === review.target);
+      if ((finding && review.revision !== findingRevision(finding)) || (artifact && review.revision !== artifact.hash)) {
         warnings.push(`${label} cites ${id} for ${review.target}, but it reviewed an earlier revision; the current revision has no such review`);
       }
     }
@@ -302,21 +315,31 @@ export function generatedArtifactWarnings(
     if (citedFileMissing(run, ref, run.runDir)) warnings.push(`${label} cites a path that does not exist: ${ref}`);
   }
   // A generated deliverable must not present an unreproduced finding as settled.
-  const state = run.hordeDir && run.id ? collaborationState(run.hordeDir, run.id) : { reviews: [], messages: [] };
+  const report = run.hordeDir && run.id ? loadCollaborationReport(run.hordeDir, run.id) : undefined;
+  const state = report?.state ?? { reviews: [], messages: [], artifacts: [] as ArtifactRecord[] };
   const checks = findings.map((f) => ({ ...f, check: findingReviewState(f, state.reviews, state.messages) }));
   const unverified = checks.filter((f) => f.check.status === "unreviewed");
   for (const status of ["limited", "disputed"]) {
     const cited = checks.filter((f) => f.check.status === status && new RegExp(`\\bF${f.id}\\b`).test(text));
     if (cited.length) warnings.push(`${label} cites ${status === "limited" ? "scope-limited reviews" : "disputed findings"} (${cited.map((f) => `F${f.id}`).join(", ")}); consult the exact checked/unchecked scope and unresolved challenges in COLLABORATION.md`);
   }
-  const unlabeled = unverified.filter((finding) => citedWithoutLabel(text, finding.id));
+  const unlabeled = unverified.filter((finding) => citedWithoutLabel(text, `F${finding.id}`, UNREVIEWED_LABEL));
   if (unlabeled.length > 0) {
     warnings.push(
       `${label} cites findings with no independent review (${unlabeled.map((finding) => `F${finding.id}`).join(", ")}) ` +
         "without saying so in the citing paragraph",
     );
   }
-  warnings.push(...reviewCitationWarnings(label, text, findings, state.reviews));
+  // Nor a pending document or harness as accepted output: the acceptance already excludes it.
+  const unaccepted = state.artifacts.filter((artifact) =>
+    !report?.acceptedArtifacts.includes(artifact.id) && citedWithoutLabel(text, artifact.id, UNACCEPTED_LABEL));
+  if (unaccepted.length > 0) {
+    warnings.push(
+      `${label} cites artifacts ACCEPTANCE.md does not accept (${unaccepted.map((artifact) => artifact.id).join(", ")}) ` +
+        "without saying so in the citing paragraph",
+    );
+  }
+  warnings.push(...reviewCitationWarnings(label, text, findings, state));
   return [...new Set(warnings)];
 }
 
