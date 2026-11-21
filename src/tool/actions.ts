@@ -7,12 +7,18 @@ import type { FactEntry } from "../ledger/facts.js";
 import * as path from "node:path";
 import { CLUSTER_THRESHOLD } from "../ledger/clusters.js";
 import { collaborationState } from "../ledger/collaboration.js";
-import { addFinding, amendFinding, answerCitations, findingReviewState, findingRevision, findingSummaries, listFindingsForRun, pendingReviewsForMember, staleAnswerFor, verifyFinding } from "../ledger/findings.js";
+import {
+  addFinding, amendFinding, answerCitations, answerObjectionFor, findingReviewState, findingRevision, findingsHighWater,
+  findingSummaries, listFindingsForRun, pendingReviewsForMember, verifyFinding,
+} from "../ledger/findings.js";
 import { textOverlap } from "../ledger/text-match.js";
 import { addIdea, claimIdea, dropIdea, finishIdea, listIdeas, ruleOutIdea } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
 import { claimResource, listResources } from "../ledger/resources.js";
-import { cleanStopRequestedFor, confirmSolved, contestSolved, markSolved, readSolved } from "../ledger/run-signals.js";
+import {
+  cleanStopRequestedFor, confirmSolved, contestBlockers, contestSolved, inheritedFindingsMark, markSolved, readSolved,
+  REPEAT_CONTEST_LIMIT, unansweredContests,
+} from "../ledger/run-signals.js";
 import { oneLine } from "../format.js";
 import type { SiblingHorde } from "../member.js";
 import { validateFindingResourceCitations } from "../citations.js";
@@ -467,30 +473,37 @@ function resourcesAction({ hordeDir, siblings }: ActionContext): ActionResult {
 
 /**
  * An answer that cites a superseded finding, or a finding amended or an artifact republished since
- * the proposal pinned it, ships a stale reading as the run's result. The proposer cites the
- * current text instead; a validator is refused until the proposer re-proposes.
+ * the proposal pinned it, ships a stale reading as the run's result, and one that never names a
+ * finding filed after the run's first proposal ships without it. The proposer cites the current
+ * text instead; a validator is refused until the proposer re-proposes.
  */
-function staleAnswer(ctx: ActionContext, text: string, cites?: Record<string, string>): string | undefined {
-  const runId = requireRun(ctx);
-  const stale = staleAnswerFor(ctx.hordeDir, runId, text, cites);
-  if (!stale.length) return undefined;
-  return `cites ${stale.join(", ")}`;
+function staleAnswer(ctx: ActionContext, answer: { text: string; cites?: Record<string, string>; findingsMark?: number }): string | undefined {
+  return answerObjectionFor(ctx.hordeDir, requireRun(ctx), answer);
+}
+
+/** The same text, contested twice with no idea to wait on, is not proposed a third time unchanged. */
+function checkRepeatedAnswer(runDir: string, text: string): void {
+  const contests = unansweredContests(runDir, text);
+  const last = contests.at(-1);
+  if (!last || contests.length < REPEAT_CONTEST_LIMIT) return;
+  throw new Error(
+    `horde: this exact answer was contested ${contests.length} times, last by ${last.member}: ${oneLine(last.text, 160)}. ` +
+      `Change the answer to address the contest, or settle it with ${last.member} first`,
+  );
 }
 
 async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
   const runId = requireRun(ctx);
+  const runDir = path.join(ctx.hordeDir, "runs", runId);
   const text = ctx.params.text ?? "";
-  const stale = staleAnswer(ctx, text);
+  const findingsMark = inheritedFindingsMark(runDir, findingsHighWater(ctx.hordeDir, runId));
+  const stale = staleAnswer(ctx, { text, findingsMark });
   if (stale) throw new Error(`horde: the answer ${stale}; cite the current findings and propose again`);
   const unsettled = unsettledAnswerFacts(ctx, text);
   if (unsettled) throw new Error(`horde: the answer ${unsettled}; close the idea or resolve the claim first, or leave the fact out`);
-  const { signal, alreadySolved } = await markSolved(
-    ctx.hordeDir,
-    runId,
-    ctx.member,
-    ctx.params.text,
-    answerCitations(listFindingsForRun(ctx.hordeDir, runId), text, collaborationState(ctx.hordeDir, runId).artifacts),
-  );
+  checkRepeatedAnswer(runDir, text);
+  const cites = answerCitations(listFindingsForRun(ctx.hordeDir, runId), text, collaborationState(ctx.hordeDir, runId).artifacts);
+  const { signal, alreadySolved } = await markSolved(ctx.hordeDir, runId, ctx.member, ctx.params.text, { cites, findingsMark });
   return {
     text: alreadySolved
       ? `A SOLVED proposal is already pending from ${signal.member}: ${signal.text}. Continue distinct claimed work while another member validates or contests it.`
@@ -501,7 +514,7 @@ async function solvedAction(ctx: ActionContext): Promise<ActionResult> {
 async function confirmSolvedAction(ctx: ActionContext): Promise<ActionResult> {
   const runId = requireRun(ctx);
   const proposal = readSolved(path.join(ctx.hordeDir, "runs", runId));
-  const stale = proposal ? staleAnswer(ctx, proposal.text, proposal.cites) : undefined;
+  const stale = proposal ? staleAnswer(ctx, proposal) : undefined;
   if (stale) throw new Error(`horde: the pending answer ${stale}; it cannot be validated until ${proposal?.member} re-proposes against the current findings`);
   const unsettled = proposal ? unsettledAnswerFacts(ctx, proposal.text) : undefined;
   if (unsettled) throw new Error(`horde: the pending answer ${unsettled}; close the idea or resolve the claim before validating it`);
@@ -522,8 +535,13 @@ async function confirmSolvedAction(ctx: ActionContext): Promise<ActionResult> {
 async function contestSolvedAction(ctx: ActionContext): Promise<ActionResult> {
   const answer = await contestSolved(ctx.hordeDir, requireRun(ctx), ctx.member, ctx.params.text, ctx.params.revision);
   if (!answer.ok) throw new Error(`horde: ${answer.reason}`);
+  const named = new Set(contestBlockers(ctx.params.text ?? ""));
+  const waits = listIdeas(ctx.hordeDir).some((idea) => named.has(idea.id) && (idea.mark === " " || idea.mark === "~"));
+  const next = waits
+    ? "The proposal reopens once the open ideas you named are done or ruled out."
+    : "Your contest names no open idea, so the proposal does not reopen on its own: if one change would settle it, send the proposer a blocking message naming that change.";
   return {
-    text: `Contested the SOLVED proposal: ${oneLine(ctx.params.text ?? "", 160) || "not yet established"}. Work continues; the parent will clear the pause.`,
+    text: `Contested the SOLVED proposal: ${oneLine(ctx.params.text ?? "", 160) || "not yet established"}. Work continues; the parent will clear the pause. ${next}`,
   };
 }
 

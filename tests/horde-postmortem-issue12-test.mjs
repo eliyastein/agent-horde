@@ -218,8 +218,8 @@ const ctxStub = { ui: { notify: () => {} }, hasUI: false };
   assert.match(fs.readFileSync(path.join(hordeDir, "BOARD.md"), "utf8"), new RegExp(`withdrawn: it cites amended F${f3.id}`));
 
   // A contest naming open ideas reopens the proposal once they close.
-  assert.deepEqual(solved.contestBlockers("missing #12, #14 and (#3); see #12 again"), [12, 14, 3]);
-  assert.deepEqual(solved.contestBlockers("premature, nothing specific"), []);
+  assert.deepEqual(signals.contestBlockers("missing #12, #14 and (#3); see #12 again"), [12, 14, 3]);
+  assert.deepEqual(signals.contestBlockers("premature, nothing specific"), []);
   const a = (await ideas.addIdea(hordeDir, "member-2", "recount the appendices")).idea;
   const b = (await ideas.addIdea(hordeDir, "member-3", "check the preface numbering")).idea;
   await ideas.claimIdea(hordeDir, "member-2", a.id);
