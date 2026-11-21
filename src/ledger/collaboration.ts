@@ -67,6 +67,8 @@ export interface ReviewRecord {
   evidence: string[];
   /** The reviewer's earlier review of a previous revision that this one carries forward. */
   reattests?: string;
+  /** A factual error the reviewer named for the owner to fix; it opened a blocking request. */
+  correction?: string;
 }
 export interface ResourceContract {
   target: string;

@@ -223,17 +223,17 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
 | `list`, `findings`, `facts`, `claims`, `resources`, `concerns` | print a ledger |
 | `post` | append a message to BOARD.md |
 | `idea` | add an open checklist item; a near-duplicate returns the existing id |
-| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id; `done` with a confirmed-negative result line is refused in favour of `rule-out` |
+| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id; `done` with a confirmed-negative result line is refused in favour of `rule-out`; `rule-out` requires `unchecked`, the checks the negative did not perform (empty for none), kept in the idea's note as `not checked: ...`, and the receipts of `solved` and `confirm-solved` name each such rule-out the answer cites |
 | `finding` | file under a claimed `idea` with a `concern` and `support`; `importance` and `confidence` are optional; `deltaOf: F#` adds distinct evidence, `supersedes: F#` corrects |
 | `verify` | record your own reproduction of F#id with the support level you reached |
-| `amend` | rewrite the body prose of your own F#id (`text`) with a `note` saying why; the revision changes, reviews stay pinned to what they checked, earlier verification notes are kept as history of the previous revision, and the legacy `verified=` label and corroborators are dropped |
+| `amend` | rewrite the body prose of your own F#id (`text`) and/or change its `importance`, `confidence` and `support`, with a `note` saying why; with no `text` only the ranking changes and the errata line names the move; the revision changes, reviews stay pinned to what they checked, earlier verification notes are kept as history of the previous revision, and the legacy `verified=` label and corroborators are dropped |
 | `fact` | record a checkable fact; `deltaOf: T#` extends one; a fact about what an open idea or contested claim is still auditing is recorded as provisional on it |
 | `assert`, `confirm`, `contest`, `retract`, `supersede` | create or move claim C#id |
 | `resource` | claim a shared dataset, harness, corpus, or sandbox by name, with an optional `cleanup` command |
 | `solved`, `confirm-solved`, `contest-solved` | propose, validate, or refute the goal answer |
 | `message`, `inbox`, `ack`, `respond`, `resolve`, `defer` | targeted threads: question, blocker, review-request, challenge, handoff, decision |
 | `attach` | add supporting, contradicting, or extending evidence to a target |
-| `review` | record a revision-pinned check with explicit `checked` and `unchecked` (in-criteria gaps) scope, `limits` outside the criteria, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call |
+| `review` | record a revision-pinned check with explicit `checked` and `unchecked` (in-criteria gaps) scope, `limits` outside the criteria, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call; `correction` names a factual error for the owner to fix and opens a blocking request to it whatever the verdict |
 | `reattest` | carry your earlier review of F#/A# forward to its current revision, with evidence that what you checked is unchanged; refused across a changed artifact criteria or kind, a changed finding claim line, or a revision no `amend` started from |
 | `artifact` | publish a file under `artifacts/` with `artifactKind`, `criteria`, and revision-pinned `dependsOn`; republishing a revision other artifacts pin needs `text` naming the change |
 | `resource-state` | publish building, ready, broken, or retired state with a lease, ports, and health evidence |

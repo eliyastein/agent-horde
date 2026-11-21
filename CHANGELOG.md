@@ -13,6 +13,16 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 - `--context-cap=<tokens>` launch flag: members compact their own context once it passes the
   cap, instead of only near the model's full window. Members get it as `PI_HORDE_CONTEXT_CAP`;
   TASK.md, SWARM.md and the `run-start` event record it (#46).
+- `amend` changes a finding's `importance`, `confidence` and `support`, with or without new
+  prose; the errata line names the move (#47).
+- `review` takes `correction`: a factual error in the target for the owner to fix. It opens a
+  blocking request to the owner whatever the verdict (#47).
+
+### Changed
+
+- `rule-out` requires `unchecked`, the checks the negative did not perform, empty when the whole
+  idea was checked. It is kept in the idea's note, and the receipts of `solved` and
+  `confirm-solved` name each rule-out with unchecked scope that the answer cites (#47).
 
 ### Changed
 

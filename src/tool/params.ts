@@ -48,7 +48,7 @@ export const HordeParams = Type.Object({
         "list/findings/facts/claims/resources/concerns: read shared state; post: BOARD.md; " +
         "idea/claim/done/drop/rule-out: checklist (rule-out is a terminal negative); " +
         "finding: FINDINGS.md with a claimed idea, a concern slug, and optional importance/" +
-        "confidence/support; amend: rewrite the body prose of your own F#id at its current revision; " +
+        "confidence/support; amend: rewrite the body prose of your own F#id at its current revision, and/or change its importance/confidence/support; " +
         "verify: record your independent reproduction of finding F#id with the support level you reached; " +
         "fact: FACTS.md; assert/confirm/contest/retract/supersede: change claim C#id state; " +
         "resource: claim a shared dataset, harness, corpus, or sandbox (with cleanup) before building it; " +
@@ -70,8 +70,9 @@ export const HordeParams = Type.Object({
   relation: Type.Optional(StringEnum(["supports", "contradicts", "extends"] as const)),
   verdict: Type.Optional(StringEnum(["supports", "partially-supports", "refutes", "inconclusive"] as const)),
   checked: Type.Optional(Type.String({ description: "Exact assertions checked and method; required for review." })),
-  unchecked: Type.Optional(Type.String({ description: "Assertions inside the target's stated claim or criteria that you did not check; empty only for full coverage of that scope. Disclosures outside the criteria go in limits." })),
+  unchecked: Type.Optional(Type.String({ description: "For review: assertions inside the target's stated claim or criteria that you did not check; empty only for full coverage of that scope. Disclosures outside the criteria go in limits. For rule-out (required): the checks this negative did not perform; empty only when the whole idea was checked." })),
   limits: Type.Optional(Type.String({ description: "For review: limits outside the target's declared claim or criteria (one engine, no hardened deployment). Recorded on the acceptance as limits, never as blockers." })),
+  correction: Type.Optional(Type.String({ description: "For review: a factual error in the target the owner must fix (a wrong line number, citation or figure), whatever the verdict. Opens a blocking request to the owner, who amends or republishes, or declines in its response." })),
   artifactKind: Type.Optional(StringEnum(["runnable", "document"] as const, { description: "Artifact classification, immutable after publication. Default runnable requires tested/reproduced review. document permits full-scope sourced/derived review of its stated criteria, not runtime acceptance." })),
   artifactPath: Type.Optional(Type.String({ description: "File path relative to this run, under artifacts/, retained by content hash." })),
   criteria: Type.Optional(Type.String({ description: "Artifact acceptance criteria, including positive/negative tests." })),
@@ -114,17 +115,17 @@ export const HordeParams = Type.Object({
   importance: Type.Optional(
     StringEnum(FINDING_IMPORTANCE, {
       description:
-        "For a finding: how much it matters for the task - critical/high/medium/low/info (optional)",
+        "For a finding: how much it matters for the task - critical/high/medium/low/info (optional). For amend: the corrected value",
     }),
   ),
   confidence: Type.Optional(
-    StringEnum(FINDING_CONFIDENCES, { description: "For a finding: high/medium/low (optional)" }),
+    StringEnum(FINDING_CONFIDENCES, { description: "For a finding: high/medium/low (optional). For amend: the corrected value" }),
   ),
   support: Type.Optional(
     StringEnum(FINDING_SUPPORT, {
       description:
         "For a finding: how strongly it is supported - reproduced / tested / derived / sourced / " +
-        "speculative (required for finding and verify)",
+        "speculative (required for finding and verify). For amend: the corrected value",
     }),
   ),
   concern: Type.Optional(
@@ -200,6 +201,7 @@ export type HordeToolParams = {
   checked?: string;
   unchecked?: string;
   limits?: string;
+  correction?: string;
   artifactPath?: string;
   artifactKind?: "runnable" | "document";
   criteria?: string;
