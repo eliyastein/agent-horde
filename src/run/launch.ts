@@ -130,13 +130,22 @@ async function attemptCanary(
   return outcome;
 }
 
+function canaryFailure(outcome: CanaryOutcome, canary: MemberState): string {
+  if (canary.endCause === "refused") {
+    return `the provider refused the request (${oneLine(canary.error ?? "no detail", 200)}); not retried`;
+  }
+  if (outcome === "timeout") return `no output within ${Math.round(CANARY_TIMEOUT_MS / 1000)}s (after retry)`;
+  return canary.error ?? `exited with cause ${canary.endCause ?? "unknown"} (after retry)`;
+}
+
 /** Run the canary, retrying once, and record the result on the run. */
 async function runCanary(launch: RunLaunch, spawns: Promise<void>[]): Promise<CanaryOutcome> {
   const { run, ctx } = launch;
   const canary = run.members[0]!;
   ctx.ui.notify(`horde ${run.id}: canary preflight (${canary.name}) before fan-out`, "info");
   let outcome = await attemptCanary(launch, canary, spawns);
-  if (outcome !== "output" && !run.stopped) {
+  // A refusal is the provider's answer to this task; a second identical request gets the same one.
+  if (outcome !== "output" && !run.stopped && canary.endCause !== "refused") {
     ctx.ui.notify(`horde ${run.id}: canary produced no output; retrying once`, "warning");
     resetMemberState(canary);
     await sleep(3_000);
@@ -148,10 +157,7 @@ async function runCanary(launch: RunLaunch, spawns: Promise<void>[]): Promise<Ca
     run.canary = "ok";
   } else {
     run.canary = "failed";
-    run.canaryError =
-      outcome === "timeout"
-        ? `no output within ${Math.round(CANARY_TIMEOUT_MS / 1000)}s (after retry)`
-        : (canary.error ?? `exited with cause ${canary.endCause ?? "unknown"} (after retry)`);
+    run.canaryError = canaryFailure(outcome, canary);
   }
   return outcome;
 }

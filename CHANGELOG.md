@@ -14,6 +14,14 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   cap, instead of only near the model's full window. Members get it as `PI_HORDE_CONTEXT_CAP`;
   TASK.md, SWARM.md and the `run-start` event record it (#46).
 
+### Changed
+
+- A member whose session ends in a provider refusal gets the end cause `refused` and is no
+  longer reset into a fresh session that would send the same task. It stays down, its ideas
+  return to the pool, and BOARD.md records why. A refused canary stops the run without the
+  retry. Errors not identified as a refusal are still `model_error` and are reset as before
+  (#56).
+
 ## [0.3.0] - 2026-11-14
 
 ### Added
