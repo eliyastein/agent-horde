@@ -176,6 +176,7 @@ for all hordes combined.
 | `/agent-horde stop-clean [postmortem]` | members wrap up, then the run finalizes; this is how an `--until-stop` run ends |
 | `/agent-horde stop-hard` | terminate members now |
 | `/agent-horde pause`, `resume` | suspend and resume member processes |
+| `/agent-horde tell <text>` | send running members an instruction; each reads it at its next turn |
 | `/agent-horde help` | every flag and target |
 
 Every control takes a target: `member-3`, `h2` for one horde of a swarm, `h2:member-3` for one
