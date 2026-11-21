@@ -6,7 +6,7 @@ import { addFact, factUnsettled, listFacts, unsettledFactCitations } from "../le
 import type { FactEntry } from "../ledger/facts.js";
 import * as path from "node:path";
 import { CLUSTER_THRESHOLD } from "../ledger/clusters.js";
-import { collaborationState } from "../ledger/collaboration.js";
+import { collaborationState, openMessages } from "../ledger/collaboration.js";
 import {
   addFinding, amendFinding, answerCitations, answerObjectionFor, findingReviewState, findingRevision, findingsHighWater,
   findingSummaries, listFindingsForRun, pendingReviewsForMember, verifyFinding,
@@ -391,16 +391,28 @@ async function ideaAction({ hordeDir, member, params }: ActionContext): Promise<
  * The verifier reviews before it investigates: a verifier that claimed ideas and filed the
  * run's main findings left its first session with zero scoped reviews while its summary
  * reported verification complete. Any verdict counts; a finding it cannot reproduce gets a
- * refuting or inconclusive review, not silence.
+ * refuting or inconclusive review, not silence. Artifact reviews assigned to it count the same
+ * way: an assigned document review left open is what kept a run's only deliverable unaccepted.
  */
 function checkVerifierClaim(ctx: ActionContext): void {
   if (!ctx.runId || !isVerifierRole(ctx.role)) return;
-  const pending = pendingReviewsForMember(ctx.hordeDir, ctx.runId, ctx.member);
-  if (!pending.length) return;
-  throw new Error(
-    `horde: you are the verifier and ${pending.length} finding(s) by other members await your review: ` +
-      `${pending.map((f) => `F${f.id}`).join(", ")}. Review each (any verdict, with its unchecked scope) before claiming an idea`,
-  );
+  const findings = pendingReviewsForMember(ctx.hordeDir, ctx.runId, ctx.member).map((f) => `F${f.id}`);
+  const assigned = openMessages(collaborationState(ctx.hordeDir, ctx.runId))
+    .filter((m) => m.to === ctx.member && m.kind === "review-request" && /^A\d+$/.test(m.target) && m.state !== "responded")
+    .map((m) => m.target);
+  if (findings.length) {
+    throw new Error(
+      `horde: you are the verifier and ${findings.length} finding(s) by other members await your review: ` +
+        `${findings.join(", ")}. Review each (any verdict, with its unchecked scope) before claiming an idea`,
+    );
+  }
+  if (assigned.length) {
+    const targets = [...new Set(assigned)];
+    throw new Error(
+      `horde: you are the verifier and ${targets.length} artifact review(s) assigned to you are open: ` +
+        `${targets.join(", ")}. Review each (any verdict, with its unchecked scope) before claiming an idea`,
+    );
+  }
 }
 
 /** Findings of this run that already have an independent corroborator or a full review and overlap the idea. */

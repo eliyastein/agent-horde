@@ -28,6 +28,15 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   records it. A contest with no open idea to wait on, or a withdrawal, discards it (#47).
 - A member that finishes with blocking requests to it unanswered gets one fresh session per
   request to answer them, also while a solved proposal is pending (#47).
+- A deliverable that cites an artifact ACCEPTANCE.md does not accept, without saying so in the
+  citing paragraph, gets a consistency warning (#37).
+- A V# cited for an artifact is checked against the artifact's current revision, also in a
+  sentence that names no finding (#37).
+- The verifier's idea claims wait for the artifact reviews assigned to it, as they already did
+  for other members' findings (#37).
+- Repair serves the parent's request to republish an artifact against a moved dependency before
+  review requests (#37).
+- COLLABORATION.md marks each review of a revision its target has since left (#37).
 
 ## [0.3.0] - 2026-11-14
 

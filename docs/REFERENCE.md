@@ -49,7 +49,9 @@ synthesize it.
    `unchanged`. A thread that two consecutive completed attempts did not move (same state and
    response revision) is held back from that member until another member changes it; a member
    whose whole queue is held is recorded as `repair-skipped` with reason `no-progress` and costs
-   later rounds nothing. Each round serves a member at most once, but a round other than the last
+   later rounds nothing. Within a queue, blockers and requests about the pending answer come
+   first, then the parent's request to republish an artifact against a moved dependency, then
+   review requests, so a revision about to be replaced is not reviewed first. Each round serves a member at most once, but a round other than the last
    ends early when the only blocking threads left belong to members it already served, so a
    requester rechecks a correction before unserved members' non-blocking threads.
    A user stop skips this phase.
@@ -300,7 +302,7 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   revision, full-scope for an A#, since the owner may not review it. Acceptance names an open
   blocker as `blocked by Q#`.
 - **Verifier.** The verifier's idea claims are refused while other members' findings await its
-  review at their current revision; the pending F# list follows every review, reattest and board
+  review at their current revision, or while an artifact review assigned to it is open; the pending F# list follows every review, reattest and board
   post. A verifier whose session closes with critical or high-importance findings unreviewed is
   reset once more into a fresh session that owes them, within `PI_HORDE_RESET_CAP`. SUMMARY.md
   derives its coverage sentence from the review records and names the unreviewed F#.
@@ -409,7 +411,10 @@ from carried context; resources and cleanup results; coverage (released and stil
 the solved answer); late board posts; and consistency warnings for missing metadata,
 mixed-concern clusters, unknown R# citations, and cited paths that do not exist (rooted URL paths
 and templates with a date or placeholder slot, such as `logs/gate-YYYY-MM-DD.jsonl` or
-`out/<id>.json`, are not checked). A killed
+`out/<id>.json`, are not checked). DELIVERABLE.md is also warned when it cites an artifact
+ACCEPTANCE.md does not accept without saying so in the citing paragraph, or cites a V# for an
+F# or A# whose current revision that review did not check. COLLABORATION.md marks each review
+of a revision its target has since left as `EARLIER REVISION`. A killed
 member's summary is reconstructed from its last board post. The message injected into the parent
 carries a one-line diagnosis and, when generated, the post-mortem text.
 
