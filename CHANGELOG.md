@@ -22,6 +22,21 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   retry. Errors not identified as a refusal are still `model_error` and are reset as before
   (#56).
 
+### Fixed
+
+- A solved proposal is refused validation and withdrawn while a finding filed after the run's
+  first proposal goes unnamed in its text; a re-proposal inherits the same mark, and ANSWER.md's
+  final status names an omitted finding (#47).
+- A contest reopens the proposal only for ideas that were open when it was made. A contest naming
+  closed ideas, or none, used to reopen the unchanged text on the next poll (#47).
+- The same answer text, contested twice with no open idea to wait on, is refused at `solved`
+  until it changes (#47).
+- A confirmation carries over to a proposal reopened with the same text and pinned citations
+  instead of being dropped with the old revision id; the `solved-validation-carried` event
+  records it. A contest with no open idea to wait on, or a withdrawal, discards it (#47).
+- A member that finishes with blocking requests to it unanswered gets one fresh session per
+  request to answer them, also while a solved proposal is pending (#47).
+
 ## [0.3.0] - 2026-11-14
 
 ### Added

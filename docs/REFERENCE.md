@@ -38,10 +38,12 @@ synthesize it.
    artifact revisions that have been stable for a minute to the running non-owner with the fewest
    open review requests. A member with no ledger write for `PI_HORDE_STALL_MS`, or one that exits
    with `model_error`, `no_output`, or `exit_nonzero`, is reset: its ideas return to the pool and
-   a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times. A member whose session
-   the provider's safety system declined ends with `refused` and is not reset, since a fresh
-   session would send the same task and be declined again: it stays down, its ideas return to
-   the pool, and BOARD.md says why.
+   a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times. A member that finishes with
+   blocking requests to it unanswered is reset the same way, once per request, and told which Q#
+   it owes, also while a solved proposal is pending. A member whose session the provider's safety
+   system declined ends with `refused` and is not reset, since a fresh session would send the
+   same task and be declined again: it stays down, its ideas return to the pool, and BOARD.md
+   says why.
 3. **Repair.** After discovery ends normally, finished members get fresh, targeted sessions to
    answer open blockers, review requests, and responses, within the `PI_HORDE_REPAIR_*` budgets.
    The default totals follow the queues' demand (one floor per queue plus one per further review
@@ -262,11 +264,23 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   every finding and artifact it cites. An answer that cites a superseded F# or quotes a provisional
   T# is refused at `solved` and at `confirm-solved`; a pending proposal whose cited finding is
   superseded or amended later, or whose cited A# is republished, is withdrawn (`solved-withdrawn`)
-  for re-proposal, and ANSWER.md's status says so instead of keeping an earlier validation. At
-  finalize, ANSWER.md's status names every citation that changed after the proposal pinned it. A
-  contest that names idea ids reopens the proposal under a new revision
-  (`solved-reopened`) once every named idea is done or ruled out, with the citations it pinned;
-  if a cited finding changed or a quoted fact is still provisional by then, it is withdrawn instead. Repair serves a request about
+  for re-proposal, and ANSWER.md's status says so instead of keeping an earlier validation. A
+  proposal also records the run's highest F# at its first proposal: a live finding filed after
+  that which the answer text never names refuses `solved` and `confirm-solved` and withdraws a
+  pending proposal, and a later proposal inherits the same mark, so the answer names the finding
+  or says why it is excluded. At
+  finalize, ANSWER.md's status names every citation that changed after the proposal pinned it and
+  every such finding it omits. A
+  contest that names ideas open at that moment reopens the proposal under a new revision
+  (`solved-reopened`) once every one of them is done or ruled out, with the citations it pinned;
+  if a cited finding changed or a quoted fact is still provisional by then, it is withdrawn instead.
+  A contest that names no open idea reopens nothing: it is answered by a changed answer, and the
+  same text contested twice that way is refused at `solved`. A proposal whose text and pinned
+  citations are those another member already confirmed keeps that confirmation under its new
+  revision (`solved-validation-carried`), which is how a proposal reopened by its blockers closing
+  stays validated; a contest still overrides it. A contest with no open idea to wait on, or a
+  withdrawal, discards the confirmation, so the same text proposed again is validated afresh.
+  Repair serves a request about
   the pending answer (`target=answer`) with the blockers.
 - **Reviews are revision-pinned.** A runnable artifact needs a full-scope `tested` or
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)

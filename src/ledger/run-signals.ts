@@ -83,6 +83,11 @@ export interface SolvedSignal {
   at: string;
   /** Revision of each finding the text cited when it was proposed, so a later amend is visible. */
   cites?: Record<string, string>;
+  /**
+   * Highest F# of the run when its first answer was proposed. A live finding above it that the
+   * text never names was filed after the answer was written.
+   */
+  findingsMark?: number;
 }
 
 function solvedPath(runDir: string): string {
@@ -130,7 +135,8 @@ function readSignal(file: string): SolvedSignal | undefined {
     const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SolvedSignal>;
     if (typeof parsed?.member === "string" && typeof parsed?.text === "string") {
       const cites = parsed.cites && typeof parsed.cites === "object" ? parsed.cites : undefined;
-      return { member: parsed.member, text: parsed.text, at: parsed.at ?? "", revision: parsed.revision, ...(cites ? { cites } : {}) };
+      const mark = typeof parsed.findingsMark === "number" ? { findingsMark: parsed.findingsMark } : {};
+      return { member: parsed.member, text: parsed.text, at: parsed.at ?? "", revision: parsed.revision, ...(cites ? { cites } : {}), ...mark };
     }
   } catch {
     // No signal, or a torn write; treat as none.
@@ -143,7 +149,7 @@ export function readSolved(runDir: string): SolvedSignal | undefined {
 }
 
 /** The two-phase solved state: the proposal plus an optional validation or refutation. */
-interface SolvedState {
+export interface SolvedState {
   proposal?: SolvedSignal | undefined;
   confirm?: SolvedSignal | undefined;
   contest?: SolvedSignal | undefined;
@@ -168,13 +174,69 @@ export function resolveSolvedState(state: SolvedState): SolvedState {
   };
 }
 
-/** Preserve full signals before clearing transient state. Call under the horde lock. */
-export function archiveSolved(runDir: string, state = readSolvedState(runDir)): void {
+/**
+ * Preserve full signals before clearing transient state. `blockers` are the open ideas a contest
+ * named, which answer it by closing. Call under the horde lock.
+ */
+export function archiveSolved(runDir: string, state: ArchivedSolved = readSolvedState(runDir), blockers: number[] = []): void {
   if (!state.proposal) return;
+  const record: ArchivedSolved = blockers.length ? { ...state, blockers } : state;
   const dir = path.join(runDir, "answers");
   fs.mkdirSync(dir, { recursive: true });
   const id = state.proposal.revision ?? state.proposal.at.replace(/[^a-zA-Z0-9]/g, "");
-  writeFileAtomic(path.join(dir, `${id || "legacy"}.json`), `${JSON.stringify(state, null, 2)}\n`);
+  writeFileAtomic(path.join(dir, `${id || "legacy"}.json`), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+/** Idea ids a contest names as what is still missing; the proposal reopens once the open ones close. */
+export function contestBlockers(text: string): number[] {
+  return [...new Set([...text.matchAll(/(?:^|[\s(,;])#(\d{1,6})\b/g)].map((m) => Number(m[1])))];
+}
+
+/** An archived proposal; a contest that named open ideas records them. */
+interface ArchivedSolved extends SolvedState {
+  blockers?: number[] | undefined;
+}
+
+/**
+ * Every proposal this run archived, with the confirmation or contest it ended on, oldest first.
+ * The files are named by revision id, so the order comes from when each was proposed and written.
+ */
+export function archivedSolved(runDir: string): ArchivedSolved[] {
+  const dir = path.join(runDir, "answers");
+  if (!fs.existsSync(dir)) return [];
+  const records = fs.readdirSync(dir).filter((file) => file.endsWith(".json")).flatMap((file) => {
+    try {
+      const state = JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8")) as ArchivedSolved;
+      return state.proposal ? [{ state, at: state.proposal.at, written: fs.statSync(path.join(dir, file)).mtimeMs }] : [];
+    } catch {
+      // A torn archive write loses one record of a cleared proposal, not the run.
+      return [];
+    }
+  });
+  return records.sort((a, b) => a.at.localeCompare(b.at) || a.written - b.written).map((record) => record.state);
+}
+
+/**
+ * The contests archived against exactly this answer text that named no open idea. Closing ideas
+ * answers the others; these are answered only by a changed answer.
+ */
+export function unansweredContests(runDir: string, text: string): SolvedSignal[] {
+  return archivedSolved(runDir).flatMap((state) =>
+    state.contest && !state.blockers?.length && state.proposal?.text.trim() === text.trim() ? [state.contest] : []);
+}
+
+/** Such contests the same answer text may collect before it has to change. */
+export const REPEAT_CONTEST_LIMIT = 2;
+
+/**
+ * The findings mark a new proposal inherits: the lowest mark any earlier proposal of the run
+ * carried. Re-proposing the same text therefore cannot move the mark past a finding that
+ * withdrew it.
+ */
+export function inheritedFindingsMark(runDir: string, current: number): number {
+  const earlier = archivedSolved(runDir).flatMap((state) =>
+    state.proposal?.findingsMark === undefined ? [] : [state.proposal.findingsMark]);
+  return Math.min(current, ...earlier);
 }
 
 /** Remove a proposal and its validation files (after a contest, or at finalize). */
@@ -198,7 +260,7 @@ export async function markSolved(
   runId: string,
   member: string,
   text: string | undefined,
-  cites?: Record<string, string>,
+  pins: { cites?: Record<string, string>; findingsMark?: number } = {},
 ): Promise<{ signal: SolvedSignal; alreadySolved: boolean }> {
   // The full answer is stored untruncated; only the board line is shortened.
   const full = requireText(text, "solved").trim();
@@ -207,7 +269,7 @@ export async function markSolved(
   return withHordeLock(hordeDir, member, () => {
     const existing = readSolved(runDir);
     if (existing) return { signal: existing, alreadySolved: true };
-    const signal: SolvedSignal = { member, text: full, at: new Date().toISOString(), revision: randomUUID(), ...(cites ? { cites } : {}) };
+    const signal: SolvedSignal = { member, text: full, at: new Date().toISOString(), revision: randomUUID(), ...pins };
     writeFileAtomic(solvedPath(runDir), `${JSON.stringify(signal)}\n`);
     // Capture the answer immediately so it survives even if the run is killed
     // before finalize; the status is upgraded on validation and at finalize.
@@ -221,11 +283,32 @@ export async function markSolved(
  * Put a withdrawn or contested proposal back before the members, under a new revision so a
  * confirmation of the old one cannot validate it. Call under the horde lock.
  */
-export function reopenSolved(runDir: string, runId: string, proposal: SolvedSignal, status: string, cites?: Record<string, string>): SolvedSignal {
-  const signal: SolvedSignal = { member: proposal.member, text: proposal.text, at: new Date().toISOString(), revision: randomUUID(), ...(cites ? { cites } : {}) };
+export function reopenSolved(runDir: string, runId: string, proposal: SolvedSignal, status: string): SolvedSignal {
+  const signal: SolvedSignal = { ...proposal, at: new Date().toISOString(), revision: randomUUID() };
   writeFileAtomic(solvedPath(runDir), `${JSON.stringify(signal)}\n`);
   writeAnswer(runDir, runId, signal, status);
   return signal;
+}
+
+/**
+ * Carry a confirmation to a proposal whose text and citations are those the validator confirmed.
+ * A new revision alone changes nothing the validator checked. Call under the horde lock.
+ */
+export function carryConfirmation(
+  runDir: string,
+  runId: string,
+  proposal: SolvedSignal,
+  earlier: { validator: string; revision?: string | undefined },
+): void {
+  const from = earlier.revision ? ` of revision ${earlier.revision.slice(0, 8)}` : "";
+  const signal: SolvedSignal = {
+    member: earlier.validator,
+    text: `carried from the confirmation${from}: text and citations unchanged`,
+    at: new Date().toISOString(),
+    revision: proposal.revision,
+  };
+  writeFileAtomic(solvedConfirmPath(runDir), `${JSON.stringify(signal)}\n`);
+  writeAnswer(runDir, runId, proposal, `validated by ${earlier.validator} (confirmation${from} carried over: text and citations unchanged)`);
 }
 
 interface SolvedAnswer {
