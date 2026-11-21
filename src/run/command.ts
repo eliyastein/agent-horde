@@ -4,7 +4,7 @@ import type { HordeTarget } from "../args.js";
 import { clearCleanStop } from "../ledger/run-signals.js";
 import { terminateAllChildren } from "../member.js";
 import { formatStatusReport } from "../prompt.js";
-import { requestCleanStop, resolveTargets, setPaused, stopHard, targetMembers } from "./controls.js";
+import { requestCleanStop, resolveTargets, setPaused, stopHard, targetMembers, tellMembers } from "./controls.js";
 import type { RunSelection } from "./controls.js";
 import { stopRunTimers } from "./finalize.js";
 import { closeDashboard, startSwarm } from "./launch.js";
@@ -72,6 +72,12 @@ export async function handleHordeCommand(
       const selections = select(state, parsed.target, ctx);
       if (!selections) return;
       for (const { run, target } of selections) setPaused(run, target, ctx, parsed.kind === "pause");
+      return;
+    }
+    case "tell": {
+      const selections = select(state, parsed.target, ctx);
+      if (!selections) return;
+      for (const { run, target } of selections) await tellMembers(run, target, ctx, parsed.text);
       return;
     }
     case "run":

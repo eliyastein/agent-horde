@@ -14,6 +14,7 @@ at one problem beat a single linear one: research, audits, design exploration, R
 /agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
 /agent-horde stop-clean [postmortem] [target] [--grace <s>]
 /agent-horde pause | resume [target]                 SIGSTOP / SIGCONT, Unix only
+/agent-horde tell [target] <text>                    send running members an instruction
 /agent-horde help
 ```
 
@@ -92,6 +93,24 @@ record the cap. Without code, `compaction.modelOverrides` in `~/.pi/agent/settin
 `<project>/.pi/settings.json` does the same, and also applies to the parent session in that
 project: `{"compaction":{"modelOverrides":{"deepseek/deepseek-flash":{"reserveTokens":900000}}}}`
 compacts above about 100k tokens.
+
+### Steering
+
+`tell [target] <text>` sends an instruction from you to the targeted members that are running,
+without stopping them. The leading tokens that read as targets are the target and the rest is the
+text, kept as typed; with no target it goes to every running member, and `all` ends the target, so
+`tell all 3 endpoints are unchecked` keeps its number. The parent records it in `events.jsonl` as
+`tell` under actor `operator` with id `O#`. Each recipient's process inserts it into the member's
+context at its next turn boundary as an "Operator instruction" entry, separate from peer feedback
+and not labelled untrusted, and records `tell-delivered`. Every later session of that member gets
+it as well (a reset, an `--until-stop` continuation, a repair attempt) and so does a session that
+compacts, since the instruction would otherwise be lost with the context. It needs no response, is
+not a peer thread, and never affects acceptance or the repair queues. A paused member reads it
+after `resume`. A member that is not running is not told and is named in the notice; a run that is
+stopping or finalizing takes no instruction; the text is limited to 4000 characters. Only the
+parent writes as `operator`: an instruction in a member's event is ignored. The collaboration page
+and COLLABORATION.md list the instructions with who had them delivered, and the run graph shows
+each as a box in the parent lane linked to a `told` mark in each recipient's lane.
 
 Members and helper agents are children of the pi session. Quitting or reloading pi sends every
 live child SIGTERM, and each child polls `PI_HORDE_PARENT_PID` every two seconds and exits on its

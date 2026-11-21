@@ -1,7 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { HordeTarget } from "../args.js";
+import { errorMessage } from "../format.js";
 import { postBoard } from "../ledger/board.js";
+import { OPERATOR_ACTOR } from "../ledger/collaboration.js";
+import type { OperatorMessage } from "../ledger/collaboration.js";
+import { transactEvent } from "../ledger/events.js";
 import { readCleanStop, readSolvedState, writeCleanStop } from "../ledger/run-signals.js";
 import { recordLifecycle } from "./lifecycle.js";
 import type { MemberState } from "../member.js";
@@ -17,6 +21,9 @@ const CLEAN_STOP_ACTIVE_GRACE_MS = Number(process.env.PI_HORDE_ACTIVE_GRACE_MS) 
 
 /** Extra window during stop for a live member to validate a solve landing at the wire. */
 const SOLVED_STOP_MS = Number(process.env.PI_HORDE_SOLVED_STOP_MS) || 30_000;
+
+/** Longest instruction `tell` accepts; it is inserted whole into every recipient's context. */
+const TELL_MAX_CHARS = 4000;
 
 /** Why a clean stop was requested; selects the report's stop label. */
 type CleanStopLabel = "stop-clean" | "deadline" | "solved" | "budget";
@@ -120,6 +127,41 @@ export function hardStopMembers(run: HordeRun, names: string[]): void {
 /** `h2: ` in a swarm's notifications, nothing for a swarm of one. */
 function prefix(run: HordeRun): string {
   return (run.hordes ?? 1) > 1 ? `${hordeLabel(run.horde)}: ` : "";
+}
+
+/**
+ * `tell`: record an instruction from the user for the targeted members that are running. Each
+ * recipient's process inserts it into its context at its next turn boundary, and so does every
+ * later session of that member, so a reset or a compaction does not lose the steering.
+ */
+export async function tellMembers(run: HordeRun, target: RunTarget, ctx: ExtensionCommandContext, text: string): Promise<void> {
+  const members = targetMembers(run, target, ctx);
+  if (!members) return;
+  if (run.stopped || run.reported || run.finalized) {
+    ctx.ui.notify(`${prefix(run)}the run is stopping or finalizing; nothing was sent`, "error");
+    return;
+  }
+  if (text.length > TELL_MAX_CHARS) {
+    ctx.ui.notify(`${prefix(run)}the instruction is ${text.length} characters; the limit is ${TELL_MAX_CHARS}`, "error");
+    return;
+  }
+  const live = members.filter((m) => m.status === "running" || m.status === "starting").map((m) => m.name);
+  const down = members.filter((m) => !live.includes(m.name)).map((m) => m.name);
+  if (target.kind === "members" && down.length > 0) ctx.ui.notify(`${prefix(run)}not running, not told: ${down.join(", ")}`, "warning");
+  if (live.length === 0) {
+    ctx.ui.notify(`${prefix(run)}no running members to tell`, "info");
+    return;
+  }
+  try {
+    const event = await transactEvent({ hordeDir: run.hordeDir, runId: run.id, actor: OPERATOR_ACTOR, attempt: OPERATOR_ACTOR }, "tell", (_events, seq) => {
+      const operatorMessage: OperatorMessage = { id: `O${seq}`, to: live, text, createdAt: new Date().toISOString(), deliveries: {} };
+      return { payload: { operatorMessage } };
+    });
+    const id = (event.payload.operatorMessage as OperatorMessage).id;
+    ctx.ui.notify(`${prefix(run)}${id} sent to ${live.join(", ")}; each reads it at its next turn`, "info");
+  } catch (error) {
+    ctx.ui.notify(`${prefix(run)}could not record the instruction (${errorMessage(error)})`, "error");
+  }
 }
 
 export function stopHard(run: HordeRun, target: RunTarget, ctx: ExtensionCommandContext): void {

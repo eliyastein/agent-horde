@@ -16,6 +16,9 @@ export const USAGE = [
   "                                          additionally run a post-mortem on the run",
   "       /agent-horde pause [target]        suspend members (SIGSTOP)",
   "       /agent-horde resume [target]       resume suspended members (SIGCONT)",
+  "       /agent-horde tell [target] <text>  send running members an instruction; each reads it",
+  "                                          at its next turn. Name 'all' first when the text",
+  "                                          itself starts with a number or a target",
   "       /agent-horde plan [--dashboard[=<port>]] [--no-verifier] [--until-stop] [--budget=<usd>]",
   "                   [--context-cap=<tokens>] <count> <a; b; ...>",
   "                                          partition members across workstreams; with H/M",
@@ -65,6 +68,7 @@ type HordeArgs =
   | { kind: "stop"; mode: HordeStopMode; target: HordeTarget; postmortem: boolean; graceMs?: number | undefined }
   | { kind: "pause"; target: HordeTarget }
   | { kind: "resume"; target: HordeTarget }
+  | { kind: "tell"; target: HordeTarget; text: string }
   | {
       kind: "run";
       /** Concurrent hordes; `12` is one horde, `3/12` three. */
@@ -131,6 +135,34 @@ function parseTargets(raw: string): HordeTarget | undefined {
 }
 
 const TARGET_ERROR = "invalid target; use all, member-N, N, hN, or hN:member-M";
+
+const TELL_ERROR = "tell usage: /agent-horde tell [target] <text>";
+
+/**
+ * `tell [target] <text>`: the leading tokens that read as targets are the target, the rest is the
+ * instruction, kept as typed. No leading target means every member.
+ */
+function parseTell(rest: string): { target: HordeTarget; text: string } | { error: string } {
+  const items: TargetItem[] = [];
+  let all = false;
+  let text = rest.trim();
+  for (;;) {
+    const lead = /^([^\s,]+)[\s,]*/.exec(text);
+    const token = lead?.[1] ?? "";
+    const item = parseTargetItem(token);
+    if (!lead || (token.toLowerCase() !== "all" && !item)) break;
+    text = text.slice(lead[0].length);
+    if (item) {
+      items.push(item);
+      continue;
+    }
+    // `all` ends the target, so the instruction itself may start with a number.
+    all = true;
+    break;
+  }
+  if (text === "") return { error: TELL_ERROR };
+  return { target: all || items.length === 0 ? { kind: "all" } : { kind: "selection", items }, text };
+}
 
 function parseStopRest(
   rest: string,
@@ -358,6 +390,10 @@ export function parseHordeArgs(raw: string): HordeArgs {
     case "pause": {
       const target = parseTargets(rest);
       return target ? { kind: "pause", target } : { kind: "usage", error: TARGET_ERROR };
+    }
+    case "tell": {
+      const parsed = parseTell(rest);
+      return "error" in parsed ? { kind: "usage", error: parsed.error } : { kind: "tell", ...parsed };
     }
     case "plan":
       return parsePlan(rest, leading);
