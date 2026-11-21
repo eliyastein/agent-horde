@@ -277,11 +277,15 @@ Protocol:
     one finding is never the complete answer: every current-run priority idea must first be done or
     ruled out. Call 'horde confirm-solved' only after independent verification, or
     'horde contest-solved' with what is missing, naming the open ideas (#12, #14) that block it: the
-    proposal reopens for validation once every idea it named is done or ruled out. Pass the revision
+    proposal reopens for validation once every open idea it named is done or ruled out. A contest
+    that names no open idea is answered only by a changed answer, so send the proposer a blocking
+    message naming the change; the same text contested twice that way is refused if proposed again.
+    Pass the revision
     from ANSWER.md or 'horde inspect' target=answer to either action, so stale reviews cannot approve
     a newer proposal. An answer that cites a superseded F# or quotes a provisional T# is refused, and a
     pending proposal is withdrawn for re-proposal when a finding it cites is superseded or amended,
-    or an artifact it cites is republished. A request to
+    an artifact it cites is republished, or a finding is filed that it does not name. An answer
+    names every finding filed since the run's first proposal, or says why it is excluded. A request to
     the proposer or a validator about the pending answer (target=answer) is served with the blockers.
     The parent enforces coverage before wind-down.
 
