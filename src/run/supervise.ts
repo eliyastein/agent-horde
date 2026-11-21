@@ -201,6 +201,27 @@ async function releaseForReset(
 }
 
 /**
+ * A member whose session the provider refused stays down: the same task, role and model would be
+ * declined again, and each attempt pays the full first-turn prompt. Its ideas go back to the pool
+ * so another member can take them, and the board says why no replacement starts.
+ */
+async function standDownRefused(run: HordeRun, member: MemberState): Promise<void> {
+  fs.appendFileSync(path.join(run.runDir, `${member.name}.log`), "[horde] refused by the provider; not reset\n");
+  try {
+    const { released } = await reconcileOwnedIdeas(run.hordeDir, run.id, [member.name]);
+    await postBoard(
+      run.hordeDir,
+      "parent",
+      `${member.name} stays down: the provider refused its request, and a fresh session would send the same one. ` +
+        `Released ${released.map((id) => `#${id}`).join(", ") || "none"}; earlier claims by ${member.name} are void.`,
+    );
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not release the ideas of ${member.name} (${errorMessage(error)})`, "error");
+  }
+  safeNotify(run, `horde ${run.id}: ${member.name} was refused by the provider; not reset`, "warning");
+}
+
+/**
  * Replace a dead or stalled member with a fresh-context session of the same
  * name. Runs only after the old process has closed, so the ledger reconcile
  * never races a live writer.
@@ -278,6 +299,7 @@ export async function superviseMember(
   for (;;) {
     await exited;
     const reason = resetReasonForExit(launch, member);
+    if (!reason && member.endCause === "refused" && !state.disposed && !run.stopped) await standDownRefused(run, member);
     if (!reason || state.disposed) return;
     if (reason === CONTINUE_REASON) {
       if (!(await performContinue(run, member))) return;

@@ -32,14 +32,18 @@ synthesize it.
 
 1. **Canary.** member-1 starts alone; the rest fan out once it produces output. A canary that dies
    or stays silent for `PI_HORDE_CANARY_MS` is retried once, then the run stops with a recorded
-   cause instead of burning the whole fan-out on a dead provider.
+   cause instead of burning the whole fan-out on a dead provider. A canary the provider
+   refuses is not retried: the run stops with that cause.
 2. **Discovery.** Members work the ledgers through the `horde` tool. Every 30s the parent assigns
    artifact revisions that have been stable for a minute to the running non-owner with the fewest
    open review requests. A member with no ledger write for `PI_HORDE_STALL_MS`, or one that exits
    with `model_error`, `no_output`, or `exit_nonzero`, is reset: its ideas return to the pool and
    a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times. A member that finishes with
    blocking requests to it unanswered is reset the same way, once per request, and told which Q#
-   it owes, also while a solved proposal is pending.
+   it owes, also while a solved proposal is pending. A member whose session the provider's safety
+   system declined ends with `refused` and is not reset, since a fresh session would send the
+   same task and be declined again: it stays down, its ideas return to the pool, and BOARD.md
+   says why.
 3. **Repair.** After discovery ends normally, finished members get fresh, targeted sessions to
    answer open blockers, review requests, and responses, within the `PI_HORDE_REPAIR_*` budgets.
    The default totals follow the queues' demand (one floor per queue plus one per further review
@@ -404,7 +408,7 @@ importance, independent members, and confidence.
 ## REPORT.md
 
 Written at finalize: the outcome and canary result; per-member end cause (`completed`,
-`model_error`, `no_output`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
+`model_error`, `refused`, `no_output`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
 for an abnormal end after measurable work; distinct finding clusters with review coverage,
 superseded findings in their own section, and any resets; claim states; this run's facts split
 from carried context; resources and cleanup results; coverage (released and still-open ideas,
