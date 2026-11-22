@@ -138,6 +138,55 @@ interface SettledAnswer {
 }
 
 /**
+ * A synthesized answer for a run that closed work without a solve proposal. It names the closed
+ * and ruled-out ideas, each finding's review status, and the blockers open at freeze, so a run
+ * whose members closed every idea without calling `horde solved` still ends with a scoreable
+ * answer rather than none. Returns undefined when the run filed no findings and closed no ideas,
+ * so a run that produced nothing gets no scaffold.
+ */
+export function answerScaffold(
+  runId: string,
+  ideas: Idea[],
+  findingCount: number,
+  acceptance: { status: string; hash: string; issues: string[] },
+  hasDeliverable: boolean,
+): string | undefined {
+  const closed = ideas.filter((idea) => idea.mark === "x");
+  const ruled = ideas.filter((idea) => idea.mark === "!");
+  const openIdeas = ideas.filter((idea) => idea.mark === " " || idea.mark === "~");
+  if (findingCount === 0 && closed.length === 0 && ruled.length === 0) return undefined;
+  const reviews = acceptance.issues.filter((issue) => /^F\d+:/.test(issue));
+  const blockers = acceptance.issues.filter((issue) => /^Q\d+ .*: \w+ blocking /.test(issue));
+  const excluded = acceptance.issues.filter((issue) => /blocked by Q/.test(issue));
+  const ideaLine = (idea: Idea): string =>
+    `- #${idea.id} ${idea.text}${idea.owner ? ` (@${idea.owner})` : ""}${idea.note ? ` - ${idea.note}` : ""}`;
+  const section = (title: string, lines: string[]): string[] => (lines.length ? ["", `## ${title}`, ...lines] : []);
+  const findingLines = reviews.length
+    ? reviews.map((review) => `- ${review}`)
+    : findingCount
+      ? [`- ${findingCount} finding(s) filed; see FINDINGS.md`]
+      : [];
+  return [
+    `# Answer - run ${runId}`,
+    "",
+    "No member proposed a solve. This answer is synthesized from the run's closed ideas and filed " +
+      "findings so the run has a scoreable result; it is not a member's claim. " +
+      (hasDeliverable ? "See DELIVERABLE.md for the reconciled operator output and " : "See ") +
+      "ACCEPTANCE.md for the authoritative protocol status.",
+    "",
+    `Status: acceptance ${acceptance.status} (snapshot ${acceptance.hash}). ` +
+      `${findingCount} finding(s) filed, ${closed.length} idea(s) closed, ${ruled.length} ruled out.`,
+    ...section("Ideas closed", closed.map(ideaLine)),
+    ...section("Ideas ruled out", ruled.map(ideaLine)),
+    ...section("Ideas still open", openIdeas.map(ideaLine)),
+    ...section("Findings and review status", findingLines),
+    ...section("Open blockers at freeze", blockers.map((blocker) => `- ${blocker}`)),
+    ...section("Artifacts excluded from recommended output", excluded.map((entry) => `- ${entry}`)),
+    "",
+  ].join("\n");
+}
+
+/**
  * The proposal body is the member's verbatim text and can predate later challenges and corrections.
  * The status names the blockers still open at freeze and the citations that changed after the
  * proposal pinned them (superseded or amended findings, republished artifacts) or the findings
@@ -562,6 +611,12 @@ export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun
     const objection = answer ? answerObjectionFor(run.hordeDir, run.id, answer.proposal) : undefined;
     const annotate = answer !== undefined && (acceptance.issues.length > 0 || objection !== undefined);
     if (annotate) annotateAnswer(run, answer, acceptance, objection);
+    // No member proposed a solve: synthesize a scoreable answer from the closed work instead of none.
+    const scaffold = answer === undefined;
+    if (scaffold) {
+      const content = answerScaffold(run.id, ledgers.ideas, ledgers.findings.length, acceptance, false);
+      if (content) writeRunFile(run, "ANSWER.md", content);
+    }
     // Workers and bounded repairs have exited; only now may their labs be torn down.
     const cleanups = await runCleanups(run);
     const reportInput = writeRunReports(run, ledgers, releasedIdeas, cleanups, now);
@@ -569,6 +624,10 @@ export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun
     noteRunReported(state, swarm, run);
     await synthesize(state, run, ledgers, reportInput, now);
     if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, objection);
+    if (scaffold && run.deliverable) {
+      const content = answerScaffold(run.id, ledgers.ideas, ledgers.findings.length, acceptance, true);
+      if (content) writeRunFile(run, "ANSWER.md", content);
+    }
     sendReport(state, swarm, run, ledgers, now);
     await recordLifecycle(run, "run-end", {
       outcome: runOutcome(run), elapsedMs: Date.now() - run.startedAt, stopLabel: run.stopLabel,

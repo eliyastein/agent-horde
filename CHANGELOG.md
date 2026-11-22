@@ -6,6 +6,11 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Added
 
+- A run that closes its work without a `solved` proposal still writes ANSWER.md: the harness
+  synthesizes it from the run's closed and ruled-out ideas, each finding's review status, and the
+  blockers open at freeze, so a run whose members closed every idea without calling `horde solved`
+  ends with a scoreable answer instead of none. A run that filed no findings and closed no ideas
+  gets no scaffold (#62).
 - Usage totals carry the provider's cache reads and writes: REPORT.md and SUMMARY.md show the
   cached tokens and the cache hit rate next to the billed input, the dashboard totals row fills
   the cache column, and `member-exit` events record `cacheRead` and `cacheWrite` for the
