@@ -4,9 +4,12 @@ import { loadCollaborationReport } from "../collaboration-report.js";
 import { openMessages } from "../ledger/collaboration.js";
 import { postBoard } from "../ledger/board.js";
 import { unsettledFactCitations } from "../ledger/facts.js";
-import { staleAnswerFor, unverifiedFindings } from "../ledger/findings.js";
+import { answerObjectionFor, unverifiedFindings } from "../ledger/findings.js";
 import { listIdeas } from "../ledger/ideas.js";
-import { archiveSolved, clearCleanStop, clearSolved, readSolvedState, reopenSolved, resolveSolvedState, writeAnswer } from "../ledger/run-signals.js";
+import {
+  archiveSolved, carryConfirmation, clearCleanStop, clearSolved, contestBlockers, readSolvedState, reopenSolved,
+  REPEAT_CONTEST_LIMIT, resolveSolvedState, unansweredContests, writeAnswer,
+} from "../ledger/run-signals.js";
 import type { SolvedSignal } from "../ledger/run-signals.js";
 import { requestCleanStop } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
@@ -30,6 +33,28 @@ function unresolvedCoverageIdeas(run: HordeRun): number[] {
     .map((idea) => idea.id);
 }
 
+function sameAnswer(a: SolvedSignal, b: SolvedSignal): boolean {
+  const pins = (signal: SolvedSignal): string => JSON.stringify(Object.entries(signal.cites ?? {}).sort());
+  return a.text.trim() === b.text.trim() && pins(a) === pins(b);
+}
+
+/**
+ * A proposal whose text and pinned citations are those another member already confirmed keeps
+ * that confirmation: a new revision id for the same content gives a validator nothing new to
+ * check. Only a contest answered by its named ideas closing leaves a confirmation to carry; a
+ * contest with no open idea to wait on, or a withdrawal, discards it, so the same text proposed
+ * again is validated afresh. A contest of the new revision still overrides a carried one.
+ */
+function carriedConfirmation(run: HordeRun, proposal: SolvedSignal): string | undefined {
+  const earlier = run.solvedConfirmation;
+  if (!earlier || earlier.validator === proposal.member || !sameAnswer(earlier.proposal, proposal)) return undefined;
+  carryConfirmation(run.runDir, run.id, proposal, { validator: earlier.validator, revision: earlier.proposal.revision });
+  void recordLifecycle(run, "solved-validation-carried", {
+    member: proposal.member, validator: earlier.validator, from: earlier.proposal.revision, revision: proposal.revision,
+  });
+  return earlier.validator;
+}
+
 function adoptProposal(run: HordeRun, proposal: SolvedSignal): void {
   run.solved = proposal;
   run.solvedValidatedBy = undefined;
@@ -38,22 +63,30 @@ function adoptProposal(run: HordeRun, proposal: SolvedSignal): void {
   run.solvedVerificationNotice = undefined;
   void recordLifecycle(run, "solved-proposed", { member: proposal.member, text: oneLine(proposal.text, 200) });
   safeNotify(run, `horde ${run.id}: ${proposal.member} proposed the goal solved`, "info");
+  const carried = carriedConfirmation(run, proposal);
   void postBoard(
     run.hordeDir,
     "parent",
     `SOLVED proposed by ${proposal.member}: ${oneLine(proposal.text, 200)}. ` +
-      `Another member must validate with 'horde confirm-solved' or refute it with 'horde contest-solved'.`,
+      (carried
+        ? `Its text and citations are the ones ${carried} already confirmed, so that confirmation carries over; refute it with 'horde contest-solved' if it no longer holds.`
+        : "Another member must validate with 'horde confirm-solved' or refute it with 'horde contest-solved'."),
   );
   refreshRun(run);
 }
 
-/** Idea ids a contest names as what is still missing; the proposal reopens once they close. */
-export function contestBlockers(text: string): number[] {
-  return [...new Set([...text.matchAll(/(?:^|[\s(,;])#(\d{1,6})\b/g)].map((m) => Number(m[1])))];
+/** The ideas still open or in progress; an unreadable ledger names none. */
+function openIdeaIds(run: HordeRun): Set<number> {
+  try {
+    return new Set(listIdeas(run.hordeDir).filter((idea) => idea.mark === " " || idea.mark === "~").map((idea) => idea.id));
+  } catch {
+    // A missing ideas ledger is reported at finalize; a contest then waits on nothing.
+    return new Set();
+  }
 }
 
-function clearProposal(run: HordeRun): void {
-  archiveSolved(run.runDir);
+function clearProposal(run: HordeRun, blockers: number[] = []): void {
+  archiveSolved(run.runDir, undefined, blockers);
   clearSolved(run.runDir);
   if (!run.stopped) clearCleanStop(run.runDir);
   run.solved = undefined;
@@ -63,17 +96,33 @@ function clearProposal(run: HordeRun): void {
   run.solvedVerificationNotice = undefined;
 }
 
+/**
+ * Only ideas open at the contest can reopen the proposal by closing: a contest naming closed
+ * ideas, or a document to republish, reopened the unchanged text at once, three times in one run.
+ * A contest that names no open idea is answered by a changed answer, and the same text collecting
+ * `REPEAT_CONTEST_LIMIT` of them is refused when proposed again.
+ */
 function dropContested(run: HordeRun, proposal: SolvedSignal, contest: SolvedSignal): void {
-  const blockers = contestBlockers(contest.text);
   safeNotify(run, `horde ${run.id}: solved proposal contested by ${contest.member}`, "warning");
-  void recordLifecycle(run, "solved-contested", { member: contest.member, text: oneLine(contest.text, 200), blockers });
-  const reopens = blockers.length ? ` It reopens for validation once ${blockers.map((id) => `#${id}`).join(", ")} are done or ruled out.` : "";
+  const open = openIdeaIds(run);
+  const blockers = contestBlockers(contest.text).filter((id) => open.has(id));
+  // Archived first, so the count of unanswered contests against this text includes this one.
+  clearProposal(run, blockers);
+  const repeats = unansweredContests(run.runDir, proposal.text).length;
+  const changed = `${proposal.member} or any other member proposes a changed answer that addresses it.`;
+  const next = blockers.length
+    ? ` It reopens for validation once ${blockers.map((id) => `#${id}`).join(", ")} are done or ruled out.`
+    : repeats >= REPEAT_CONTEST_LIMIT
+      ? ` This exact answer has now been contested ${repeats} times without an open idea to wait on; it is refused if proposed again unchanged. ${changed}`
+      : ` The contest names no open idea, so nothing reopens this proposal: ${changed}`;
+  // Closing ideas cannot answer this contest, so the confirmation it overrode does not come back.
+  if (!blockers.length) run.solvedConfirmation = undefined;
+  void recordLifecycle(run, "solved-contested", { member: contest.member, text: oneLine(contest.text, 200), blockers, repeats });
   void postBoard(
     run.hordeDir,
     "parent",
-    `SOLVED proposal contested by ${contest.member}: ${contest.text}. Work continues.${reopens}`,
+    `SOLVED proposal contested by ${contest.member}: ${contest.text}. Work continues.${next}`,
   );
-  clearProposal(run);
   run.solvedContested = true;
   run.solvedContest = blockers.length ? { proposal, blockers } : undefined;
   refreshRun(run);
@@ -84,6 +133,7 @@ function dropContested(run: HordeRun, proposal: SolvedSignal, contest: SolvedSig
  * validation it held, or the run reads as validated after the proposal is gone.
  */
 function recordWithdrawn(run: HordeRun, proposal: SolvedSignal, reason: string): void {
+  run.solvedConfirmation = undefined;
   void recordLifecycle(run, "solved-withdrawn", { member: proposal.member, reason });
   try {
     writeAnswer(run.runDir, run.id, proposal, `withdrawn: it ${reason}; no validation carries over and no proposal is pending`);
@@ -94,17 +144,17 @@ function recordWithdrawn(run: HordeRun, proposal: SolvedSignal, reason: string):
 
 /**
  * A proposal that cites a finding superseded or amended, or an artifact republished, after it was
- * made would ship the stale reading as the answer. It is withdrawn for re-proposal rather than
- * validated; the board names the successor, the amendment, or the republish.
+ * made would ship the stale reading as the answer, and one that never names a finding filed since
+ * would ship without it. It is withdrawn for re-proposal rather than validated; the board names
+ * the successor, the amendment, the republish, or the omitted finding.
  */
-function withdrawStale(run: HordeRun, proposal: SolvedSignal, stale: string[]): void {
-  const reason = `cites ${stale.join(", ")}`;
+function withdrawStale(run: HordeRun, proposal: SolvedSignal, reason: string): void {
   safeNotify(run, `horde ${run.id}: solved proposal withdrawn; it ${reason}`, "warning");
   recordWithdrawn(run, proposal, reason);
   void postBoard(
     run.hordeDir,
     "parent",
-    `SOLVED proposal by ${proposal.member} withdrawn: it ${reason}. ${proposal.member}: propose again citing the current findings.`,
+    `SOLVED proposal by ${proposal.member} withdrawn: it ${reason}. ${proposal.member}, or any other member: propose again citing the current findings.`,
   );
   clearProposal(run);
   refreshRun(run);
@@ -112,7 +162,8 @@ function withdrawStale(run: HordeRun, proposal: SolvedSignal, stale: string[]): 
 
 /**
  * A contest that named open ideas as what was missing is answered by their closing: nothing else
- * reopens the vote, so the run ended `solved-contested` with the closed negatives unapplied.
+ * reopens the vote, so the run ended `solved-contested` with the closed negatives unapplied. The
+ * reopened proposal has the same text and citations, so a confirmation it held carries over.
  */
 function reopenContested(run: HordeRun): void {
   const contest = run.solvedContest;
@@ -123,18 +174,15 @@ function reopenContested(run: HordeRun): void {
   const reason = `contest blockers ${named} closed`;
   // The proposal returns with the citations it pinned when it was made; what went stale or
   // unsettled meanwhile makes it a re-proposal for its author, not a reopening.
-  const stale = [
-    ...staleAnswerFor(run.hordeDir, run.id, contest.proposal.text, contest.proposal.cites),
-    ...unsettledFactCitations(run.hordeDir, contest.proposal.text).map((citation) => `provisional ${citation}`),
-  ];
+  const provisional = unsettledFactCitations(run.hordeDir, contest.proposal.text).map((citation) => `provisional ${citation}`);
+  const why = answerObjectionFor(run.hordeDir, run.id, contest.proposal, provisional);
   run.solvedContest = undefined;
-  if (stale.length) {
-    const why = `cites ${stale.join(", ")}`;
+  if (why) {
     recordWithdrawn(run, contest.proposal, why);
-    void postBoard(run.hordeDir, "parent", `SOLVED proposal by ${contest.proposal.member} is not re-opened after ${reason}: it ${why}. ${contest.proposal.member}: propose again citing the current findings.`);
+    void postBoard(run.hordeDir, "parent", `SOLVED proposal by ${contest.proposal.member} is not re-opened after ${reason}: it ${why}. ${contest.proposal.member}, or any other member: propose again citing the current findings.`);
     return;
   }
-  const signal = reopenSolved(run.runDir, run.id, contest.proposal, `re-opened: ${reason}; awaiting validation`, contest.proposal.cites);
+  const signal = reopenSolved(run.runDir, run.id, contest.proposal, `re-opened: ${reason}; awaiting validation`);
   run.solvedContested = false;
   void recordLifecycle(run, "solved-reopened", { member: signal.member, reason, revision: signal.revision });
   void postBoard(
@@ -261,7 +309,8 @@ function commitSolved(
 
 /** One poll of the two-phase solved protocol. */
 export function checkSolved(run: HordeRun, ctx: ExtensionCommandContext): void {
-  const state = resolveSolvedState(readSolvedState(run.runDir));
+  const raw = readSolvedState(run.runDir);
+  const state = resolveSolvedState(raw);
   if (!run.solved && state.proposal) {
     run.solvedContest = undefined;
     adoptProposal(run, state.proposal);
@@ -271,13 +320,17 @@ export function checkSolved(run: HordeRun, ctx: ExtensionCommandContext): void {
     reopenContested(run);
     return;
   }
+  // Read before the contest check: a contest in the same poll hides the confirmation it follows.
+  if (raw.confirm && raw.confirm.revision === solved.revision && raw.confirm.member !== solved.member) {
+    run.solvedConfirmation = { proposal: solved, validator: raw.confirm.member };
+  }
   if (state.contest) {
     dropContested(run, solved, state.contest);
     return;
   }
-  const stale = staleAnswerFor(run.hordeDir, run.id, solved.text, solved.cites);
-  if (stale.length && !run.solvedCommitted) {
-    withdrawStale(run, solved, stale);
+  const objection = answerObjectionFor(run.hordeDir, run.id, solved);
+  if (objection && !run.solvedCommitted) {
+    withdrawStale(run, solved, objection);
     return;
   }
   const validator =
