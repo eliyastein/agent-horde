@@ -26,6 +26,18 @@ export interface PeerMessage {
   resolutionEvidence?: string[];
   deliveries: Record<string, string>;
 }
+/** The actor of a `tell` event: the user running the horde, speaking through the parent session. */
+export const OPERATOR_ACTOR = "operator";
+
+/** An instruction the user sent to running members with `/agent-horde tell`. */
+export interface OperatorMessage {
+  id: string;
+  to: string[];
+  text: string;
+  createdAt: string;
+  /** `member:session-key` to the time that session had the instruction inserted into its context. */
+  deliveries: Record<string, string>;
+}
 interface EvidenceRecord {
   id: string;
   actor: string;
@@ -84,6 +96,8 @@ export interface ResourceContract {
 export interface CollaborationState {
   seq: number;
   messages: PeerMessage[];
+  /** Instructions from the user; never part of acceptance, repair queues or peer threads. */
+  operatorMessages: OperatorMessage[];
   evidence: EvidenceRecord[];
   artifacts: ArtifactRecord[];
   reviews: ReviewRecord[];
@@ -92,7 +106,7 @@ export interface CollaborationState {
 
 /** Pure projection. Retains all evidence/reviews; artifacts expose their latest revision. */
 export function projectCollaboration(events: HordeEvent[]): CollaborationState {
-  const state: CollaborationState = { seq: events.at(-1)?.seq ?? 0, messages: [], evidence: [], artifacts: [], reviews: [], resources: [] };
+  const state: CollaborationState = { seq: events.at(-1)?.seq ?? 0, messages: [], operatorMessages: [], evidence: [], artifacts: [], reviews: [], resources: [] };
   for (const event of events) {
     if (event.outcome !== "applied") continue;
     const p = event.payload;
@@ -108,10 +122,20 @@ export function projectCollaboration(events: HordeEvent[]): CollaborationState {
       const contract = p.contract as unknown as ResourceContract;
       state.resources = state.resources.filter((r) => r.target !== contract.target).concat(contract);
     }
+    // Only the parent writes as the operator; a member's event cannot create an instruction.
+    if (p.operatorMessage && event.actor === OPERATOR_ACTOR) state.operatorMessages.push(structuredClone(p.operatorMessage) as unknown as OperatorMessage);
+    if (p.operatorDelivery) applyOperatorDelivery(state, event);
     if (p.transition) applyTransition(state, event);
     if (Array.isArray(p.clearances)) applyClearances(state, event);
   }
   return state;
+}
+
+/** A recipient's session records that the instruction entered its context. */
+function applyOperatorDelivery(state: CollaborationState, event: HordeEvent): void {
+  const delivery = event.payload.operatorDelivery as { id: string; key: string };
+  const message = state.operatorMessages.find((m) => m.id === delivery.id);
+  if (message?.to.includes(event.actor)) message.deliveries[`${event.actor}:${delivery.key}`] = event.at;
 }
 
 /** A full-scope review that covers a partial review's unchecked scope resolves the challenge that review raised. */

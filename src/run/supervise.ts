@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { envNumber, errorMessage } from "../format.js";
 import { postBoard } from "../ledger/board.js";
+import { collaborationState, openMessages } from "../ledger/collaboration.js";
 import { pendingReviewsForMember } from "../ledger/findings.js";
 import { reconcileOwnedIdeas } from "../ledger/ideas.js";
 import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/run-signals.js";
@@ -113,16 +114,46 @@ export function verificationBacklog(run: HordeRun, member: MemberState): string 
   }
 }
 
+/** Blocking requests addressed to the member that it has not answered and has not been reset for. */
+function owedBlockers(run: HordeRun, member: MemberState): string[] {
+  const served = new Set(run.backlogServed ?? []);
+  return openMessages(collaborationState(run.hordeDir, run.id))
+    .filter((m) => m.blocking && m.to === member.name && m.state !== "responded" && !served.has(`${member.name}:${m.id}`))
+    .map((m) => m.id);
+}
+
+/**
+ * A member that closes its session with blocking requests to it unanswered leaves the requesters
+ * waiting on work only it can do: a proposer exited with two blocking requests to republish its
+ * own document open, and the run spent nine minutes contesting the unchanged text. Its exit is
+ * answered with one fresh session told which Q# it owes; each request triggers that once.
+ */
+export function blockingBacklog(run: HordeRun, member: MemberState): string | undefined {
+  if (member.endCause !== "completed") return undefined;
+  try {
+    const owed = owedBlockers(run, member);
+    return owed.length ? `blocking backlog: ${owed.join(", ")} unanswered at close` : undefined;
+  } catch {
+    // An unreadable event log is reported at finalize; it is no reason to restart a member.
+    return undefined;
+  }
+}
+
 function resetReasonForExit(launch: RunLaunch, member: MemberState): string | undefined {
   const { state, run } = launch;
   if (state.disposed || run.stopped || run.userStop || run.canary !== "ok") return undefined;
-  // A pending proposal means the run is about to end, unless it runs until stopped.
-  if (run.solved && !run.untilStop) return undefined;
   if (cleanStopRequestedFor(run.hordeDir, run.id, member.name)) return undefined;
-  const reason =
-    member.resetPending ??
-    (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined) ??
-    verificationBacklog(run, member);
+  // A pending proposal means the run is about to end, unless it runs until stopped. An unanswered
+  // blocking request holds that proposal open, so its recipient still comes back to answer it.
+  const windingDown = Boolean(run.solved && !run.untilStop);
+  const backlog = blockingBacklog(run, member);
+  if (windingDown && !backlog) return undefined;
+  const reason = windingDown
+    ? backlog
+    : member.resetPending ??
+      (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined) ??
+      verificationBacklog(run, member) ??
+      backlog;
   if (!reason) return run.untilStop && member.endCause === "completed" ? CONTINUE_REASON : undefined;
   if ((member.resets ?? 0) >= RESET_CAP) {
     fs.appendFileSync(
@@ -170,6 +201,27 @@ async function releaseForReset(
 }
 
 /**
+ * A member whose session the provider refused stays down: the same task, role and model would be
+ * declined again, and each attempt pays the full first-turn prompt. Its ideas go back to the pool
+ * so another member can take them, and the board says why no replacement starts.
+ */
+async function standDownRefused(run: HordeRun, member: MemberState): Promise<void> {
+  fs.appendFileSync(path.join(run.runDir, `${member.name}.log`), "[horde] refused by the provider; not reset\n");
+  try {
+    const { released } = await reconcileOwnedIdeas(run.hordeDir, run.id, [member.name]);
+    await postBoard(
+      run.hordeDir,
+      "parent",
+      `${member.name} stays down: the provider refused its request, and a fresh session would send the same one. ` +
+        `Released ${released.map((id) => `#${id}`).join(", ") || "none"}; earlier claims by ${member.name} are void.`,
+    );
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not release the ideas of ${member.name} (${errorMessage(error)})`, "error");
+  }
+  safeNotify(run, `horde ${run.id}: ${member.name} was refused by the provider; not reset`, "warning");
+}
+
+/**
  * Replace a dead or stalled member with a fresh-context session of the same
  * name. Runs only after the old process has closed, so the ledger reconcile
  * never races a live writer.
@@ -180,6 +232,9 @@ async function performReset(run: HordeRun, member: MemberState, reason: string):
     path.join(run.runDir, `${member.name}.log`),
     `[horde] reset ${member.resets}: ${reason}\n`,
   );
+  if (reason.startsWith("blocking backlog")) {
+    run.backlogServed = [...(run.backlogServed ?? []), ...owedBlockers(run, member).map((id) => `${member.name}:${id}`)];
+  }
   const { released, closed } = await releaseForReset(run, member, reason);
   run.resets.push({
     member: member.name,
@@ -195,7 +250,8 @@ async function performReset(run: HordeRun, member: MemberState, reason: string):
   member.resetNote =
     `You replace an earlier session of ${member.name} that was reset for ${reason}; ` +
     "its ideas were released. Read BOARD.md and FINDINGS.md before claiming." +
-    (reason.startsWith("verification backlog") ? " Review the findings named above, with any verdict and an honest unchecked scope, before anything else." : "");
+    (reason.startsWith("verification backlog") ? " Review the findings named above, with any verdict and an honest unchecked scope, before anything else." : "") +
+    (reason.startsWith("blocking backlog") ? " Answer the blocking requests named above before anything else: read 'horde inbox', make the correction each one names, republish or amend, and respond with the current revision." : "");
   clearHeartbeat(run.runDir, member.name);
   resetMemberState(member);
   safeNotify(run, `horde ${run.id}: reset ${member.name} (${reason})`, "warning");
@@ -243,6 +299,7 @@ export async function superviseMember(
   for (;;) {
     await exited;
     const reason = resetReasonForExit(launch, member);
+    if (!reason && member.endCause === "refused" && !state.disposed && !run.stopped) await standDownRefused(run, member);
     if (!reason || state.disposed) return;
     if (reason === CONTINUE_REASON) {
       if (!(await performContinue(run, member))) return;

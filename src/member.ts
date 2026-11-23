@@ -10,6 +10,7 @@ export type MemberStatus = "starting" | "running" | "done" | "failed" | "stopped
 export type MemberEndCause =
   | "completed"
   | "model_error"
+  | "refused"
   | "no_output"
   | "killed"
   | "exit_nonzero"
@@ -49,6 +50,8 @@ export interface MemberState {
   endedAt?: number | undefined;
   exitCode?: number | undefined;
   error?: string | undefined;
+  /** True when the session's error was the provider declining the request, not a failed call. */
+  refused?: boolean | undefined;
   paused?: boolean | undefined;
   /** Why the member process ended, for run diagnosis. */
   endCause?: MemberEndCause | undefined;
@@ -288,6 +291,7 @@ export function resetMemberState(member: MemberState): void {
   member.currentArg = undefined;
   member.streaming = undefined;
   member.error = undefined;
+  member.refused = undefined;
   member.endCause = undefined;
   member.partial = undefined;
   member.summaryIncomplete = undefined;
@@ -426,6 +430,34 @@ function messageText(message: Record<string, unknown>): string {
     .join("");
 }
 
+/**
+ * Provider-native stop reasons that mean the provider's safety system declined the request:
+ * Anthropic `refusal` and `sensitive`, OpenAI `content_filter`, Google's safety finish reasons,
+ * Bedrock's filter and guardrail stops. Lower-cased before lookup.
+ */
+const REFUSAL_STOP_REASONS = new Set([
+  "refusal", "sensitive", "content_filter", "incomplete.content_filter", "safety", "image_safety",
+  "prohibited_content", "image_prohibited_content", "blocklist", "spii", "content_filtered",
+  "guardrail_intervened",
+]);
+
+/** The error text pi writes when it has only the provider's stop reason to report. */
+const PROVIDER_STOP_ERROR = /^Provider (?:finish_reason|stopped with): (\S+)$/;
+
+/**
+ * True when an errored assistant message is a provider refusal. Sending the same task again is
+ * expected to be declined again, so the caller must not answer it with a fresh session. Anything
+ * not positively identified stays an ordinary model error.
+ */
+export function isRefusal(message: Record<string, unknown>): boolean {
+  if (message.stopReason !== "error") return false;
+  const raw = typeof message.rawStopReason === "string" ? message.rawStopReason : "";
+  if (REFUSAL_STOP_REASONS.has(raw.toLowerCase())) return true;
+  const error = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const named = PROVIDER_STOP_ERROR.exec(error)?.[1] ?? "";
+  return REFUSAL_STOP_REASONS.has(named.toLowerCase());
+}
+
 function applyAssistantMessageEnd(member: MemberState, message: Record<string, unknown>): void {
   member.turns++;
   member.streaming = undefined;
@@ -450,6 +482,7 @@ function applyAssistantMessageEnd(member: MemberState, message: Record<string, u
   member.draftText = undefined;
   if (message.stopReason === "error") {
     member.error = typeof message.errorMessage === "string" ? message.errorMessage : "model error";
+    member.refused = isRefusal(message);
   }
 }
 
@@ -581,6 +614,7 @@ function finishMember(
 
 function computeEndCause(member: MemberState, aborted: boolean): MemberEndCause {
   if (aborted) return "killed";
+  if (member.refused) return "refused";
   if (member.error) return "model_error";
   if (member.exitCode !== 0) return "exit_nonzero";
   if (member.usage.input + member.usage.output === 0) return "no_output";
@@ -620,6 +654,7 @@ export function spawnMember(input: SpawnMemberInput): Promise<void> {
         applyEvent(member, JSON.parse(line) as Record<string, unknown>);
         if (
           !firstOutputSeen &&
+          !member.refused &&
           (member.usage.input + member.usage.output > 0 || member.streaming !== undefined)
         ) {
           firstOutputSeen = true;

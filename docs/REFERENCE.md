@@ -14,6 +14,7 @@ at one problem beat a single linear one: research, audits, design exploration, R
 /agent-horde stop-hard [target]                      SIGTERM, SIGKILL after 5s (alias: stop)
 /agent-horde stop-clean [postmortem] [target] [--grace <s>]
 /agent-horde pause | resume [target]                 SIGSTOP / SIGCONT, Unix only
+/agent-horde tell [target] <text>                    send running members an instruction
 /agent-horde help
 ```
 
@@ -32,12 +33,18 @@ synthesize it.
 
 1. **Canary.** member-1 starts alone; the rest fan out once it produces output. A canary that dies
    or stays silent for `PI_HORDE_CANARY_MS` is retried once, then the run stops with a recorded
-   cause instead of burning the whole fan-out on a dead provider.
+   cause instead of burning the whole fan-out on a dead provider. A canary the provider
+   refuses is not retried: the run stops with that cause.
 2. **Discovery.** Members work the ledgers through the `horde` tool. Every 30s the parent assigns
    artifact revisions that have been stable for a minute to the running non-owner with the fewest
    open review requests. A member with no ledger write for `PI_HORDE_STALL_MS`, or one that exits
    with `model_error`, `no_output`, or `exit_nonzero`, is reset: its ideas return to the pool and
-   a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times.
+   a fresh session takes its name, up to `PI_HORDE_RESET_CAP` times. A member that finishes with
+   blocking requests to it unanswered is reset the same way, once per request, and told which Q#
+   it owes, also while a solved proposal is pending. A member whose session the provider's safety
+   system declined ends with `refused` and is not reset, since a fresh session would send the
+   same task and be declined again: it stays down, its ideas return to the pool, and BOARD.md
+   says why.
 3. **Repair.** After discovery ends normally, finished members get fresh, targeted sessions to
    answer open blockers, review requests, and responses, within the `PI_HORDE_REPAIR_*` budgets.
    The default totals follow the queues' demand (one floor per queue plus one per further review
@@ -47,7 +54,9 @@ synthesize it.
    `unchanged`. A thread that two consecutive completed attempts did not move (same state and
    response revision) is held back from that member until another member changes it; a member
    whose whole queue is held is recorded as `repair-skipped` with reason `no-progress` and costs
-   later rounds nothing. Each round serves a member at most once, but a round other than the last
+   later rounds nothing. Within a queue, blockers and requests about the pending answer come
+   first, then the parent's request to republish an artifact against a moved dependency, then
+   review requests, so a revision about to be replaced is not reviewed first. Each round serves a member at most once, but a round other than the last
    ends early when the only blocking threads left belong to members it already served, so a
    requester rechecks a correction before unserved members' non-blocking threads.
    A user stop skips this phase.
@@ -92,6 +101,24 @@ record the cap. Without code, `compaction.modelOverrides` in `~/.pi/agent/settin
 `<project>/.pi/settings.json` does the same, and also applies to the parent session in that
 project: `{"compaction":{"modelOverrides":{"deepseek/deepseek-flash":{"reserveTokens":900000}}}}`
 compacts above about 100k tokens.
+
+### Steering
+
+`tell [target] <text>` sends an instruction from you to the targeted members that are running,
+without stopping them. The leading tokens that read as targets are the target and the rest is the
+text, kept as typed; with no target it goes to every running member, and `all` ends the target, so
+`tell all 3 endpoints are unchecked` keeps its number. The parent records it in `events.jsonl` as
+`tell` under actor `operator` with id `O#`. Each recipient's process inserts it into the member's
+context at its next turn boundary as an "Operator instruction" entry, separate from peer feedback
+and not labelled untrusted, and records `tell-delivered`. Every later session of that member gets
+it as well (a reset, an `--until-stop` continuation, a repair attempt) and so does a session that
+compacts, since the instruction would otherwise be lost with the context. It needs no response, is
+not a peer thread, and never affects acceptance or the repair queues. A paused member reads it
+after `resume`. A member that is not running is not told and is named in the notice; a run that is
+stopping or finalizing takes no instruction; the text is limited to 4000 characters. Only the
+parent writes as `operator`: an instruction in a member's event is ignored. The collaboration page
+and COLLABORATION.md list the instructions with who had them delivered, and the run graph shows
+each as a box in the parent lane linked to a `told` mark in each recipient's lane.
 
 Members and helper agents are children of the pi session. Quitting or reloading pi sends every
 live child SIGTERM, and each child polls `PI_HORDE_PARENT_PID` every two seconds and exits on its
@@ -258,11 +285,23 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   every finding and artifact it cites. An answer that cites a superseded F# or quotes a provisional
   T# is refused at `solved` and at `confirm-solved`; a pending proposal whose cited finding is
   superseded or amended later, or whose cited A# is republished, is withdrawn (`solved-withdrawn`)
-  for re-proposal, and ANSWER.md's status says so instead of keeping an earlier validation. At
-  finalize, ANSWER.md's status names every citation that changed after the proposal pinned it. A
-  contest that names idea ids reopens the proposal under a new revision
-  (`solved-reopened`) once every named idea is done or ruled out, with the citations it pinned;
-  if a cited finding changed or a quoted fact is still provisional by then, it is withdrawn instead. Repair serves a request about
+  for re-proposal, and ANSWER.md's status says so instead of keeping an earlier validation. A
+  proposal also records the run's highest F# at its first proposal: a live finding filed after
+  that which the answer text never names refuses `solved` and `confirm-solved` and withdraws a
+  pending proposal, and a later proposal inherits the same mark, so the answer names the finding
+  or says why it is excluded. At
+  finalize, ANSWER.md's status names every citation that changed after the proposal pinned it and
+  every such finding it omits. A
+  contest that names ideas open at that moment reopens the proposal under a new revision
+  (`solved-reopened`) once every one of them is done or ruled out, with the citations it pinned;
+  if a cited finding changed or a quoted fact is still provisional by then, it is withdrawn instead.
+  A contest that names no open idea reopens nothing: it is answered by a changed answer, and the
+  same text contested twice that way is refused at `solved`. A proposal whose text and pinned
+  citations are those another member already confirmed keeps that confirmation under its new
+  revision (`solved-validation-carried`), which is how a proposal reopened by its blockers closing
+  stays validated; a contest still overrides it. A contest with no open idea to wait on, or a
+  withdrawal, discards the confirmation, so the same text proposed again is validated afresh.
+  Repair serves a request about
   the pending answer (`target=answer`) with the blockers.
 - **Reviews are revision-pinned.** A runnable artifact needs a full-scope `tested` or
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)
@@ -286,7 +325,7 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
   revision, full-scope for an A#, since the owner may not review it. Acceptance names an open
   blocker as `blocked by Q#`.
 - **Verifier.** The verifier's idea claims are refused while other members' findings await its
-  review at their current revision; the pending F# list follows every review, reattest and board
+  review at their current revision, or while an artifact review assigned to it is open; the pending F# list follows every review, reattest and board
   post. A verifier whose session closes with critical or high-importance findings unreviewed is
   reset once more into a fresh session that owes them, within `PI_HORDE_RESET_CAP`. SUMMARY.md
   derives its coverage sentence from the review records and names the unreviewed F#.
@@ -388,14 +427,17 @@ importance, independent members, and confidence.
 ## REPORT.md
 
 Written at finalize: the outcome and canary result; per-member end cause (`completed`,
-`model_error`, `no_output`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
+`model_error`, `refused`, `no_output`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
 for an abnormal end after measurable work; distinct finding clusters with review coverage,
 superseded findings in their own section, and any resets; claim states; this run's facts split
 from carried context; resources and cleanup results; coverage (released and still-open ideas,
 the solved answer); late board posts; and consistency warnings for missing metadata,
 mixed-concern clusters, unknown R# citations, and cited paths that do not exist (rooted URL paths
 and templates with a date or placeholder slot, such as `logs/gate-YYYY-MM-DD.jsonl` or
-`out/<id>.json`, are not checked). A killed
+`out/<id>.json`, are not checked). DELIVERABLE.md is also warned when it cites an artifact
+ACCEPTANCE.md does not accept without saying so in the citing paragraph, or cites a V# for an
+F# or A# whose current revision that review did not check. COLLABORATION.md marks each review
+of a revision its target has since left as `EARLIER REVISION`. A killed
 member's summary is reconstructed from its last board post. The message injected into the parent
 carries a one-line diagnosis and, when generated, the post-mortem text.
 

@@ -16,13 +16,16 @@ import type { RunLaunch } from "./supervise.js";
 
 /**
  * Blockers and independent checks take precedence over administrative exchanges. A request to
- * validate the pending answer decides the run's outcome, so it ranks with the blockers.
+ * validate the pending answer decides the run's outcome, so it ranks with the blockers. The
+ * parent's request to republish an artifact against a moved dependency ranks ahead of reviews:
+ * the review of a revision about to be replaced is spent on text that will not ship.
  */
-function repairPriority(message: PeerMessage): number {
+export function repairPriority(message: PeerMessage): number {
   if (message.blocking || message.target === "answer") return 0;
-  if (message.kind === "review-request" && /^[AF]\d+$/.test(message.target)) return 1;
-  if (message.state === "responded") return 2;
-  return 3;
+  if (message.sender === "parent" && message.kind === "handoff" && /^A\d+$/.test(message.target) && message.state !== "responded") return 1;
+  if (message.kind === "review-request" && /^[AF]\d+$/.test(message.target)) return 2;
+  if (message.state === "responded") return 3;
+  return 4;
 }
 
 /** The repair phase's scheduling state, shared by every round. */

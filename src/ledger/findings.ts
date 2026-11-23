@@ -648,9 +648,44 @@ export function staleAnswerCitations(
   return stale;
 }
 
-/** The answer's stale citations against this run's current findings and artifacts. */
-export function staleAnswerFor(hordeDir: string, runId: string, text: string, cites?: Record<string, string>): string[] {
-  return staleAnswerCitations(listFindingsForRun(hordeDir, runId), text, cites, collaborationState(hordeDir, runId).artifacts);
+/**
+ * Live findings filed after the answer's findings mark that its text never names. An answer that
+ * says "two candidates survived" stays a valid proposal while a third is filed, unless the
+ * findings it does not mention are checked as well as the ones it cites. The successor of a
+ * finding the text cites is left out: the stale citation already names it.
+ */
+export function omittedFindings(findings: FindingEntry[], text: string, mark: number | undefined): string[] {
+  if (mark === undefined) return [];
+  const named = (id: number | undefined): boolean => id !== undefined && new RegExp(`\\bF${id}\\b`).test(text);
+  return findings
+    .filter((finding) => finding.id > mark && finding.supersededBy === undefined && !named(finding.id) && !named(finding.supersedes))
+    .map((finding) => `F${finding.id}`);
+}
+
+/** Why an answer can no longer stand, as a clause after "it" or "the answer"; undefined when it can. */
+export function answerObjection(stale: string[], omitted: string[]): string | undefined {
+  const parts = [
+    stale.length ? `cites ${stale.join(", ")}` : "",
+    omitted.length ? `omits ${omitted.join(", ")}, filed after the answer was first proposed (name each, or state why it is excluded)` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" and ") : undefined;
+}
+
+/** The highest F# this run has filed; 0 before its first finding. */
+export function findingsHighWater(hordeDir: string, runId: string): number {
+  return listFindingsForRun(hordeDir, runId).reduce((max, finding) => Math.max(max, finding.id), 0);
+}
+
+/** `answerObjection` for a proposal against this run's current ledger, extra stale citations included. */
+export function answerObjectionFor(
+  hordeDir: string,
+  runId: string,
+  answer: { text: string; cites?: Record<string, string> | undefined; findingsMark?: number | undefined },
+  alsoStale: string[] = [],
+): string | undefined {
+  const findings = listFindingsForRun(hordeDir, runId);
+  const stale = staleAnswerCitations(findings, answer.text, answer.cites, collaborationState(hordeDir, runId).artifacts);
+  return answerObjection([...stale, ...alsoStale], omittedFindings(findings, answer.text, answer.findingsMark));
 }
 
 /** A body line that reads as a verification note would move the subject boundary the revision hashes. */

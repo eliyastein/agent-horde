@@ -79,8 +79,12 @@ export interface HordeRun extends MemberRunInfo {
   solvedCommitted?: boolean | undefined;
   /** True when the last SOLVED proposal was contested and no validated answer replaced it. */
   solvedContested?: boolean | undefined;
-  /** The contested proposal and the idea ids its contest named; it reopens once they all close. */
+  /** The contested proposal and the ideas its contest named that were open then; it reopens once they all close. */
   solvedContest?: { proposal: SolvedSignal; blockers: number[] } | undefined;
+  /** The last proposal another member confirmed; the same text and citations keep that confirmation. */
+  solvedConfirmation?: { proposal: SolvedSignal; validator: string } | undefined;
+  /** Blocking requests already answered with a fresh session of their recipient, as `member:Q#`. */
+  backlogServed?: string[] | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */
   solvedVerificationNotice?: boolean | undefined;
   /** The swarm's `--budget` in dollars, recorded per run for TASK.md and the events. */
