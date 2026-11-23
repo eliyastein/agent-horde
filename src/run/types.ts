@@ -19,6 +19,8 @@ export interface HordeRun extends MemberRunInfo {
   startFactId: number;
   /** Highest idea id at run start; ideas created above it are this run's coverage. */
   startIdeaId: number;
+  /** Ideas already done or ruled out at run start: an earlier run's work, not this run's. */
+  startClosedIdeaIds: number[];
   startedAt: number;
   stopped: boolean;
   /** Members asked to wrap up by stop-clean; their ideas are released at finalize. */

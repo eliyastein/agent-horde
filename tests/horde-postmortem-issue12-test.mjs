@@ -62,7 +62,7 @@ const state = (runId) => collab.collaborationState(hordeDir, runId);
 const issuesFor = (runId, id) => report.loadCollaborationReport(hordeDir, runId).issues.filter((issue) => issue.startsWith(`${id}@`));
 const fakeRun = (runId, runDir, extra = {}) => ({
   id: runId, hordeDir, runDir, prompt: "p", count: 4, cwd, members: [1, 2, 3, 4].map((n) => newMemberState(n)),
-  startIdeaId: 0, startFactId: 0, startedAt: Date.now(), stopped: false, cleanStopNames: [],
+  startIdeaId: 0, startClosedIdeaIds: [], startFactId: 0, startedAt: Date.now(), stopped: false, cleanStopNames: [],
   controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [], ...extra,
 });
 const ctxStub = { ui: { notify: () => {} }, hasUI: false };
