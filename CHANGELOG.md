@@ -4,6 +4,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
 ### Added
 
 - A run that closes its work without a `solved` proposal still writes ANSWER.md: the harness
