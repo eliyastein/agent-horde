@@ -255,11 +255,15 @@ function collaborationBody(vm: CollaborationVm, withAudit: boolean): string {
     anchor(m.id), e(`${m.sender} -> ${m.to}`), e(`${m.state}${m.blocking ? " BLOCKING" : ""} / ${formatElapsed(Date.now() - Date.parse(m.createdAt))}`),
     e(`${m.target}@${m.revision}`), pre(messageThread(m)),
   ]));
+  const told = state.operatorMessages.length === 0 ? "" : `<h2>Operator instructions</h2>${table(["instruction", "to", "sent", "delivered to", "text"], state.operatorMessages.map((m) => [
+    anchor(m.id), e(m.to.join(", ")), e(`${formatElapsed(Date.now() - Date.parse(m.createdAt))} ago`),
+    e([...new Set(Object.keys(m.deliveries).map((key) => key.split(":")[0] ?? key))].join(", ") || "nobody yet"), pre(m.text),
+  ]))}`;
   const reviews = table(["review", "target revision", "verdict", "scope / evidence"], state.reviews.map((r) => [`${anchor(r.id)} @${e(r.actor)}`, e(`${r.target}@${r.revision}`), e(`${r.verdict} [${r.support}]`), pre(`Checked: ${r.checked}\nUnchecked: ${r.unchecked || "none declared"}\nLimits: ${r.limits || "none disclosed"}\nEvidence: ${r.evidence.join(", ")}${r.reattests ? `\nReattests: ${r.reattests}` : ""}\n${r.text}`)]));
   const artifacts = table(["artifact", "hash / dependencies", "acceptance"], state.artifacts.map((a) => [`${anchor(a.id)} ${e(`${a.path} @${a.owner} (${a.kind ?? "runnable"})`)}`, pre(`${a.hash}\n${JSON.stringify(a.dependencies)}`), e(report.acceptedArtifacts.includes(a.id) ? "accepted" : "excluded / needs review")]));
   const summary =
     (vm.historical ? "<p>Historical run: no delivery/revision history was recorded.</p>" : "") +
-    `<h2>Acceptance issues</h2>${pre(report.issues.join("\n") || "none recorded")}<h2>Requests</h2>${messages}<h2>Artifacts</h2>${artifacts}<h2>Reviews</h2>${reviews}` +
+    `<h2>Acceptance issues</h2>${pre(report.issues.join("\n") || "none recorded")}${told}<h2>Requests</h2>${messages}<h2>Artifacts</h2>${artifacts}<h2>Reviews</h2>${reviews}` +
     `<h2>Resource readiness and leases</h2>${pre(JSON.stringify(state.resources, null, 2))}<h2>Metrics</h2>${pre(JSON.stringify(report.metrics, null, 2))}`;
   if (!withAudit) {
     return `${summary}<p>${link(`${runHref(report.runId)}/collaboration`, "event audit")} on the horde's own page</p>`;

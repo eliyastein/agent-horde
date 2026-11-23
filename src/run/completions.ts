@@ -12,6 +12,7 @@ const CONTROL_SUBCOMMANDS: Array<{
   { value: "stop-clean", description: "let members wrap up and reconcile ideas; add 'postmortem' for a run review", takesTarget: true },
   { value: "pause", description: "suspend members (SIGSTOP)", takesTarget: true },
   { value: "resume", description: "resume suspended members (SIGCONT)", takesTarget: true },
+  { value: "tell", description: "send running members an instruction: tell [target] <text>", takesTarget: true },
   { value: "plan", description: "partition members across workstreams: plan <count> <a; b; ...>", takesTarget: false },
   { value: "help", description: "show usage", takesTarget: false },
 ];
@@ -72,6 +73,8 @@ function targetNames(active: Swarm | undefined): Array<{ name: string; descripti
   return names;
 }
 
+const TARGET_WORD = /^(?:all|h\d+(?::(?:member-)?\d+)?|(?:member-)?\d+)$/i;
+
 export function controlCompletions(prefix: string, active: Swarm | undefined): AutocompleteItem[] | null {
   const space = prefix.search(/\s/);
   if (space === -1 && prefix.startsWith("-")) {
@@ -97,7 +100,9 @@ export function controlCompletions(prefix: string, active: Swarm | undefined): A
   const match = /^([\s\S]*?)([^\s,]*)$/.exec(rest);
   const base = match?.[1] ?? "";
   const token = match?.[2] ?? "";
-  const targetItems: AutocompleteItem[] = (sub.takesTarget ? targetNames(active) : [])
+  // `tell` ends in free text: offer targets only while everything typed so far is a target.
+  const inText = head === "tell" && base.split(/[\s,]+/).filter(Boolean).some((word) => !TARGET_WORD.test(word));
+  const targetItems: AutocompleteItem[] = (sub.takesTarget && !inText ? targetNames(active) : [])
     .filter((target) => target.name.startsWith(token))
     .map((target) => ({
       value: `${head} ${base}${target.name}`,

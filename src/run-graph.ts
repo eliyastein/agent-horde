@@ -1,4 +1,5 @@
 import { detailKey, oneLine } from "./format.js";
+import { OPERATOR_ACTOR } from "./ledger/collaboration.js";
 import type { HordeEvent } from "./ledger/events.js";
 
 export type GraphNodeKind =
@@ -96,6 +97,7 @@ interface Draft {
 const ENTITY_RE = /^([A-Z])(\d+(?:-\d+)?)$/;
 const ENTITY_KINDS: Record<string, GraphNodeKind> = {
   I: "idea", F: "finding", T: "fact", C: "claim", R: "resource", A: "artifact", V: "review", Q: "message", E: "evidence",
+  O: "message",
 };
 /** Events per page on the collaboration view, for deep links into its audit section. */
 const EVENT_PAGE = 100;
@@ -124,7 +126,7 @@ export function entityHref(runId: string, id: string): string | undefined {
     case "T": return `${base}/facts#T${number}`;
     case "C": return `${base}/claims#C${number}`;
     case "R": return `${base}/resources#R${number}`;
-    case "A": case "V": case "Q": return `${base}/collaboration#${id}`;
+    case "A": case "V": case "Q": case "O": return `${base}/collaboration#${id}`;
     case "E": return eventHref(runId, Number(number));
     default: return undefined;
   }
@@ -395,7 +397,29 @@ function transition(label: string, tone: EdgeTone = "collaboration"): Handler {
   };
 }
 
+/** The user's instruction is a box in the parent lane; each recipient's delivery links back to it. */
+function addOperatorMessage(draft: Draft, event: HordeEvent): void {
+  const message = record(event.payload.operatorMessage);
+  const id = str(message.id);
+  // A member's event that imitates one is shown as what it is: an action in that member's lane.
+  if (event.actor !== OPERATOR_ACTOR || !id) return addGeneric(draft, event);
+  if (draft.nodes.has(id)) return;
+  draft.nodes.set(id, {
+    id, kind: "message", action: event.action, label: `${id} tell`,
+    title: `operator to ${strings(message.to).join(", ")}: ${oneLine(str(message.text) ?? "", TITLE_MAX)}`,
+    lane: "parent", at: timeOf(draft, event), eventId: event.eventId,
+    href: entityHref(draft.runId, id) ?? eventHref(draft.runId, event.seq),
+    outcome: "applied", marker: false, placeholder: false,
+  });
+}
+
 const COLLABORATION: Record<string, Handler> = {
+  tell: (draft, event) => addOperatorMessage(draft, event),
+  "tell-delivered": (draft, event) => {
+    const id = str(record(event.payload.operatorDelivery).id);
+    const marker = addMarker(draft, event, "told", `delivered ${id ?? ""}`);
+    if (id && draft.nodes.has(id)) draft.edges.push({ from: id, to: marker, label: "delivered", tone: "collaboration" });
+  },
   message: (draft, event) => addMessages(draft, event, [record(event.payload.message)]),
   "inbox-delivered": (draft, event) => {
     const id = str(record(event.payload.transition).id);

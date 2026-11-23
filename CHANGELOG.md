@@ -13,6 +13,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 - `--context-cap=<tokens>` launch flag: members compact their own context once it passes the
   cap, instead of only near the model's full window. Members get it as `PI_HORDE_CONTEXT_CAP`;
   TASK.md, SWARM.md and the `run-start` event record it (#46).
+- `/agent-horde tell [target] <text>` sends running members an instruction without stopping
+  them. It is recorded as a `tell` event under actor `operator`, inserted into each recipient's
+  context at its next turn boundary as its own entry, apart from peer feedback, and shown on the
+  collaboration page, in COLLABORATION.md and in the run graph (#58).
 
 ### Changed
 

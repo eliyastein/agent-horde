@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { artifactAccepted, artifactLimits, blockingMessages, collaborationState, openMessages, partialArtifactReviews } from "./ledger/collaboration.js";
-import type { ArtifactRecord, CollaborationState, PeerMessage } from "./ledger/collaboration.js";
+import type { ArtifactRecord, CollaborationState, OperatorMessage, PeerMessage } from "./ledger/collaboration.js";
 import { readEvents } from "./ledger/events.js";
 import { findingReviewState, findingRevision, listFindingsForRun } from "./ledger/findings.js";
 import { listIdeas } from "./ledger/ideas.js";
@@ -123,6 +123,12 @@ function messageMarkdown(m: PeerMessage): string {
   return lines.join("\n");
 }
 
+/** An instruction from the user, with the members whose sessions had it inserted. */
+function operatorMarkdown(m: OperatorMessage): string {
+  const delivered = [...new Set(Object.keys(m.deliveries).map((key) => key.split(":")[0] ?? key))];
+  return `- ${m.id} operator -> ${m.to.join(", ")}; sent ${m.createdAt}; delivered to ${delivered.join(", ") || "nobody yet"}\n  ${m.text}`;
+}
+
 /** A review of a revision its target has since left: kept as history, not as current support. */
 function reviewRevisionNote(revision: string, current: string | undefined): string {
   return current === undefined || current === revision ? "" : ` EARLIER REVISION (current @${current.slice(0, 12)})`;
@@ -135,6 +141,7 @@ function collaborationMarkdown(report: CollaborationReport, findingRevisions: Ma
     `# Collaboration ${report.runId}`, `\nEvent high-water mark: ${report.sequence}. Delivery records context insertion, not comprehension.`,
     "\n## Acceptance issues", ...(report.issues.length ? report.issues.map((i) => `- ${i}`) : ["- No protocol-level issues recorded; task acceptance still requires coverage and review."]),
     "\n## Accepted with limits", ...(report.limits.length ? report.limits.map((l) => `- ${l}`) : ["- none disclosed"]),
+    ...(state.operatorMessages.length ? ["\n## Operator instructions", ...state.operatorMessages.map(operatorMarkdown)] : []),
     "\n## Questions, challenges and handoffs", ...state.messages.map(messageMarkdown),
     "\n## Artifact revisions", ...state.artifacts.map((a) => `- ${a.id} ${a.path}@${a.hash} owner=${a.owner} kind=${a.kind ?? "runnable"} snapshot=${a.snapshot} accepted=${report.acceptedArtifacts.includes(a.id)}\n  Criteria: ${a.criteria}\n  Dependencies: ${JSON.stringify(a.dependencies)}${a.changeNote ? `\n  Change: ${a.changeNote}` : ""}`),
     "\n## Reviews", ...state.reviews.map((r) => `- ${r.id} ${r.target}@${r.revision} @${r.actor} ${r.verdict} [${r.support}] evidence=${r.evidence.join(",")}${r.reattests ? ` reattests=${r.reattests}` : ""}${reviewRevisionNote(r.revision, current.get(r.target))}\n  Checked: ${r.checked}\n  Unchecked: ${r.unchecked || "none declared"}\n  Limits: ${r.limits || "none disclosed"}\n  ${r.text}`),
