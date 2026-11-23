@@ -287,8 +287,9 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
 - **A run with no proposal still answers.** When wind-down arrives and no member ever proposed a
   solve, the harness synthesizes ANSWER.md from the run's closed and ruled-out ideas, each
   finding's review status, and the blockers open at freeze, pointing at DELIVERABLE.md and
-  ACCEPTANCE.md for the reconciled and authoritative views. A run that filed no findings and
-  closed no ideas gets no scaffold.
+  ACCEPTANCE.md for the reconciled and authoritative views. Ideas an earlier run in the same
+  directory had already closed are left out. A run that filed no findings and closed no ideas
+  gets no scaffold.
 - **Reviews are revision-pinned.** A runnable artifact needs a full-scope `tested` or
   `reproduced` review from a non-owner. A `document` artifact (.md, .txt, .rst, .adoc, .pdf)
   accepts a full-scope `sourced` or `derived` review against its criteria. `unchecked` names gaps

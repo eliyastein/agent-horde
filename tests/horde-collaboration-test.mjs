@@ -162,7 +162,7 @@ signals.writeCleanStop(runDir, { runId, members: [], at: new Date().toISOString(
 await signals.contestSolved(hordeDir, runId, "member-3", long);
 const run = { id: runId, hordeDir, runDir, prompt: "test", count: 3, cwd,
   members: [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" })),
-  startIdeaId: 0, startFactId: 0, startedAt: Date.now(), stopped: true, userStop: true, cleanStopNames: ["member-1"],
+  startIdeaId: 0, startClosedIdeaIds: [], startFactId: 0, startedAt: Date.now(), stopped: true, userStop: true, cleanStopNames: ["member-1"],
   controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [], solvedValidatedBy: "member-2" };
 const swarm = { id: runId, dir: undefined, hordeDir, cwd, prompt: "test", hordes: 1, count: 3, startedAt: run.startedAt, runs: [run] };
 await finalize.finalizeRun({ disposed: false, active: swarm, pi: { sendMessage: () => {} } }, swarm, run);

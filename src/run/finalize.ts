@@ -137,6 +137,12 @@ interface SettledAnswer {
   status: string;
 }
 
+/** The ideas ledger outlives a run: drop the ideas an earlier run had already closed. */
+export function ideasOpenAtStart(ideas: Idea[], startClosedIdeaIds: number[]): Idea[] {
+  const closedBefore = new Set(startClosedIdeaIds);
+  return ideas.filter((idea) => !closedBefore.has(idea.id));
+}
+
 /**
  * A synthesized answer for a run that closed work without a solve proposal. It names the closed
  * and ruled-out ideas, each finding's review status, and the blockers open at freeze, so a run
@@ -613,8 +619,9 @@ export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun
     if (annotate) annotateAnswer(run, answer, acceptance, objection);
     // No member proposed a solve: synthesize a scoreable answer from the closed work instead of none.
     const scaffold = answer === undefined;
+    const runIdeas = ideasOpenAtStart(ledgers.ideas, run.startClosedIdeaIds);
     if (scaffold) {
-      const content = answerScaffold(run.id, ledgers.ideas, ledgers.findings.length, acceptance, false);
+      const content = answerScaffold(run.id, runIdeas, ledgers.findings.length, acceptance, false);
       if (content) writeRunFile(run, "ANSWER.md", content);
     }
     // Workers and bounded repairs have exited; only now may their labs be torn down.
@@ -625,7 +632,7 @@ export async function finalizeRun(state: HordeState, swarm: Swarm, run: HordeRun
     await synthesize(state, run, ledgers, reportInput, now);
     if (annotate && run.deliverable) annotateAnswer(run, answer, acceptance, objection);
     if (scaffold && run.deliverable) {
-      const content = answerScaffold(run.id, ledgers.ideas, ledgers.findings.length, acceptance, true);
+      const content = answerScaffold(run.id, runIdeas, ledgers.findings.length, acceptance, true);
       if (content) writeRunFile(run, "ANSWER.md", content);
     }
     sendReport(state, swarm, run, ledgers, now);

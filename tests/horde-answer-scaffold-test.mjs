@@ -14,7 +14,7 @@ const jiti = createJiti(import.meta.url, {
   },
 });
 
-const { answerScaffold } = await jiti.import("../src/run/finalize.ts");
+const { answerScaffold, ideasOpenAtStart } = await jiti.import("../src/run/finalize.ts");
 
 const ideas = [
   { id: 1, mark: "x", text: "Passive infra map", owner: "member-3" },
@@ -62,5 +62,19 @@ assert.doesNotMatch(noReviews, /## Ideas closed/);
 // A run that produced nothing gets no scaffold.
 const empty = answerScaffold("r", [{ id: 1, mark: "~", text: "wip", owner: "member-1" }], 0, { status: "complete", hash: "h", issues: [] }, false);
 assert.equal(empty, undefined, "no findings and no closed ideas means no scaffold");
+
+// The ideas ledger carries over between runs in one directory: ideas an earlier run closed or
+// ruled out are not this run's work, while ideas it left open and ideas closed since are.
+const carried = ideasOpenAtStart(ideas, [1, 3]);
+assert.deepEqual(carried.map((idea) => idea.id), [2, 4]);
+const scoped = answerScaffold("r", carried, 1, { status: "incomplete", hash: "h", issues: [] }, false);
+assert.match(scoped, /1 finding\(s\) filed, 1 idea\(s\) closed, 0 ruled out/);
+assert.doesNotMatch(scoped, /Passive infra map|Duplicate of #1/);
+assert.match(scoped, /## Ideas still open\n- #4 Attribution corpus/);
+assert.equal(
+  answerScaffold("r", ideasOpenAtStart(ideas, [1, 2, 3]), 0, { status: "complete", hash: "h", issues: [] }, false),
+  undefined,
+  "work closed only by an earlier run produces no scaffold",
+);
 
 console.log("ok");

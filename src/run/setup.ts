@@ -118,6 +118,9 @@ export function createRun(
     cwd: ctx.cwd,
     startFactId: listFacts(hordeDir).reduce((max, fact) => Math.max(max, fact.id), 0),
     startIdeaId: listIdeas(hordeDir).reduce((max, idea) => Math.max(max, idea.id), 0),
+    startClosedIdeaIds: listIdeas(hordeDir)
+      .filter((idea) => idea.mark === "x" || idea.mark === "!")
+      .map((idea) => idea.id),
     stopped: false,
     cleanStopNames: [],
     model,

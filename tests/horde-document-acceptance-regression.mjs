@@ -105,7 +105,7 @@ const proposal = (await markSolved(hordeDir, runId, "member-3", "No reportable v
 await confirmSolved(hordeDir, runId, "member-1", "I confirm the scoped conclusion", proposal.revision);
 const members = [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" }));
 const run = { id: runId, runDir, hordeDir, cwd, count: 3, prompt: "offline acceptance fixture", members, stopped: false,
-  startedAt: Date.now(), startIdeaId: 0, startFactId: 0, cleanStopNames: [], canary: "ok", controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [] };
+  startedAt: Date.now(), startIdeaId: 0, startClosedIdeaIds: [], startFactId: 0, cleanStopNames: [], canary: "ok", controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [] };
 const notices = [];
 const swarm = { id: runId, dir: undefined, hordeDir, cwd, prompt: run.prompt, hordes: 1, count: 3, startedAt: run.startedAt, runs: [run] };
 const state = { disposed: false, pi: { sendMessage: (m) => notices.push(m) }, active: swarm };

@@ -208,7 +208,7 @@ const fileFinding = async (runId, author, text, n) =>
   const run = {
     id: runId, hordeDir, runDir, prompt: "issue 7 fixture", count: 3, cwd,
     members: [1, 2, 3].map((n) => Object.assign(newMemberState(n), { status: "done", endCause: "completed" })),
-    startIdeaId: 0, startFactId: 0, startedAt: Date.now() - 60_000, stopped: false, cleanStopNames: [],
+    startIdeaId: 0, startClosedIdeaIds: [], startFactId: 0, startedAt: Date.now() - 60_000, stopped: false, cleanStopNames: [],
     controller: new AbortController(), controllers: new Map(), procs: new Map(), resets: [], solvedValidatedBy: "member-2", repairSkipped: ["member-3"],
   };
   const swarm = { id: runId, dir: undefined, hordeDir, cwd, prompt: run.prompt, hordes: 1, count: 3, startedAt: run.startedAt, runs: [run] };
