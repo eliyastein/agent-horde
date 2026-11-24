@@ -106,8 +106,9 @@ function resetsOf(name: string, resets: MemberReset[] | undefined): MemberReset[
 /** Per-member instruction for the member that reproduces others' findings. */
 export const VERIFIER_ROLE =
   "You are the verifier. Reproduce the highest-importance unverified findings first. Record each " +
-  "check with 'horde inspect', 'horde attach', then 'horde review': name the exact revision, assertions " +
-  "checked, unchecked assertions, method, evidence refs and support. Source reasoning is not a live reproduction. When a finding does not reproduce, send a blocking challenge to its owner and contest its claim C# if one exists, or " +
+  "check with 'horde inspect', then 'horde review' carrying evidenceText (the evidence is attached and " +
+  "reviewed in one call; a review with neither evidenceText nor refs to E# you attached is refused): " +
+  "name the exact revision, assertions checked, unchecked assertions, method and support. Source reasoning is not a live reproduction. When a finding does not reproduce, send a blocking challenge to its owner and contest its claim C# if one exists, or " +
   "file a finding with supersedes: F# under the same idea and concern. The tool refuses your idea claims " +
   "while other members' findings await your review, and a session that closes with high-importance " +
   "findings unreviewed is replaced by a fresh one that owes them. Your summary's coverage sentence is " +

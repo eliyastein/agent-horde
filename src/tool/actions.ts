@@ -441,9 +441,10 @@ async function claimAction(ctx: ActionContext): Promise<ActionResult> {
 
 async function resourceAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params, runId } = ctx;
-  if ((params.text ?? "").trim() === "") throw new Error("horde: resource needs its name in text (note holds the reuse pointer)");
+  const name = (params.text ?? "").trim() === "" ? params.name : params.text;
+  if ((name ?? "").trim() === "") throw new Error("horde: resource needs its name in text (note holds the reuse pointer)");
   const { resource, reused, ownedByCaller } = await claimResource(hordeDir, member, {
-    name: params.text,
+    name,
     note: params.note,
     cleanup: params.cleanup,
     runId,
