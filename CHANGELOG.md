@@ -6,6 +6,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- A `deltaOf`, `supersedes` or collaboration target that names a finding from an earlier run in
+  the same directory is refused with an error that names that run and says to cite the finding
+  in the text of a new one. The errors used to read `not in this run` and `unknown target`, and
+  the member prompt now states the rule (#68).
 - `--budget` requests its clean stop a reserve below the ceiling (5% of the budget, at least
   $0.05, at most half of it), so the members' wrap-up lands at or under the ceiling instead of
   over it. TASK.md, the `run-start` event and REPORT.md's usage line state the reserve (#54).

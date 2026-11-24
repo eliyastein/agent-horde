@@ -210,6 +210,9 @@ horde tool. Durable run events retain messages, evidence, reviews and revisions;
 - BOARD.md    append-only message board: plans, progress, dead ends, questions.
 - FINDINGS.md findings with stable ids (F#): text, a concern slug, and optional importance,
               confidence, and support. Duplicates are refused.
+              Findings an earlier run in this directory filed stay listed as closed context:
+              deltaOf, supersedes, attach, review and message take only this run's F#, so
+              build on an earlier one by naming it in the text of a new finding.
 - FACTS.md    low-controversy checkable facts (T#). Read this before re-deriving.
 - CLAIMS.md   hypothesis states C# for actual disagreements. Work ownership lives in IDEAS.md.
 - RESOURCES.md shared datasets, harnesses, corpora, and sandboxes (R#). Claim before building;

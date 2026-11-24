@@ -294,15 +294,24 @@ function readStampedFindings(findingsPath: string): string {
   return stamped;
 }
 
+/**
+ * Why a finding id cannot be linked from this run: it belongs to an earlier run in the same
+ * directory, whose findings are closed, or it does not exist.
+ */
+function outOfRun(all: FindingEntry[], id: number, runId: string, field: string): Error {
+  const earlier = all.find((entry) => entry.id === id);
+  if (!earlier) return new Error(`horde: finding F${id} does not exist; ${field} must reference a finding in run ${runId}`);
+  return new Error(
+    `horde: finding F${id} was filed in earlier run ${earlier.runId} and is closed; ${field} links findings of ` +
+      `run ${runId} only. File this as a new finding without ${field} and name F${id} in its text`,
+  );
+}
+
 /** A delta must extend a finding in this run, under its concern, with distinct evidence. */
-function checkDelta(scoped: FindingEntry[], { runId, body, meta }: FindingDraft): void {
+function checkDelta(all: FindingEntry[], { runId, body, meta }: FindingDraft): void {
   if (meta.deltaOf === undefined) return;
-  const parent = scoped.find((entry) => entry.id === meta.deltaOf);
-  if (!parent) {
-    throw new Error(
-      `horde: finding F${meta.deltaOf} is not in this run; a delta must reference a finding in run ${runId}`,
-    );
-  }
+  const parent = all.find((entry) => entry.runId === runId && entry.id === meta.deltaOf);
+  if (!parent) throw outOfRun(all, meta.deltaOf, runId, "deltaOf");
   if (parent.concern && meta.concern !== parent.concern) {
     throw new Error(
       `horde: delta F${parent.id} has concern=${parent.concern}; use that exact concern for new evidence, ` +
@@ -314,14 +323,10 @@ function checkDelta(scoped: FindingEntry[], { runId, body, meta }: FindingDraft)
 }
 
 /** Explicit corrections may change concern when the original diagnosis was wrong. */
-function checkSupersedes(scoped: FindingEntry[], { runId, meta }: FindingDraft): void {
+function checkSupersedes(all: FindingEntry[], { runId, meta }: FindingDraft): void {
   if (meta.supersedes === undefined) return;
-  const corrected = scoped.find((entry) => entry.id === meta.supersedes);
-  if (!corrected) {
-    throw new Error(
-      `horde: finding F${meta.supersedes} is not in this run; supersedes must reference a finding in run ${runId}`,
-    );
-  }
+  const corrected = all.find((entry) => entry.runId === runId && entry.id === meta.supersedes);
+  if (!corrected) throw outOfRun(all, meta.supersedes, runId, "supersedes");
 }
 
 /** The F# ids a body mentions must agree with the delta/supersedes it declares. */
@@ -423,8 +428,8 @@ export async function addFinding(
     const content = readStampedFindings(findingsPath);
     const all = parseFindings(content);
     const scoped = all.filter((entry) => entry.runId === runId);
-    checkDelta(scoped, draft);
-    checkSupersedes(scoped, draft);
+    checkDelta(all, draft);
+    checkSupersedes(all, draft);
     checkBodyReferences(scoped, draft);
     // A delta or correction inherits an existing concern; anything else must be
     // in the glossary before it can be filed.
@@ -637,6 +642,14 @@ export function answerObjectionFor(
 /** A body line that reads as a verification note would move the subject boundary the revision hashes. */
 function neutralizeNotes(text: string): string {
   return text.replace(/^((?:Verified|Reviewed) by )/gm, "\\$1");
+}
+
+/** The run that filed finding `id`, when it is not `runId`: an earlier run in the same directory. */
+export function earlierRunOfFinding(hordeDir: string, runId: string, id: number): string | undefined {
+  const findingsPath = hordePaths(hordeDir).findings;
+  if (!fs.existsSync(findingsPath)) return undefined;
+  const entries = parseFindings(fs.readFileSync(findingsPath, "utf-8")).filter((entry) => entry.id === id);
+  return entries.some((entry) => entry.runId === runId) ? undefined : entries[0]?.runId;
 }
 
 export function listFindingsForRun(hordeDir: string, runId: string): FindingEntry[] {
