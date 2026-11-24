@@ -216,13 +216,13 @@ function stopLabelFor(label: CleanStopLabel): string {
 }
 
 /** Write the sentinel member tools read; an empty member list means the whole run. */
-function writeStopSentinel(run: HordeRun, all: boolean, requested: string[]): void {
+function writeStopSentinel(run: HordeRun, all: boolean, requested: string[], label: CleanStopLabel): void {
   const existing = readCleanStop(run.runDir);
   const members =
     all || (existing?.runId === run.id && existing.members.length === 0)
       ? []
       : Array.from(new Set([...(existing?.members ?? []), ...requested]));
-  writeCleanStop(run.runDir, { runId: run.id, members, at: new Date().toISOString() });
+  writeCleanStop(run.runDir, { runId: run.id, members, at: new Date().toISOString(), label });
 }
 
 /** Push the clean-stop deadline out once, for a reason the operator is told about. */
@@ -318,7 +318,7 @@ export async function requestCleanStop(
   const grace = options.graceMs ?? CLEAN_STOP_GRACE_MS;
   const all = target.kind === "all";
   const requested = members.map((m) => m.name);
-  writeStopSentinel(run, all, requested);
+  writeStopSentinel(run, all, requested, label);
   await recordLifecycle(run, "stop-clean", { label, members: requested, all, graceMs: grace });
 
   run.stopped = true;
@@ -346,7 +346,7 @@ export async function requestCleanStop(
       run.hordeDir,
       "parent",
       `${label} requested: ${requested.join(", ")} wrap up; hard stop in ${graceSeconds}s. ` +
-        "Call 'horde list' and finish your claimed ideas.",
+        "Tools other than horde are refused from now on: record unwritten findings and facts, then finish or drop your claimed ideas.",
     );
   } catch {
     // The board notice is best effort.
