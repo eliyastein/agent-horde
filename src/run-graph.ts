@@ -458,7 +458,7 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "run-end": return ["run end", `outcome ${str(p.outcome) ?? "unknown"}`];
     case "member-spawn": return ["spawn", str(p.role) ? `role: ${oneLine(str(p.role) ?? "", 120)}` : "spawned"];
     case "member-exit": return [`exit ${str(p.endCause) ?? ""}`.trim(), `status ${str(p.status) ?? "?"}, ${num(p.turns) ?? 0} turns, ${num(p.tokens) ?? 0} tokens`];
-    case "member-reset": return ["reset", `${str(p.reason) ?? ""}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
+    case "member-reset": return str(p.skipped) ? ["reset skipped", `${str(p.skipped)}: ${str(p.reason) ?? ""}`] : ["reset", `${str(p.reason) ?? ""}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
     case "stop-clean": return [`stop-clean (${str(p.label) ?? "stop-clean"})`, members || "all members"];
     case "stop-hard": return [`stop-hard (${str(p.by) ?? "user"})`, members || "all members"];
     case "solved-proposed": return ["solved proposed", `${str(p.member) ?? ""}: ${oneLine(str(p.text) ?? "", 120)}`];
@@ -467,7 +467,7 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "solved-reopened": return ["solved reopened", oneLine(str(p.reason) ?? "", 120)];
     case "solved-validated": return ["solved validated", str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
     case "solved-banked": return [`solved banked (round ${num(p.round) ?? "?"})`, str(p.validator) ? `by ${str(p.validator)}` : "without a separate validator"];
-    case "member-continue": return ["continue", `fresh session ${num(p.continuations) ?? "?"}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
+    case "member-continue": return str(p.skipped) ? ["continue skipped", str(p.skipped) ?? ""] : ["continue", `fresh session ${num(p.continuations) ?? "?"}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
     case "acceptance": return [`acceptance ${str(p.status) ?? ""}`.trim(), `${num(p.issues) ?? 0} issues, snapshot ${(str(p.hash) ?? "").slice(0, 12)}`];
     case "repair-start": return ["repair start", `queue ${strings(p.messages).join(", ")}`];
     case "repair-end": return ["repair end", `${str(p.cause) ?? ""}${str(p.stopReason) ? ` (${str(p.stopReason)})` : ""}`];

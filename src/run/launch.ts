@@ -7,6 +7,7 @@ import { envNumber, errorMessage, oneLine } from "../format.js";
 import { initHordeDir } from "../ledger/files.js";
 import { resetMemberState } from "../member.js";
 import type { MemberState } from "../member.js";
+import { budgetReserve } from "../prompt.js";
 import { hardStopMembers, requestCleanStop } from "./controls.js";
 import { finalizeRun, stopRunTimers } from "./finalize.js";
 import { recordLifecycle, recordPhase } from "./lifecycle.js";
@@ -294,7 +295,8 @@ async function seedHorde(swarm: Swarm, run: HordeRun, roles: string[]): Promise<
   await seedRun(run);
   await recordLifecycle(run, "run-start", {
     count: run.count, model: run.model, verifier: run.verifier, plan: run.plan, untilStop: run.untilStop,
-    budget: run.budget, contextCap: run.contextCap,
+    budget: run.budget, budgetReserve: run.budget === undefined ? undefined : budgetReserve(run.budget),
+    contextCap: run.contextCap,
     roles: roles.map((role) => oneLine(role, 120)), dashboardUrl: run.dashboardUrl,
     ...(swarm.hordes > 1 ? { swarm: swarm.id, horde: run.horde, hordes: swarm.hordes, slice: run.slice } : {}),
   });

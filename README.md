@@ -138,10 +138,13 @@ extend, stress-test, or deepen the work.
 ```
 
 `--budget=<usd>` puts a dollar ceiling on a run: once the members' combined spend, counted across
-every session they have had, reaches it, the parent performs a clean stop on its own and the
-report says `stopped at budget`. It pairs with `--until-stop` to bound an open-ended run. The
-spend counted is what the members' model calls report; the planner, deliverable and post-mortem
-helpers are not included, and members still get the clean-stop grace period to wrap up.
+every session they have had, comes within a small reserve of it (5% of the budget, at least five
+cents), the parent performs a clean stop on its own and the report says `stopped at budget`. The
+reserve pays for the members' wrap-up, which still gets the clean-stop grace period. A fresh
+session after a member finishes or is reset is not started when what is left above the reserve
+is less than a session has cost on average. It pairs with `--until-stop` to bound an open-ended
+run. The spend counted is what the members' model calls report; the planner, deliverable and
+post-mortem helpers are not included.
 
 ```
 /agent-horde --until-stop --budget=20 8 find every way an unauthenticated request reaches the database

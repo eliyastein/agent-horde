@@ -91,6 +91,10 @@ export interface HordeRun extends MemberRunInfo {
   solvedVerificationNotice?: boolean | undefined;
   /** The swarm's `--budget` in dollars, recorded per run for TASK.md and the events. */
   budget?: number | undefined;
+  /** Cost in dollars of each member session that has ended, for the budget's admission check. */
+  sessionCosts?: number[] | undefined;
+  /** Sessions the budget could not fund, as `member (continuation|reset)`. */
+  budgetSkipped?: string[] | undefined;
   /** Solves banked so far in an `--until-stop` run. */
   solveRounds?: number | undefined;
   /** The latest banked solve of an `--until-stop` run: the answer unless a later proposal is validated. */

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { envNumber, errorMessage } from "../format.js";
+import { envNumber, errorMessage, formatUsd } from "../format.js";
 import { postBoard } from "../ledger/board.js";
 import { collaborationState, openMessages } from "../ledger/collaboration.js";
 import { pendingReviewsForMember } from "../ledger/findings.js";
@@ -10,7 +10,7 @@ import { reconcileOwnedIdeas } from "../ledger/ideas.js";
 import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/run-signals.js";
 import { resetMemberState, spawnMember } from "../member.js";
 import type { MemberState } from "../member.js";
-import { checkBudget } from "./budget.js";
+import { budgetShortfall, checkBudget } from "./budget.js";
 import { hardStopMembers } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
 import type { HordeRun, HordeState, Swarm } from "./types.js";
@@ -83,6 +83,7 @@ export async function spawnOne(
     },
     onFirstOutput,
   });
+  run.sessionCosts = [...(run.sessionCosts ?? []), member.usage.cost];
   await recordLifecycle(run, "member-exit", {
     member: member.name, attempt: member.attempt, status: member.status, endCause: member.endCause,
     exitCode: member.exitCode, turns: member.turns, toolCalls: member.toolCalls,
@@ -286,6 +287,27 @@ async function performContinue(run: HordeRun, member: MemberState): Promise<bool
 }
 
 /**
+ * `--budget` admission: a fresh session that the budget left above the reserve cannot pay for is
+ * not started. The member stays down as it ended and the event records why.
+ */
+async function skipUnfunded(launch: RunLaunch, member: MemberState, reason: string): Promise<boolean> {
+  const { run, swarm } = launch;
+  const short = budgetShortfall(swarm);
+  if (!short) return false;
+  const continuation = reason === CONTINUE_REASON;
+  const kind = continuation ? "continuation" : "reset";
+  const note = `${formatUsd(short.remaining)} left above the reserve, a session averages ${formatUsd(short.estimate)}`;
+  fs.appendFileSync(path.join(run.runDir, `${member.name}.log`), `[horde] ${kind} not started: budget (${note})\n`);
+  run.budgetSkipped = [...(run.budgetSkipped ?? []), `${member.name} (${kind})`];
+  await recordLifecycle(run, continuation ? "member-continue" : "member-reset", {
+    member: member.name, skipped: "budget", reason, remaining: short.remaining, estimate: short.estimate,
+  });
+  safeNotify(run, `horde ${run.id}: ${member.name} not restarted, budget (${note})`, "warning");
+  refreshRun(run);
+  return true;
+}
+
+/**
  * Resolves only when the member is down for good, so the fan-out's
  * Promise.all cannot finalize the run while a replacement is running.
  */
@@ -301,6 +323,7 @@ export async function superviseMember(
     const reason = resetReasonForExit(launch, member);
     if (!reason && member.endCause === "refused" && !state.disposed && !run.stopped) await standDownRefused(run, member);
     if (!reason || state.disposed) return;
+    if (await skipUnfunded(launch, member, reason)) return;
     if (reason === CONTINUE_REASON) {
       if (!(await performContinue(run, member))) return;
     } else {
