@@ -82,14 +82,22 @@ unfinished ideas return to the open pool.
 A clean stop still produces the deliverable; add `postmortem` to also run the reviewer. Runs
 that end on their own (all members finished, solved, canary or provider failure) get both.
 `PI_HORDE_MAX_MINUTES` forces a clean stop at a wall-clock deadline, reported as
-`stopped at deadline`. `--budget=<usd>` forces one when the members' combined spend reaches that
-many dollars, reported as `stopped at budget`; in a swarm the ceiling covers every horde and every
-horde still working is stopped. The check runs on every usage update a member reports, so it fires
-on the model call that crosses the line, during discovery or repair alike. The spend counted is the
-members' own, summed over every session a member slot has had (resets, continuations and repair
-attempts included); the planner, deliverable, post-mortem and merge helpers are not counted, and
-the clean-stop grace period lets members finish, so the final total overshoots the ceiling by what
-the wind-down costs.
+`stopped at deadline`. `--budget=<usd>` forces one when the members' combined spend comes within
+the wrap-up reserve of that many dollars, reported as `stopped at budget`; in a swarm the ceiling
+covers every horde and every horde still working is stopped. The reserve is 5% of the budget, at
+least $0.05 and at most half of it; TASK.md, the `run-start` event and REPORT.md's usage line
+state it. The check runs on every usage update a member reports, so it fires on the model call
+that crosses the line, during discovery or repair alike. The spend counted is the members' own,
+summed over every session a member slot has had (resets, continuations and repair attempts
+included); the planner, deliverable, post-mortem and merge helpers are not counted. The
+clean-stop grace period lets members finish on the reserve, so the final total lands at or under
+the ceiling unless the wind-down, or one model call, costs more than the reserve.
+
+Before a continuation or a reset starts a fresh session, the budget left above the reserve is
+compared with the average cost of the sessions that have ended in the swarm (the reserve stands
+in until one has). When it is less, the session is not started: the member stays down, its log
+and a `member-continue` or `member-reset` event with `skipped: "budget"` record the remainder
+and the estimate, and SUMMARY.md counts it. Repair attempts are not gated this way.
 
 `--context-cap=<tokens>` (opt-in) makes every member compact its own context once it passes that
 many tokens. pi compacts only when the context comes within `compaction.reserveTokens` of the
@@ -541,7 +549,7 @@ run/                  the parent-side run lifecycle, sharing one HordeState
   swarm-report.ts     per-horde totals: the swarm REPORT.md and the injected message
   launch.ts           dashboard, deadline, partition, staggered canary preflights, fan-out
   supervise.ts        member spawn, reset on exit, stall detection
-  budget.ts           `--budget`: swarm-wide spend check, clean stop when it is reached
+  budget.ts           `--budget`: swarm-wide spend check, wrap-up reserve, admission of new sessions
   schedule.ts         artifact review assignment and superseded-dependency handoffs
   repair.ts           bounded post-discovery reviews, owner repair, and recheck attempts
   solved.ts           two-phase SOLVED poll

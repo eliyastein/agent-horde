@@ -37,6 +37,8 @@ export interface RunSummaryInput {
   solvedCommitted?: boolean | undefined;
   /** Members whose queued repair work was skipped for budget. */
   repairSkipped?: string[] | undefined;
+  /** Sessions `--budget` could not fund, as `member (continuation|reset)`. */
+  budgetSkipped?: string[] | undefined;
   /** Members held back from later rounds because their attempt left every thread unchanged. */
   repairStalled?: string[] | undefined;
   /** The REPORT.md outcome, so SUMMARY.md states the same end cause. */
@@ -326,7 +328,8 @@ export function taskMarkdown(input: {
   const budget =
     input.budget === undefined
       ? "none"
-      : `${formatUsd(input.budget)} (the run clean-stops when member spend${swarm ? " across the swarm" : ""} reaches it)`;
+      : `${formatUsd(input.budget)} (the run clean-stops when member spend${swarm ? " across the swarm" : ""} comes within ` +
+        `${formatUsd(budgetReserve(input.budget))} of it, the reserve kept for wrap-up)`;
   return [
     `# Horde run ${input.id}`,
     "",
@@ -414,6 +417,18 @@ export function sumUsage(rows: ReadonlyArray<{ turns: number; usage: MemberUsage
 }
 
 /** Run totals over every session each member has had; turns count the current sessions only. */
+/** Share of the budget held back for the wind-down, and the least it is held at, in dollars. */
+const RESERVE_FRACTION = 0.05;
+const RESERVE_FLOOR_USD = 0.05;
+
+/**
+ * Dollars of a `--budget` kept for the wind-down: the clean stop is requested this far below the
+ * ceiling, so the members' wrap-up turns land at or under it. Never more than half the budget.
+ */
+export function budgetReserve(budget: number): number {
+  return Math.min(budget / 2, Math.max(budget * RESERVE_FRACTION, RESERVE_FLOOR_USD));
+}
+
 export function totalUsage(members: MemberState[]): UsageTotals {
   return sumUsage(members.map((m) => ({ turns: m.turns, usage: m.lifetime })));
 }
@@ -515,6 +530,8 @@ export function runEndSentence(run: RunSummaryInput): string {
     ].filter(Boolean).join(", ");
     parts.push(`Repair: ${attempts} attempt(s)${detail ? `, ${detail}` : ""}.`);
   }
+  const unfunded = run.budgetSkipped ?? [];
+  if (unfunded.length > 0) parts.push(`Budget: ${unfunded.length} session(s) not started (${unfunded.join(", ")}).`);
   if (run.outcome) parts.push(`Outcome: ${run.outcome}.`);
   return parts.join(" ");
 }
@@ -694,7 +711,7 @@ function reportHeader(input: RunReportInput, now: number): string[] {
   if (input.model) lines.push(`Model: ${input.model}`);
   lines.push(
     `Usage: ${usageLine(usage)} cost` +
-      (input.budget === undefined ? "" : ` (budget ${formatUsd(input.budget)})`),
+      (input.budget === undefined ? "" : ` (budget ${formatUsd(input.budget)}, reserve ${formatUsd(budgetReserve(input.budget))})`),
   );
   return lines;
 }

@@ -6,6 +6,12 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- `--budget` requests its clean stop a reserve below the ceiling (5% of the budget, at least
+  $0.05, at most half of it), so the members' wrap-up lands at or under the ceiling instead of
+  over it. TASK.md, the `run-start` event and REPORT.md's usage line state the reserve (#54).
+- A continuation or a reset is not started when the budget left above the reserve is less than
+  the average cost of the sessions that have ended. The member stays down and a
+  `member-continue` or `member-reset` event with `skipped: "budget"` records why (#54).
 - During a clean stop, a member named by the stop has every tool other than `horde` refused,
   with a result that names the reason (user stop, budget, deadline, or solved) and says to
   record unwritten findings and facts and to finish or drop its ideas. The same wrap-up message
