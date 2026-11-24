@@ -12,6 +12,11 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 - A continuation or a reset is not started when the budget left above the reserve is less than
   the average cost of the sessions that have ended. The member stays down and a
   `member-continue` or `member-reset` event with `skipped: "budget"` records why (#54).
+- During a clean stop, a member named by the stop has every tool other than `horde` refused,
+  with a result that names the reason (user stop, budget, deadline, or solved) and says to
+  record unwritten findings and facts and to finish or drop its ideas. The same wrap-up message
+  is inserted once at the member's next turn boundary. A member in the middle of a chain of
+  bash or read calls used to keep investigating until the hard stop (#53).
 
 ## [0.4.0] - 2026-11-22
 

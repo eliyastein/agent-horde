@@ -70,7 +70,11 @@ synthesize it.
 `stop-hard` kills now and leaves claimed ideas as they were. `stop-clean` writes a `.stop-clean`
 sentinel, posts a wrap-up notice to BOARD.md, and gives members 90s (`--grace`) before escalating
 to a hard stop. During wind-down the tool refuses `idea`, `claim`, `assert`, and `resource` but
-still accepts reads, `post`, `done`, `drop`, `rule-out`, and `finding`. The deadline grants one
+still accepts reads, `post`, `done`, `drop`, `rule-out`, and `finding`. A member named by the
+sentinel also has every tool other than `horde` refused: the call is not executed and its result
+says the run is winding down, why (user stop, budget, deadline, or solved), and to record
+unwritten findings and facts and finish or drop its ideas. The same wrap-up text is inserted once
+at the member's next turn boundary, so a member that is not calling tools sees it. The deadline grants one
 `PI_HORDE_ACTIVE_GRACE_MS` extension to a member that produced output in the last 15s, and one
 `PI_HORDE_SOLVED_STOP_MS` window when a solve landed and nobody has validated it. At finalize,
 unfinished ideas return to the open pool.
@@ -533,6 +537,7 @@ tool/                 the member-side `horde` tool
   collaboration-view.ts     paged collaboration summaries and compact write receipts
   inbox.ts            turn-boundary delivery and persisted receipts
   context-cap.ts      `--context-cap`: a smaller advertised context window so pi compacts at the cap
+  wind-down.ts        clean stop in the member: refuse non-horde tools, insert the wrap-up message
   resource-contract.ts      resource generations, readiness, leases, and port coordination
 
 run/                  the parent-side run lifecycle, sharing one HordeState
