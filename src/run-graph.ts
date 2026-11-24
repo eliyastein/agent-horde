@@ -461,6 +461,7 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "member-reset": return str(p.skipped) ? ["reset skipped", `${str(p.skipped)}: ${str(p.reason) ?? ""}`] : ["reset", `${str(p.reason) ?? ""}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
     case "stop-clean": return [`stop-clean (${str(p.label) ?? "stop-clean"})`, members || "all members"];
     case "stop-hard": return [`stop-hard (${str(p.by) ?? "user"})`, members || "all members"];
+    case "stop-hold": return [`stop held ${Math.round((num(p.holdMs) ?? 0) / 1000)}s`, `${members}: tool call still running when the stop was requested`];
     case "solved-proposed": return ["solved proposed", `${str(p.member) ?? ""}: ${oneLine(str(p.text) ?? "", 120)}`];
     case "solved-contested": return ["solved contested", `by ${str(p.member) ?? ""}`];
     case "solved-withdrawn": return ["solved withdrawn", oneLine(str(p.reason) ?? "", 120)];

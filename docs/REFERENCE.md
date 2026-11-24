@@ -74,7 +74,10 @@ still accepts reads, `post`, `done`, `drop`, `rule-out`, and `finding`. A member
 sentinel also has every tool other than `horde` refused: the call is not executed and its result
 says the run is winding down, why (user stop, budget, deadline, or solved), and to record
 unwritten findings and facts and finish or drop its ideas. The same wrap-up text is inserted once
-at the member's next turn boundary, so a member that is not calling tools sees it. The deadline grants one
+at the member's next turn boundary, so a member that is not calling tools sees it. A tool call that was already running when the
+stop was requested is not interrupted, so that member hears of the stop when the call returns; the
+deadline is held once, for at most `PI_HORDE_LATE_CAP_MS`, to give it `PI_HORDE_WRAP_UP_MS` after
+the return, and a `stop-hold` event records it. The deadline also grants one
 `PI_HORDE_ACTIVE_GRACE_MS` extension to a member that produced output in the last 15s, and one
 `PI_HORDE_SOLVED_STOP_MS` window when a solve landed and nobody has validated it. At finalize,
 unfinished ideas return to the open pool.
@@ -472,6 +475,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_SWARM_STAGGER_MS` | 5000 | pause between one horde's launch and the next in a swarm |
 | `PI_HORDE_PLANNER_MS` | 300000 | planner helper timeout when a swarm partitions a plain prompt |
 | `PI_HORDE_ACTIVE_GRACE_MS` | 15000 | one clean-stop extension for a member still producing output |
+| `PI_HORDE_WRAP_UP_MS` | 30000 | wrap-up time a member is owed after a tool call that was running when the clean stop was requested returns |
+| `PI_HORDE_LATE_CAP_MS` | 60000 | longest the clean-stop deadline is held for such members |
 | `PI_HORDE_SOLVED_CONFIRM_MS` | 120000 | wait for a second member to validate a solve |
 | `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
 | `PI_HORDE_ALLOW_UNVERIFIED` | unset | `1` accepts a validated answer with unverified findings |

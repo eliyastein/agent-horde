@@ -6,6 +6,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- A member that is inside a tool call when a clean stop is requested hears of the stop only when
+  the call returns. The deadline is now held once, for at most 60 seconds, so such a member gets
+  30 seconds after the return to record its work; a `stop-hold` event names the members (#70).
 - `--budget` requests its clean stop a reserve below the ceiling (5% of the budget, at least
   $0.05, at most half of it), so the members' wrap-up lands at or under the ceiling instead of
   over it. TASK.md, the `run-start` event and REPORT.md's usage line state the reserve (#54).

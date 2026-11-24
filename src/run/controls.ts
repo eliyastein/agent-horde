@@ -19,6 +19,14 @@ const CLEAN_STOP_GRACE_MS = 90_000;
 /** One final extension when a member is actively writing at the clean-stop deadline. */
 const CLEAN_STOP_ACTIVE_GRACE_MS = Number(process.env.PI_HORDE_ACTIVE_GRACE_MS) || 15_000;
 
+/**
+ * A member whose tool call was already running when the stop was requested hears of the stop
+ * only when that call returns. It is owed this long after the return to record its work, and the
+ * deadline is held once, for at most the cap, to give it that.
+ */
+const CLEAN_STOP_WRAP_UP_MS = Number(process.env.PI_HORDE_WRAP_UP_MS) || 30_000;
+const CLEAN_STOP_LATE_CAP_MS = Number(process.env.PI_HORDE_LATE_CAP_MS) || 60_000;
+
 /** Extra window during stop for a live member to validate a solve landing at the wire. */
 const SOLVED_STOP_MS = Number(process.env.PI_HORDE_SOLVED_STOP_MS) || 30_000;
 
@@ -241,11 +249,46 @@ function holdCleanStop(
 }
 
 /**
- * The clean-stop deadline: hold once for members still writing, hold once for a
+ * How long the deadline must be held so that members who were inside a tool call when the stop
+ * was requested get their wrap-up time after it returned; the names are the members it is for.
+ */
+export function lateWrapUpHold(members: MemberState[], now: number): { holdMs: number; names: string[] } {
+  let holdMs = 0;
+  const names: string[] = [];
+  for (const member of members) {
+    const owed = member.stopCallPending
+      ? CLEAN_STOP_LATE_CAP_MS
+      : member.stopCallEndedAt === undefined
+        ? 0
+        : CLEAN_STOP_WRAP_UP_MS - (now - member.stopCallEndedAt);
+    if (owed <= 0) continue;
+    names.push(member.name);
+    holdMs = Math.max(holdMs, Math.min(owed, CLEAN_STOP_LATE_CAP_MS));
+  }
+  return { holdMs, names };
+}
+
+/**
+ * The clean-stop deadline: hold once for members a running tool call kept from hearing of the
+ * stop, hold once for members still writing, hold once for a
  * validator of a solve that landed during wind-down, then hard-stop the rest.
  */
 function finishCleanStop(run: HordeRun, members: MemberState[], label: CleanStopLabel): void {
   const now = Date.now();
+  const late = lateWrapUpHold(members.filter((member) => Boolean(liveProc(run, member.name))), now);
+  if (!run.cleanStopLateHeld && late.holdMs > 0) {
+    run.cleanStopLateHeld = true;
+    void recordLifecycle(run, "stop-hold", { members: late.names, holdMs: late.holdMs, by: label, reason: "tool-in-flight" });
+    holdCleanStop(
+      run,
+      members,
+      label,
+      late.holdMs,
+      `${label}: holding ${Math.round(late.holdMs / 1000)}s for ${late.names.join(", ")}, ` +
+        "whose tool call was still running when the stop was requested",
+    );
+    return;
+  }
   const recentlyActive = members.filter(
     (member) =>
       Boolean(liveProc(run, member.name)) &&
@@ -330,6 +373,11 @@ export async function requestCleanStop(
     : Array.from(new Set([...run.cleanStopNames, ...requested]));
   run.cleanStopUntil = Date.now() + grace;
   run.cleanStopExtended = false;
+  run.cleanStopLateHeld = false;
+  for (const member of members) {
+    member.stopCallEndedAt = undefined;
+    member.stopCallPending = member.currentTool !== undefined && member.currentTool !== "horde" ? true : undefined;
+  }
   if (run.cleanStopTimer) clearTimeout(run.cleanStopTimer);
   run.cleanStopTimer = setTimeout(() => finishCleanStop(run, members, label), grace);
   run.cleanStopTimer.unref?.();
