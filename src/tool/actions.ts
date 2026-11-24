@@ -29,9 +29,9 @@ import { readEvents, recordEvent } from "../ledger/events.js";
 import type { EventContext } from "../ledger/events.js";
 
 const CLEAN_STOP_NOTICE =
-  "A clean stop is in effect for this run. Stop starting new work. Mark your claimed ideas done " +
-  "or drop them, post a one-line status to BOARD.md, then write your final summary and make no " +
-  "further tool calls.";
+  "A clean stop is in effect for this run. Stop starting new work. File the findings and facts " +
+  "you have not recorded yet, mark your claimed ideas done or drop them, then write your final " +
+  "summary and make no further tool calls.";
 
 /** Actions that start new work, refused while a clean stop is pending for the member. */
 const NEW_WORK_ACTIONS = new Set<HordeToolParams["action"]>(["idea", "claim", "assert", "resource"]);

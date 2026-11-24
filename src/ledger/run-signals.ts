@@ -11,6 +11,8 @@ interface CleanStopRequest {
   /** Member names, or empty for "all members". */
   members: string[];
   at: string;
+  /** Why the stop was requested: stop-clean, budget, deadline or solved. */
+  label?: string | undefined;
 }
 
 function cleanStopPath(runDir: string): string {
@@ -21,7 +23,8 @@ export function readCleanStop(runDir: string): CleanStopRequest | undefined {
   try {
     const parsed = JSON.parse(fs.readFileSync(cleanStopPath(runDir), "utf-8")) as Partial<CleanStopRequest>;
     if (typeof parsed?.runId === "string" && Array.isArray(parsed?.members)) {
-      return { runId: parsed.runId, members: parsed.members, at: parsed.at ?? "" };
+      const label = typeof parsed.label === "string" ? parsed.label : undefined;
+      return { runId: parsed.runId, members: parsed.members, at: parsed.at ?? "", label };
     }
   } catch {
     // No request, or a torn write; treat as none.
@@ -63,15 +66,16 @@ export function clearHeartbeat(runDir: string, member: string): void {
   fs.rmSync(heartbeatPath(runDir, member), { force: true });
 }
 
-/** True when a clean stop covering `member` is pending for `runId`. */
-export function cleanStopRequestedFor(
-  hordeDir: string,
-  runId: string,
-  member: string,
-): boolean {
+/** The clean stop pending for `runId` that covers `member`, if any. */
+export function cleanStopFor(hordeDir: string, runId: string, member: string): CleanStopRequest | undefined {
   const request = readCleanStop(path.join(hordeDir, "runs", runId));
-  if (!request || request.runId !== runId) return false;
-  return request.members.length === 0 || request.members.includes(member);
+  if (!request || request.runId !== runId) return undefined;
+  return request.members.length === 0 || request.members.includes(member) ? request : undefined;
+}
+
+/** True when a clean stop covering `member` is pending for `runId`. */
+export function cleanStopRequestedFor(hordeDir: string, runId: string, member: string): boolean {
+  return cleanStopFor(hordeDir, runId, member) !== undefined;
 }
 
 /** Written by the first member that considers the run's goal answered. */
