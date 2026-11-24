@@ -357,6 +357,7 @@ async function runCleanups(run: HordeRun): Promise<CleanupResult[]> {
 function runOutcome(run: HordeRun): string {
   if (run.canary === "failed" && run.userStop !== true) return "canary-failed";
   if (run.solvedContested) return "solved-contested";
+  if (run.stagnated && !run.solved && !run.stopped) return "stagnated";
   if (run.acceptance === "incomplete" && !run.stopped) return "completed-incomplete";
   if (run.solved && run.solvedValidatedBy && run.acceptance !== "incomplete") return "solved";
   if (run.solved) return run.acceptance === "incomplete" ? "solved-incomplete" : "solved-unvalidated";

@@ -131,7 +131,9 @@ rather than by theme.
 A run normally winds down once a validated answer exists and every idea is closed. `--until-stop`
 keeps the whole horde working until you stop it: a validated answer is banked as the current one
 and the proposal slot reopens, and a member whose session finishes gets a fresh session told to
-extend, stress-test, or deepen the work.
+extend, stress-test, or deepen the work. A member whose continuation sessions keep adding nothing
+is parked until another member records something new, and the run ends as `stagnated` when every
+member is parked.
 
 ```
 /agent-horde --dashboard --until-stop 8 find every way an unauthenticated request reaches the database

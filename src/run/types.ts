@@ -95,6 +95,10 @@ export interface HordeRun extends MemberRunInfo {
   sessionCosts?: number[] | undefined;
   /** Sessions the budget could not fund, as `member (continuation|reset)`. */
   budgetSkipped?: string[] | undefined;
+  /** Members whose supervision has ended: they will not get another session. */
+  settled?: Set<string> | undefined;
+  /** Every member was parked, so the run ended for lack of new work. */
+  stagnated?: boolean | undefined;
   /** Solves banked so far in an `--until-stop` run. */
   solveRounds?: number | undefined;
   /** The latest banked solve of an `--until-stop` run: the answer unless a later proposal is validated. */

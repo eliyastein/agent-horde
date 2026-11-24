@@ -459,6 +459,8 @@ function lifecycleText(action: string, p: Payload): [string, string] {
     case "member-spawn": return ["spawn", str(p.role) ? `role: ${oneLine(str(p.role) ?? "", 120)}` : "spawned"];
     case "member-exit": return [`exit ${str(p.endCause) ?? ""}`.trim(), `status ${str(p.status) ?? "?"}, ${num(p.turns) ?? 0} turns, ${num(p.tokens) ?? 0} tokens`];
     case "member-reset": return str(p.skipped) ? ["reset skipped", `${str(p.skipped)}: ${str(p.reason) ?? ""}`] : ["reset", `${str(p.reason) ?? ""}; released ${strings(p.released).length}, closed ${strings(p.closed).length}`];
+    case "member-parked": return ["parked", `${num(p.emptySessions) ?? "?"} continuation sessions added nothing`];
+    case "member-unparked": return ["unparked", "another member recorded new work"];
     case "stop-clean": return [`stop-clean (${str(p.label) ?? "stop-clean"})`, members || "all members"];
     case "stop-hard": return [`stop-hard (${str(p.by) ?? "user"})`, members || "all members"];
     case "solved-proposed": return ["solved proposed", `${str(p.member) ?? ""}: ${oneLine(str(p.text) ?? "", 120)}`];

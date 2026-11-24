@@ -381,6 +381,11 @@ is given a fresh session that reads the board, findings, and answer and adds ide
 stress-test, or deepen the work; these continuations count against no reset cap and are not
 resets in the report. A session that finished within `PI_HORDE_CONTINUE_COOLDOWN_MS` (default
 60000) of starting waits out the remainder first, so a member that finds nothing to do cannot spin.
+A member whose last `PI_HORDE_PARK_AFTER` (default 3) continuation sessions each recorded no
+finding, fact, review, evidence or artifact is parked: a `member-parked` event and a board post
+record it and it gets no session until another member records a finding or an artifact revision
+(`member-unparked`). When every member is parked or down the run ends on its own with outcome
+`stagnated`, and no clean stop is needed because no member is running.
 Crash and stall resets apply as usual. `stop-clean` and `stop-hard` end the run as usual and
 `stop-clean` produces the report, deliverable, and postmortem; the last banked answer stands unless
 a later proposal was validated too. `--budget=<usd>` bounds such a run by spend (see Stopping).
@@ -465,6 +470,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 |----------|---------|--------|
 | `PI_HORDE_DASHBOARD_PORT` | 7433 | dashboard port when `--dashboard` names none |
 | `PI_HORDE_CONTINUE_COOLDOWN_MS` | 60000 | `--until-stop`: a finished session younger than this waits out the remainder before its fresh session starts |
+| `PI_HORDE_PARK_AFTER` | 3 | `--until-stop`: continuation sessions in a row that record no work before a member is parked; 0 disables parking |
+| `PI_HORDE_PARK_POLL_MS` | 2000 | how often a parked member checks for new work by others |
 | `PI_HORDE_MAX_MINUTES` | off | clean stop at a wall-clock deadline |
 | `PI_HORDE_CANARY_MS` | 60000 | time for member-1 to produce output before a retry |
 | `PI_HORDE_STALL_MS` | 1800000 | reset a member with no ledger write for this long; `0` disables |
