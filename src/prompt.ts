@@ -329,7 +329,7 @@ export function taskMarkdown(input: {
     input.budget === undefined
       ? "none"
       : `${formatUsd(input.budget)} (the run clean-stops when member spend${swarm ? " across the swarm" : ""} comes within ` +
-        `${formatUsd(budgetReserve(input.budget))} of it, the reserve kept for wrap-up)`;
+        `${formatUsd(budgetReserve(input.budget))} of it, the reserve kept for wrap-up; the reserve grows when many members are running)`;
   return [
     `# Horde run ${input.id}`,
     "",

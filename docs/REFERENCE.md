@@ -86,7 +86,9 @@ that end on their own (all members finished, solved, canary or provider failure)
 the wrap-up reserve of that many dollars, reported as `stopped at budget`; in a swarm the ceiling
 covers every horde and every horde still working is stopped. The reserve is 5% of the budget, at
 least $0.05 and at most half of it; TASK.md, the `run-start` event and REPORT.md's usage line
-state it. The check runs on every usage update a member reports, so it fires on the model call
+state it. While members are running the reserve is raised to eight turns for each of them at
+its current session's cost per turn, when that is more, so a large horde on a small budget
+stops earlier; the budget notice states the amount held. The check runs on every usage update a member reports, so it fires on the model call
 that crosses the line, during discovery or repair alike. The spend counted is the members' own,
 summed over every session a member slot has had (resets, continuations and repair attempts
 included); the planner, deliverable, post-mortem and merge helpers are not counted. The
