@@ -29,6 +29,24 @@ level and all run concurrently, so pick the count with the provider's throughput
 the run ends, a report is injected into the parent conversation and the parent is asked to
 synthesize it.
 
+### Member environment
+
+A member is a `pi -p` process started in the working directory with the run's system prompt
+appended. The parent passes it the model, the thinking level and the task; everything else comes
+from your pi installation:
+
+- **Tools.** The built-in tools plus every installed extension, package and MCP server. The
+  `horde` tool is the only one agent-horde adds. A task that needs web search, page fetching or a
+  browser needs a package that provides it, installed before launch.
+- **Instructions.** The global `~/.pi/agent/AGENTS.md` and the `AGENTS.md` in the working
+  directory, as in any pi session.
+- **Cost of tools.** A tool that calls a paid API is called by every member. Check which provider
+  a search package resolves to before launch; the members' reported spend covers model calls
+  only, so `--budget` does not count it.
+
+To see what members will have, start a plain pi session in the working directory and list its
+tools.
+
 ### Run lifecycle
 
 1. **Canary.** member-1 starts alone; the rest fan out once it produces output. A canary that dies
@@ -74,7 +92,10 @@ still accepts reads, `post`, `done`, `drop`, `rule-out`, and `finding`. A member
 sentinel also has every tool other than `horde` refused: the call is not executed and its result
 says the run is winding down, why (user stop, budget, deadline, or solved), and to record
 unwritten findings and facts and finish or drop its ideas. The same wrap-up text is inserted once
-at the member's next turn boundary, so a member that is not calling tools sees it. The deadline grants one
+at the member's next turn boundary, so a member that is not calling tools sees it. A tool call that was already running when the
+stop was requested is not interrupted, so that member hears of the stop when the call returns; the
+deadline is held once, for at most `PI_HORDE_LATE_CAP_MS`, to give it `PI_HORDE_WRAP_UP_MS` after
+the return, and a `stop-hold` event records it. The deadline also grants one
 `PI_HORDE_ACTIVE_GRACE_MS` extension to a member that produced output in the last 15s, and one
 `PI_HORDE_SOLVED_STOP_MS` window when a solve landed and nobody has validated it. At finalize,
 unfinished ideas return to the open pool.
@@ -86,7 +107,9 @@ that end on their own (all members finished, solved, canary or provider failure)
 the wrap-up reserve of that many dollars, reported as `stopped at budget`; in a swarm the ceiling
 covers every horde and every horde still working is stopped. The reserve is 5% of the budget, at
 least $0.05 and at most half of it; TASK.md, the `run-start` event and REPORT.md's usage line
-state it. The check runs on every usage update a member reports, so it fires on the model call
+state it. While members are running the reserve is raised to eight turns for each of them at
+its current session's cost per turn, when that is more, so a large horde on a small budget
+stops earlier; the budget notice states the amount held. The check runs on every usage update a member reports, so it fires on the model call
 that crosses the line, during discovery or repair alike. The spend counted is the members' own,
 summed over every session a member slot has had (resets, continuations and repair attempts
 included); the planner, deliverable, post-mortem and merge helpers are not counted. The
@@ -254,17 +277,17 @@ from the same actor as an idempotent retry. The parent appends its own lifecycle
 | `list`, `findings`, `facts`, `claims`, `resources`, `concerns` | print a ledger |
 | `post` | append a message to BOARD.md |
 | `idea` | add an open checklist item; a near-duplicate returns the existing id |
-| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id; `done` with a confirmed-negative result line is refused in favour of `rule-out` |
+| `claim`, `done`, `drop`, `rule-out` | take, finish, release, or close idea #id; `done` with a confirmed-negative result line is refused in favour of `rule-out`; `rule-out` requires `unchecked`, the checks the negative did not perform (empty for none), kept in the idea's note as `not checked: ...`, and the receipts of `solved` and `confirm-solved` name each such rule-out the answer cites |
 | `finding` | file under a claimed `idea` with a `concern` and `support`; `importance` and `confidence` are optional; `deltaOf: F#` adds distinct evidence, `supersedes: F#` corrects |
 | `verify` | record your own reproduction of F#id with the support level you reached |
-| `amend` | rewrite the body prose of your own F#id (`text`) with a `note` saying why; the revision changes, reviews stay pinned to what they checked, earlier verification notes are kept as history of the previous revision, and the legacy `verified=` label and corroborators are dropped |
+| `amend` | rewrite the body prose of your own F#id (`text`) and/or change its `importance`, `confidence` and `support`, with a `note` saying why; with no `text` only the ranking changes and the errata line names the move; the revision changes, reviews stay pinned to what they checked, earlier verification notes are kept as history of the previous revision, and the legacy `verified=` label and corroborators are dropped |
 | `fact` | record a checkable fact; `deltaOf: T#` extends one; a fact about what an open idea or contested claim is still auditing is recorded as provisional on it |
 | `assert`, `confirm`, `contest`, `retract`, `supersede` | create or move claim C#id |
 | `resource` | claim a shared dataset, harness, corpus, or sandbox by name, with an optional `cleanup` command |
 | `solved`, `confirm-solved`, `contest-solved` | propose, validate, or refute the goal answer |
 | `message`, `inbox`, `ack`, `respond`, `resolve`, `defer` | targeted threads: question, blocker, review-request, challenge, handoff, decision |
 | `attach` | add supporting, contradicting, or extending evidence to a target |
-| `review` | record a revision-pinned check with explicit `checked` and `unchecked` (in-criteria gaps) scope, `limits` outside the criteria, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call |
+| `review` | record a revision-pinned check with explicit `checked` and `unchecked` (in-criteria gaps) scope, `limits` outside the criteria, a verdict, and evidence refs; `evidenceText` attaches and reviews in one call; `correction` names a factual error for the owner to fix and opens a blocking request to it whatever the verdict |
 | `reattest` | carry your earlier review of F#/A# forward to its current revision, with evidence that what you checked is unchanged; refused across a changed artifact criteria or kind, a changed finding claim line, or a revision no `amend` started from |
 | `artifact` | publish a file under `artifacts/` with `artifactKind`, `criteria`, and revision-pinned `dependsOn`; republishing a revision other artifacts pin needs `text` naming the change |
 | `resource-state` | publish building, ready, broken, or retired state with a lease, ports, and health evidence |
@@ -479,6 +502,8 @@ carries a one-line diagnosis and, when generated, the post-mortem text.
 | `PI_HORDE_SWARM_STAGGER_MS` | 5000 | pause between one horde's launch and the next in a swarm |
 | `PI_HORDE_PLANNER_MS` | 300000 | planner helper timeout when a swarm partitions a plain prompt |
 | `PI_HORDE_ACTIVE_GRACE_MS` | 15000 | one clean-stop extension for a member still producing output |
+| `PI_HORDE_WRAP_UP_MS` | 30000 | wrap-up time a member is owed after a tool call that was running when the clean stop was requested returns |
+| `PI_HORDE_LATE_CAP_MS` | 60000 | longest the clean-stop deadline is held for such members |
 | `PI_HORDE_SOLVED_CONFIRM_MS` | 120000 | wait for a second member to validate a solve |
 | `PI_HORDE_SOLVED_STOP_MS` | 30000 | extra wind-down window for a solve landing at the deadline |
 | `PI_HORDE_ALLOW_UNVERIFIED` | unset | `1` accepts a validated answer with unverified findings |

@@ -107,8 +107,9 @@ function resetsOf(name: string, resets: MemberReset[] | undefined): MemberReset[
 /** Per-member instruction for the member that reproduces others' findings. */
 export const VERIFIER_ROLE =
   "You are the verifier. Reproduce the highest-importance unverified findings first. Record each " +
-  "check with 'horde inspect', 'horde attach', then 'horde review': name the exact revision, assertions " +
-  "checked, unchecked assertions, method, evidence refs and support. Source reasoning is not a live reproduction. When a finding does not reproduce, send a blocking challenge to its owner and contest its claim C# if one exists, or " +
+  "check with 'horde inspect', then 'horde review' carrying evidenceText (the evidence is attached and " +
+  "reviewed in one call; a review with neither evidenceText nor refs to E# you attached is refused): " +
+  "name the exact revision, assertions checked, unchecked assertions, method and support. Source reasoning is not a live reproduction. When a finding does not reproduce, send a blocking challenge to its owner and contest its claim C# if one exists, or " +
   "file a finding with supersedes: F# under the same idea and concern. The tool refuses your idea claims " +
   "while other members' findings await your review, and a session that closes with high-importance " +
   "findings unreviewed is replaced by a fresh one that owes them. Your summary's coverage sentence is " +
@@ -159,6 +160,9 @@ Collaboration loop:
   acceptance, never as a blocker. Empty unchecked means you checked the whole stated scope. A partial
   verdict refutes nothing and opens no challenge: the acceptance names what it left unchecked. Only
   refutes opens a challenge to the owner; send a challenge yourself when a partial check found a defect.
+  When the claim holds but the target states a fact wrongly (a line number, a citation, a figure), add
+  correction=what-to-fix: it opens a blocking request to the owner, who amends or republishes, or
+  declines in its response, before the target reads as settled.
   To avoid a separate attach call, review may include evidenceText=full-observation and optional
   artifactPath instead of (or alongside) refs. Evidence and review commit atomically with separate E#/V#
   IDs and the same independence/revision checks. Keep text a decision summary; do not repeat the raw
@@ -169,6 +173,8 @@ Collaboration loop:
   instead of repeating it. Reattest only what is unchanged; a changed claim needs a new review.
 - Fix wrong prose in your own finding with horde amend id=F# text=full-replacement note=why: the
   revision changes, reviews stay pinned to what they checked, and reviewers reattest or re-review.
+  The same call changes importance, confidence or support; with no text it changes only those, so
+  the ranking never disagrees with the body or its reviews.
   A reviewer's unchecked text or refutation that contradicts a sentence of your body is a request to
   amend or supersede, not to leave the sentence standing. Another member corrects you with supersedes.
 - horde resource-state target=R# resourceState=building|ready|broken|retired text=health-result ports=[port]
@@ -201,23 +207,29 @@ ledgers; never write to a sibling's directory, and never claim or cite a sibling
 `;
 }
 
-export function memberSystemPrompt(input: { hordeDir: string; count: number; siblings?: SiblingHorde[] | undefined }): string {
-  const count = input.count;
-  return `You are one member of a horde of ${count} agents. Every member received the same task
-and works in parallel in this repository with its own separate context. Coordinate through the
-horde tool. Durable run events retain messages, evidence, reviews and revisions; legacy views are in ${input.hordeDir}/:
-
-- IDEAS.md    checklist. [ ] open, [~] in progress (@owner), [x] done, [!] ruled out.
+/** The ledger files a member reads, one entry each, as listed at the top of the member prompt. */
+const LEDGER_FILES = `- IDEAS.md    checklist. [ ] open, [~] in progress (@owner), [x] done, [!] ruled out.
 - BOARD.md    append-only message board: plans, progress, dead ends, questions.
 - FINDINGS.md findings with stable ids (F#): text, a concern slug, and optional importance,
               confidence, and support. Duplicates are refused.
+              Findings an earlier run in this directory filed stay listed as closed context:
+              deltaOf, supersedes, attach, review and message take only this run's F#, so
+              build on an earlier one by naming it in the text of a new finding.
 - FACTS.md    low-controversy checkable facts (T#). Read this before re-deriving.
 - CLAIMS.md   hypothesis states C# for actual disagreements. Work ownership lives in IDEAS.md.
 - RESOURCES.md shared datasets, harnesses, corpora, and sandboxes (R#). Claim before building;
               reuse an existing R# instead of rebuilding it.
 - CONCERNS.md the glossary of concern slugs with one-line definitions. Reuse a slug that names
               the same root cause and entry point; never invent a synonym.
-- PLAN.md     workstream partition and your assigned layer, when the run was started with plan.
+- PLAN.md     workstream partition and your assigned layer, when the run was started with plan.`;
+
+export function memberSystemPrompt(input: { hordeDir: string; count: number; siblings?: SiblingHorde[] | undefined }): string {
+  const count = input.count;
+  return `You are one member of a horde of ${count} agents. Every member received the same task
+and works in parallel in this repository with its own separate context. Coordinate through the
+horde tool. Durable run events retain messages, evidence, reviews and revisions; legacy views are in ${input.hordeDir}/:
+
+${LEDGER_FILES}
 
 Read them with the read tool. Write them ONLY with the horde tool; never edit them directly.
 Put reproduction snippets under ${input.hordeDir}/runs/<run-id>/artifacts/ using PI_HORDE_RUN, so
@@ -267,7 +279,10 @@ Protocol:
    automatically establishes runtime exploitation. Keep source checks, controlled tests, and
    end-to-end reproductions distinct; legacy verified= headings are not the scoped-review count.
 6. When a lead is a confirmed negative, use 'horde rule-out' so later runs do not retry it; 'done'
-   with a negative result line is refused. Contradicting evidence attached to an idea is a rule-out
+   with a negative result line is refused. A rule-out names what it answered in text and, in
+   unchecked, the checks it did not perform (empty only when the whole idea was checked): a
+   rule-out is coverage of what it checked and nothing else, in your answer and in anyone's.
+   Contradicting evidence attached to an idea is a rule-out
    candidate for its owner. Use 'horde drop' only to return work you are not pursuing to the open pool.
 7. When two members actually disagree on a hypothesis, 'horde assert' it and use
    'confirm'/'contest'/'retract' with primary evidence. Do not use CLAIMS.md for work ownership.
@@ -330,7 +345,7 @@ export function taskMarkdown(input: {
     input.budget === undefined
       ? "none"
       : `${formatUsd(input.budget)} (the run clean-stops when member spend${swarm ? " across the swarm" : ""} comes within ` +
-        `${formatUsd(budgetReserve(input.budget))} of it, the reserve kept for wrap-up)`;
+        `${formatUsd(budgetReserve(input.budget))} of it, the reserve kept for wrap-up; the reserve grows when many members are running)`;
   return [
     `# Horde run ${input.id}`,
     "",

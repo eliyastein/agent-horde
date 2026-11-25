@@ -245,12 +245,26 @@ export async function dropIdea(
   });
 }
 
-/** Terminal state for a confirmed negative result so a later run does not retry it. */
+const NOT_CHECKED = " | not checked: ";
+
+/** The checks a rule-out declared it did not perform, when it declared any. */
+export function ruleOutUnchecked(idea: Idea): string | undefined {
+  if (idea.mark !== "!" || !idea.note) return undefined;
+  const at = idea.note.indexOf(NOT_CHECKED);
+  return at === -1 ? undefined : idea.note.slice(at + NOT_CHECKED.length);
+}
+
+/**
+ * Terminal state for a confirmed negative result so a later run does not retry it. `unchecked`
+ * names the checks the negative did not perform and is kept in the note: a rule-out reading "all
+ * controls are hardened" was cited as coverage of a computation nobody had looked at.
+ */
 export async function ruleOutIdea(
   hordeDir: string,
   owner: string,
   id: number,
   reason: string | undefined,
+  unchecked?: string,
 ): Promise<Idea> {
   return withHordeLock(hordeDir, owner, () => {
     const doc = readIdeasDoc(hordeDir);
@@ -258,7 +272,8 @@ export async function ruleOutIdea(
     if (idea.owner && idea.owner !== owner) {
       throw new Error(`horde: idea #${id} is claimed by ${idea.owner}; you cannot rule it out`);
     }
-    const reasonText = oneLine(reason ?? "", 300) || "confirmed dead end";
+    const gaps = oneLine(unchecked ?? "", 200);
+    const reasonText = (oneLine(reason ?? "", 300) || "confirmed dead end") + (gaps ? `${NOT_CHECKED}${gaps}` : "");
     const ruled: Idea = { id, mark: "!", text: idea.text, owner, note: reasonText };
     doc.lines[index] = formatIdea(ruled);
     writeIdeasDoc(hordeDir, doc);

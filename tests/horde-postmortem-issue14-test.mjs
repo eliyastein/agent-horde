@@ -61,7 +61,7 @@ const ideaById = (id) => ideas.listIdeas(hordeDir).find((idea) => idea.id === id
   await act(runId, "member-2", { action: "done", id: second.id, text: "F2 filed", note: "ignored when text is given" });
   assert.equal(ideaById(second.id).note, "F2 filed", "text still wins over note");
   const third = await act(runId, "member-3", { action: "idea", text: "probe the schema for a proof field" });
-  await act(runId, "member-3", { action: "rule-out", id: third.id, note: "no such field exists" });
+  await act(runId, "member-3", { action: "rule-out", id: third.id, note: "no such field exists", unchecked: "" });
   assert.equal(ideaById(third.id).note, "no such field exists");
   assert.equal(ideaById(third.id).mark, "!");
   await assert.rejects(

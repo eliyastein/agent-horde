@@ -58,8 +58,7 @@ deliverables at the end.
 
 - Ask pi to interpret the findings while the run is going; the ledgers are plain files it can read.
 - Ask pi to summarize or act on the report once the run is complete.
-- Not sure how to write the prompt? Point pi at this repository and ask it to draft one for your
-  task.
+- Not sure how to write the prompt? See [Before your first run](#before-your-first-run).
 
 ## Screenshots
 
@@ -101,6 +100,37 @@ git clone https://github.com/eliyastein/agent-horde.git
 pi install ./agent-horde
 ```
 
+## Before your first run
+
+**Member tools.** Each member is an ordinary pi process started in the working directory. It has
+the tools your pi already has: the built-in ones, plus every extension, package and MCP server you
+have installed. agent-horde adds the `horde` tool and nothing else, so it ships no web search, page
+fetching or browser. Before a task that needs the web:
+
+- Install a web search and fetch package, for example
+  [pi-web-access](https://github.com/nicobailon/pi-web-access), and confirm it works in a plain pi
+  session first.
+- Check which search provider it uses. Some packages pick one automatically from the accounts and
+  keys they find, and the pick can be a paid API. Every member searches, so the cost multiplies by
+  the member count.
+- A browser tool is optional. Some sites answer automated fetches with a bot challenge; when a
+  member opens a visible browser window you can solve the challenge by hand.
+
+Members also read your global `~/.pi/agent/AGENTS.md` along with the one in the working directory.
+Standing rules for every member go there, such as "try web search before opening a browser".
+
+**Setting up a run.**
+
+1. Create a directory for this run only.
+2. Put the material under study in it: the code, the documents, or an empty folder for outputs.
+3. Open your coding agent in that directory, point it at this repository, and ask it to write a
+   horde prompt for your task. Have it also write an `AGENTS.md` there with the background every
+   member needs: scope, output files and their format, and what to leave alone.
+4. Read both files, start pi in the directory, and paste the command.
+
+A one-line prompt with no `AGENTS.md` also works. The detailed setup pays off when the output has
+to follow a format or the task has rules members must not break.
+
 ## Usage
 
 Start pi in the directory the horde should work on, then:
@@ -141,7 +171,7 @@ member is parked.
 
 `--budget=<usd>` puts a dollar ceiling on a run: once the members' combined spend, counted across
 every session they have had, comes within a small reserve of it (5% of the budget, at least five
-cents), the parent performs a clean stop on its own and the report says `stopped at budget`. The
+cents, more when many members are running), the parent performs a clean stop on its own and the report says `stopped at budget`. The
 reserve pays for the members' wrap-up, which still gets the clean-stop grace period. A fresh
 session after a member finishes or is reset is not started when what is left above the reserve
 is less than a session has cost on average. It pairs with `--until-stop` to bound an open-ended

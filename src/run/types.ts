@@ -28,6 +28,8 @@ export interface HordeRun extends MemberRunInfo {
   cleanStopUntil?: number | undefined;
   cleanStopTimer?: ReturnType<typeof setTimeout> | undefined;
   cleanStopExtended?: boolean | undefined;
+  /** The deadline was already held once for members a running tool call kept from the stop. */
+  cleanStopLateHeld?: boolean | undefined;
   /** True once the stop granted its one-time window for a late solve to be validated. */
   solvedStopExtended?: boolean | undefined;
   /** Model used for the run, for the generated report. */
