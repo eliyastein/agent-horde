@@ -160,5 +160,10 @@ const livePage = dash.routeRequest(live, "GET", new URL("http://127.0.0.1/resour
 assert.ok(livePage.body.includes("cited by"), "the resources page has a cited-by column");
 assert.ok(livePage.body.includes("member-3"), "the citing member is listed");
 
+// A resource named in `name` with the pointer in `note` is claimed under that name.
+const named = await actions.runHordeAction(hordeDir, "member-3", { action: "resource", name: "urlscan row corpus", note: "artifacts/rows/" }, "R1");
+assert.match(named.text, /Claimed resource R\d+/);
+assert.equal(ledger.listResources(hordeDir).at(-1).name, "urlscan row corpus");
+await assert.rejects(actions.runHordeAction(hordeDir, "member-3", { action: "resource", name: "  ", note: "x" }, "R1"), /resource needs its name in text/);
 fs.rmSync(cwd, { recursive: true, force: true });
 console.log("PASS: horde-resources-test");

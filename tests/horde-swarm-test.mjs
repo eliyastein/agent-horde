@@ -182,7 +182,7 @@ if (process.argv.includes("--mode")) {
   await inH2("member-1", { action: "idea", text: "look at the parser" });
   const dead = await inH2("member-2", { action: "idea", text: "check the old cache layer" });
   await inH2("member-2", { action: "claim", id: dead.id });
-  await inH2("member-2", { action: "rule-out", id: dead.id, text: "removed in 2024" });
+  await inH2("member-2", { action: "rule-out", id: dead.id, text: "removed in 2024", unchecked: "" });
   const facts = await fromH1({ action: "facts" });
   assert.match(facts.text, /^FACTS\.md has no facts yet/);
   assert.match(facts.text, /\[h2\] facts of horde h2 \(read-only; .*h2\):\n\[h2\] T1 php 8\.2 is installed at \/usr\/bin\/php @member-1/);

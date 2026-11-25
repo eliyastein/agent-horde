@@ -216,6 +216,14 @@ export function setPaused(
   ctx.ui.notify(`${prefix(run)}${message}`, "info");
 }
 
+/** How the board notice opens: only stop-clean is a request, the others report what happened. */
+function stopNoticeFor(label: CleanStopLabel): string {
+  if (label === "deadline") return "deadline reached";
+  if (label === "budget") return "budget reached";
+  if (label === "solved") return "solved wind-down";
+  return "stop-clean requested";
+}
+
 function stopLabelFor(label: CleanStopLabel): string {
   if (label === "deadline") return "stopped at deadline";
   if (label === "budget") return "stopped at budget";
@@ -393,7 +401,7 @@ export async function requestCleanStop(
     await postBoard(
       run.hordeDir,
       "parent",
-      `${label} requested: ${requested.join(", ")} wrap up; hard stop in ${graceSeconds}s. ` +
+      `${stopNoticeFor(label)}: ${requested.join(", ")} wrap up; hard stop in ${graceSeconds}s. ` +
         "Tools other than horde are refused from now on: record unwritten findings and facts, then finish or drop your claimed ideas.",
     );
   } catch {
