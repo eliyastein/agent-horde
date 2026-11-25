@@ -235,7 +235,7 @@ async function repairMember(phase: RepairPhase, member: MemberState, ms: number,
   const { run } = launch;
   const ctx = memberContext(phase, member);
   const queue = queueFor(phase, member);
-  if (!queue.length || stopReason(launch)) return;
+  if (!queue.length || stopReason(launch) || member.stoppedBy !== undefined) return;
   const prior = { turns: member.turns, toolCalls: member.toolCalls, usage: { ...member.usage }, startedAt: member.startedAt };
   resetMemberState(member);
   member.repairs = (member.repairs ?? 0) + 1;

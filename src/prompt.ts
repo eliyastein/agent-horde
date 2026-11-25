@@ -9,7 +9,7 @@ import type { PeerMessage, ReviewRecord } from "./ledger/collaboration.js";
 import type { Idea } from "./ledger/ideas.js";
 import type { ResourceEntry } from "./ledger/resources.js";
 import type { SolvedSignal } from "./ledger/run-signals.js";
-import { emptyUsage, USAGE_KEYS } from "./member.js";
+import { deliberateStops, emptyUsage, USAGE_KEYS } from "./member.js";
 import type { MemberReset, MemberState, MemberUsage, SiblingHorde } from "./member.js";
 
 /** A resource with the non-owner members whose findings, evidence, reviews or leases cite it. */
@@ -833,14 +833,13 @@ function memberDiagnosis(input: RunReportInput): string[] {
         .join(", ")}`,
     );
   }
-  const deliberateStop = (m: MemberState): boolean =>
-    m.endCause === "killed" && !m.repairStopReason && input.stopLabel !== undefined;
-  const stoppedMembers = input.members.filter(deliberateStop);
+  const stops = deliberateStops(input.members, input.stopLabel);
+  const stoppedMembers = new Set([...stops.values()].flat());
   const abnormal = input.members.filter(
-    (m) => m.endCause && m.endCause !== "completed" && !deliberateStop(m),
+    (m) => m.endCause && m.endCause !== "completed" && !stoppedMembers.has(m),
   );
-  if (stoppedMembers.length > 0) {
-    lines.push(`- ${input.stopLabel}: ${stoppedMembers.map((m) => m.name).join(", ")}`);
+  for (const [label, members] of stops) {
+    lines.push(`- ${label}: ${members.map((m) => m.name).join(", ")}`);
   }
   if (abnormal.length > 0) {
     lines.push(

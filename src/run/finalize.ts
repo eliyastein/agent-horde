@@ -362,7 +362,7 @@ function runOutcome(run: HordeRun): string {
   if (run.solved && run.solvedValidatedBy && run.acceptance !== "incomplete") return "solved";
   if (run.solved) return run.acceptance === "incomplete" ? "solved-incomplete" : "solved-unvalidated";
   if (run.solvedContested) return "solved-contested";
-  if (run.cleanStopNames.length > 0) return "stopped-clean";
+  if (run.stopped && run.cleanStopNames.length > 0) return "stopped-clean";
   if (run.stopped) return "stopped-hard";
   return "completed";
 }

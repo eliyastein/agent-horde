@@ -3,6 +3,7 @@ import type { ClaimEntry } from "../ledger/claims.js";
 import { findingReviewState } from "../ledger/findings.js";
 import type { FindingEntry } from "../ledger/findings.js";
 import type { ReviewRecord, PeerMessage } from "../ledger/collaboration.js";
+import { deliberateStops } from "../member.js";
 import type { MemberState } from "../member.js";
 import type { HordeRun } from "./types.js";
 
@@ -39,11 +40,11 @@ export function buildDiagnosis(run: HordeRun, input: DiagnosisInput): string {
   }
   if (run.canary === "failed") parts.push(`canary failed (${run.canaryError ?? "no output"})`);
   parts.push(`${findings.length} raw findings in ${distinctFindings} distinct clusters`);
-  const isDeliberateStop = (m: MemberState): boolean =>
-    m.endCause === "killed" && !m.repairStopReason && run.stopLabel !== undefined;
-  const stoppedMembers = run.members.filter(isDeliberateStop);
-  if (stoppedMembers.length > 0) {
-    parts.push(`${run.stopLabel}: ${stoppedMembers.map((m) => m.name).join(", ")}`);
+  const stops = deliberateStops(run.members, run.stopLabel);
+  const stoppedMembers = new Set([...stops.values()].flat());
+  const isDeliberateStop = (m: MemberState): boolean => stoppedMembers.has(m);
+  for (const [label, members] of stops) {
+    parts.push(`${label}: ${members.map((m) => m.name).join(", ")}`);
   }
   const abnormal = run.members.filter(
     (m) => m.endCause && m.endCause !== "completed" && !isDeliberateStop(m),

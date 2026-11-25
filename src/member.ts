@@ -53,6 +53,8 @@ export interface MemberState {
   /** True when the session's error was the provider declining the request, not a failed call. */
   refused?: boolean | undefined;
   paused?: boolean | undefined;
+  /** Set when a stop command named this member: the label its exit is reported under. */
+  stoppedBy?: string | undefined;
   /**
    * Clean stop: true while a tool call that was already running when the stop was requested is
    * still running, then the time it returned. The member learns of the stop only after that.
@@ -279,6 +281,20 @@ export function newMemberState(index: number): MemberState {
     finalText: "",
     startedAt: Date.now(),
   };
+}
+
+/**
+ * Members a stop took down, grouped by the label of that stop. A member a stop command named
+ * carries its own label; `runLabel` covers the members of a run that was stopped as a whole.
+ */
+export function deliberateStops(members: MemberState[], runLabel: string | undefined): Map<string, MemberState[]> {
+  const byLabel = new Map<string, MemberState[]>();
+  for (const member of members) {
+    const label = member.stoppedBy ?? runLabel;
+    if (member.endCause !== "killed" || member.repairStopReason || label === undefined) continue;
+    byLabel.set(label, [...(byLabel.get(label) ?? []), member]);
+  }
+  return byLabel;
 }
 
 export function emptyUsage(): MemberUsage {
