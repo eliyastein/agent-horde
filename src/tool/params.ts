@@ -89,6 +89,7 @@ export const HordeParams = Type.Object({
         "message, ack, respond, resolve, defer, attach (the observation) and review (the decision summary)",
     }),
   ),
+  name: Type.Optional(Type.String({ description: "For resource: the resource name, read when text is not given." })),
   note: Type.Optional(
     Type.String({
       description:
@@ -189,6 +190,7 @@ export type HordeToolParams = {
   offset?: number;
   limit?: number;
   evidenceText?: string;
+  name?: string;
   target?: string;
   revision?: string;
   responseTarget?: string;
