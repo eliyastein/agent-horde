@@ -502,25 +502,72 @@ export async function verifyFinding(
 
 interface AmendFindingInput {
   id: number;
-  /** The whole replacement text: title line first, as for `finding`. */
+  /** The whole replacement text: title line first, as for `finding`. Optional when only the ranking changes. */
   text: string | undefined;
-  /** Why the prose changed; recorded in the body so the revision carries its own errata note. */
+  /** Why the finding changed; recorded in the body so the revision carries its own errata note. */
   note: string | undefined;
+  importance?: string | undefined;
+  confidence?: string | undefined;
+  support?: string | undefined;
+}
+
+/** A ranking field an amend moves: its heading key, the legacy key it replaces, and both values. */
+interface RankingChange {
+  label: "importance" | "confidence" | "support";
+  key: string;
+  legacyKey?: string;
+  from: string | undefined;
+  to: string;
+}
+
+function rankingValue(label: string, value: string, allowed: readonly string[]): string {
+  if (!allowed.includes(value)) throw new Error(`horde: amend ${label} must be one of ${allowed.join(", ")}`);
+  return value;
+}
+
+/** The ranking fields the amend names with a value different from the heading's. */
+function rankingChanges(entry: FindingEntry, input: AmendFindingInput): RankingChange[] {
+  const changes: RankingChange[] = [];
+  if (input.importance) {
+    changes.push({ label: "importance", key: "imp", legacyKey: "sev", from: entry.importance, to: rankingValue("importance", input.importance.toLowerCase(), FINDING_IMPORTANCE) });
+  }
+  if (input.confidence) {
+    changes.push({ label: "confidence", key: "conf", from: entry.confidence, to: rankingValue("confidence", input.confidence.toLowerCase(), FINDING_CONFIDENCES) });
+  }
+  if (input.support) {
+    changes.push({ label: "support", key: "sup", legacyKey: "ev", from: entry.support, to: rankingValue("support", normalizeSupport(input.support) ?? "", FINDING_SUPPORT) });
+  }
+  return changes.filter((change) => change.from !== change.to);
+}
+
+/** The heading with each changed ranking field rewritten in place, or appended when it had none. */
+function rankedHeading(heading: string, changes: RankingChange[]): string {
+  let line = heading;
+  for (const { key, legacyKey, to } of changes) {
+    const field = new RegExp(`\\s(?:${[key, legacyKey].filter(Boolean).join("|")})=[^\\s]+`);
+    line = field.test(line) ? line.replace(field, ` ${key}=${to}`) : `${line} ${key}=${to}`;
+  }
+  return line;
 }
 
 /**
- * Rewrite a finding's prose in place at its current revision. Evidence appends cannot fix a
- * sentence and `supersedes` replaces whole findings, so a refuted sentence stayed in FINDINGS.md
- * at freeze. The subject hash changes, reviews of the old revision stay pinned to it, and
- * reviewers reattest when what they checked is unchanged. Verification notes are kept.
+ * Rewrite a finding's prose, its ranking fields, or both, in place at its current revision.
+ * Evidence appends cannot fix a sentence and `supersedes` replaces whole findings, so a refuted
+ * sentence stayed in FINDINGS.md at freeze; and a heading that kept `high` while the amended body
+ * and its reviewers argued `medium` shipped as `[high/medium/tested]`. The subject hash changes,
+ * reviews of the old revision stay pinned to it, and reviewers reattest when what they checked is
+ * unchanged. Verification notes are kept.
  */
 export async function amendFinding(
   hordeDir: string,
   runId: string,
   member: string,
-  { id, text, note }: AmendFindingInput,
-): Promise<{ finding: FindingEntry; previous: string; titleChanged: boolean }> {
-  const body = stripLeadingId(requireText(text, "amend")).trim();
+  input: AmendFindingInput,
+): Promise<{ finding: FindingEntry; previous: string; titleChanged: boolean; ranking: string[] }> {
+  const { id, text, note } = input;
+  const ranked = Boolean(input.importance || input.confidence || input.support);
+  // A ranking-only amend keeps the prose; anything else needs the whole replacement text.
+  const body = text?.trim() || !ranked ? stripLeadingId(requireText(text, "amend")).trim() : undefined;
   const reason = oneLineReason(note);
   return withHordeLock(hordeDir, member, () => {
     const findingsPath = hordePaths(hordeDir).findings;
@@ -531,28 +578,35 @@ export async function amendFinding(
     if (entry.author !== member) throw new Error(`horde: F${id} belongs to ${entry.author}; a correction by another member is a finding with supersedes: ${id}`);
     if (entry.supersededBy !== undefined) throw new Error(`horde: F${id} was superseded by F${entry.supersededBy}; amend the successor`);
     const scoped = all.filter((f) => f.runId === runId && f.id !== id);
-    checkBodyReferences(scoped, { runId, author: member, body, meta: { supersedes: entry.supersedes, deltaOf: entry.deltaOf } });
+    if (body !== undefined) checkBodyReferences(scoped, { runId, author: member, body, meta: { supersedes: entry.supersedes, deltaOf: entry.deltaOf } });
+    const changes = rankingChanges(entry, input);
+    if (body === undefined && !changes.length) throw new Error(`horde: F${id} already has that ranking; nothing to amend`);
+    const ranking = changes.map((change) => `${change.label} ${change.from ?? "unset"} -> ${change.to}`);
     const previous = findingRevision(entry);
     const subjectEnd = entry.body.search(/\n(?:Verified|Reviewed) by /);
     // Verification notes were written against the previous subject; they stay as history, labelled
     // as such, and the heading's legacy verified label goes so the new text reads as unreviewed.
     const notes = subjectEnd === -1 ? "" : `\n${entry.body.slice(subjectEnd)}`;
     const predate = notes ? ` (verification notes below were recorded against revision ${previous.slice(0, 12)})` : "";
-    const amended = `${neutralizeNotes(neutralizeHeadings(body))}\nAmended ${formatClock(new Date())} by ${member}: ${reason}${predate}${notes}`;
+    const subject = body === undefined ? (subjectEnd === -1 ? entry.body : entry.body.slice(0, subjectEnd)) : neutralizeNotes(neutralizeHeadings(body));
+    const moved = ranking.length ? ` [${ranking.join("; ")}]` : "";
+    const amended = `${subject}\nAmended ${formatClock(new Date())} by ${member}: ${reason}${moved}${predate}${notes}`;
     const lines = content.split("\n");
     // Corroborators and the legacy verifier confirmed the previous text; they confirm the new one again.
-    lines[entry.headingLine] = (lines[entry.headingLine] ?? "").replace(/\s+(?:verified|vsupport|corr)=[^\s]+/g, "");
+    const heading = (lines[entry.headingLine] ?? "").replace(/\s+(?:verified|vsupport|corr)=[^\s]+/g, "");
+    lines[entry.headingLine] = rankedHeading(heading, changes);
     lines.splice(entry.headingLine + 1, entry.body.split("\n").length, ...amended.split("\n"));
     writeFileAtomic(findingsPath, lines.join("\n"));
     const title = amended.split("\n")[0] ?? "";
-    const finding = { ...entry, body: amended, title, verifiedBy: undefined, verifiedSupport: undefined, corroborators: [] };
-    return { finding, previous, titleChanged: title.trim() !== entry.title.trim() };
+    const moves = Object.fromEntries(changes.map((change) => [change.label, change.to]));
+    const finding = { ...entry, ...moves, body: amended, title, verifiedBy: undefined, verifiedSupport: undefined, corroborators: [] };
+    return { finding, previous, titleChanged: title.trim() !== entry.title.trim(), ranking };
   });
 }
 
 function oneLineReason(note: string | undefined): string {
   const reason = (note ?? "").replace(/\s+/g, " ").trim();
-  if (!reason) throw new Error("horde: amend needs note=<why the prose changed>, so the revision carries its errata");
+  if (!reason) throw new Error("horde: amend needs note=<why the finding changed>, so the revision carries its errata");
   return reason.slice(0, 300);
 }
 
