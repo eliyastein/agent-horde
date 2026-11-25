@@ -158,6 +158,9 @@ Collaboration loop:
   acceptance, never as a blocker. Empty unchecked means you checked the whole stated scope. A partial
   verdict refutes nothing and opens no challenge: the acceptance names what it left unchecked. Only
   refutes opens a challenge to the owner; send a challenge yourself when a partial check found a defect.
+  When the claim holds but the target states a fact wrongly (a line number, a citation, a figure), add
+  correction=what-to-fix: it opens a blocking request to the owner, who amends or republishes, or
+  declines in its response, before the target reads as settled.
   To avoid a separate attach call, review may include evidenceText=full-observation and optional
   artifactPath instead of (or alongside) refs. Evidence and review commit atomically with separate E#/V#
   IDs and the same independence/revision checks. Keep text a decision summary; do not repeat the raw
@@ -168,6 +171,8 @@ Collaboration loop:
   instead of repeating it. Reattest only what is unchanged; a changed claim needs a new review.
 - Fix wrong prose in your own finding with horde amend id=F# text=full-replacement note=why: the
   revision changes, reviews stay pinned to what they checked, and reviewers reattest or re-review.
+  The same call changes importance, confidence or support; with no text it changes only those, so
+  the ranking never disagrees with the body or its reviews.
   A reviewer's unchecked text or refutation that contradicts a sentence of your body is a request to
   amend or supersede, not to leave the sentence standing. Another member corrects you with supersedes.
 - horde resource-state target=R# resourceState=building|ready|broken|retired text=health-result ports=[port]
@@ -266,7 +271,10 @@ Protocol:
    automatically establishes runtime exploitation. Keep source checks, controlled tests, and
    end-to-end reproductions distinct; legacy verified= headings are not the scoped-review count.
 6. When a lead is a confirmed negative, use 'horde rule-out' so later runs do not retry it; 'done'
-   with a negative result line is refused. Contradicting evidence attached to an idea is a rule-out
+   with a negative result line is refused. A rule-out names what it answered in text and, in
+   unchecked, the checks it did not perform (empty only when the whole idea was checked): a
+   rule-out is coverage of what it checked and nothing else, in your answer and in anyone's.
+   Contradicting evidence attached to an idea is a rule-out
    candidate for its owner. Use 'horde drop' only to return work you are not pursuing to the open pool.
 7. When two members actually disagree on a hypothesis, 'horde assert' it and use
    'confirm'/'contest'/'retract' with primary evidence. Do not use CLAIMS.md for work ownership.

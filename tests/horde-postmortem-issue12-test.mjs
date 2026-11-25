@@ -345,7 +345,7 @@ const ctxStub = { ui: { notify: () => {} }, hasUI: false };
   await assert.rejects(act(runId, "member-1", { action: "done", id: lead.id, text: "dead end: the footnotes are unique" }), new RegExp(`"dead end" reads as a confirmed negative; close #${lead.id} with 'horde rule-out'`));
   await assert.rejects(act(runId, "member-1", { action: "done", id: lead.id, note: "could not reproduce the duplication" }), /could not reproduce/);
   assert.equal(ideas.listIdeas(hordeDir).find((idea) => idea.id === lead.id).mark, "~", "the idea is untouched by a refused close");
-  const ruled = await act(runId, "member-1", { action: "rule-out", id: lead.id, text: "dead end: the footnotes are unique" });
+  const ruled = await act(runId, "member-1", { action: "rule-out", id: lead.id, text: "dead end: the footnotes are unique", unchecked: "" });
   assert.match(ruled.text, new RegExp(`Ruled out #${lead.id}`));
   const positive = (await ideas.addIdea(hordeDir, "member-1", "count the footnotes per chapter")).idea;
   await ideas.claimIdea(hordeDir, "member-1", positive.id);

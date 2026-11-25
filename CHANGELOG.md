@@ -39,9 +39,16 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   them. It is recorded as a `tell` event under actor `operator`, inserted into each recipient's
   context at its next turn boundary as its own entry, apart from peer feedback, and shown on the
   collaboration page, in COLLABORATION.md and in the run graph (#58).
+- `amend` changes a finding's `importance`, `confidence` and `support`, with or without new
+  prose; the errata line names the move (#47).
+- `review` takes `correction`: a factual error in the target for the owner to fix. It opens a
+  blocking request to the owner whatever the verdict (#47).
 
 ### Changed
 
+- `rule-out` requires `unchecked`, the checks the negative did not perform, empty when the whole
+  idea was checked. It is kept in the idea's note, and the receipts of `solved` and
+  `confirm-solved` name each rule-out with unchecked scope that the answer cites (#47).
 - A member whose session ends in a provider refusal gets the end cause `refused` and is no
   longer reset into a fresh session that would send the same task. It stays down, its ideas
   return to the pool, and BOARD.md records why. A refused canary stops the run without the
