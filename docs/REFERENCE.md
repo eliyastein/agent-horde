@@ -29,6 +29,24 @@ level and all run concurrently, so pick the count with the provider's throughput
 the run ends, a report is injected into the parent conversation and the parent is asked to
 synthesize it.
 
+### Member environment
+
+A member is a `pi -p` process started in the working directory with the run's system prompt
+appended. The parent passes it the model, the thinking level and the task; everything else comes
+from your pi installation:
+
+- **Tools.** The built-in tools plus every installed extension, package and MCP server. The
+  `horde` tool is the only one agent-horde adds. A task that needs web search, page fetching or a
+  browser needs a package that provides it, installed before launch.
+- **Instructions.** The global `~/.pi/agent/AGENTS.md` and the `AGENTS.md` in the working
+  directory, as in any pi session.
+- **Cost of tools.** A tool that calls a paid API is called by every member. Check which provider
+  a search package resolves to before launch; the members' reported spend covers model calls
+  only, so `--budget` does not count it.
+
+To see what members will have, start a plain pi session in the working directory and list its
+tools.
+
 ### Run lifecycle
 
 1. **Canary.** member-1 starts alone; the rest fan out once it produces output. A canary that dies
