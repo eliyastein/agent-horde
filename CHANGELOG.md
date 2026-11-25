@@ -6,6 +6,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- A member that is inside a tool call when a clean stop is requested hears of the stop only when
+  the call returns. The deadline is now held once, for at most 60 seconds, so such a member gets
+  30 seconds after the return to record its work; a `stop-hold` event names the members (#70).
 - A `deltaOf`, `supersedes` or collaboration target that names a finding from an earlier run in
   the same directory is refused with an error that names that run and says to cite the finding
   in the text of a new one. The errors used to read `not in this run` and `unknown target`, and
