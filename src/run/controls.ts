@@ -125,6 +125,20 @@ function liveProc(run: HordeRun, name: string): ChildProcess | undefined {
   return proc;
 }
 
+/**
+ * Record a stop of `members`. The run itself counts as stopped only when the stop leaves nobody
+ * to carry on: it names every member, or the members it does not name are already down for good.
+ * A stop of some members leaves the budget, resets, continuations and `tell` working for the rest.
+ */
+function markStopped(run: HordeRun, members: MemberState[], all: boolean, label: string): void {
+  for (const member of members) member.stoppedBy ??= label;
+  const nobodyLeft = run.members.every((m) => m.stoppedBy !== undefined || run.settled?.has(m.name) === true);
+  if (!all && !nobodyLeft) return;
+  run.stopped = true;
+  run.userStop = true;
+  run.stopLabel = label;
+}
+
 export function hardStopMembers(run: HordeRun, names: string[]): void {
   for (const name of names) {
     const controller = run.controllers.get(name);
@@ -176,9 +190,7 @@ export function stopHard(run: HordeRun, target: RunTarget, ctx: ExtensionCommand
   const members = targetMembers(run, target, ctx);
   if (!members) return;
   const names = members.map((m) => m.name);
-  run.stopped = true;
-  run.userStop = true;
-  run.stopLabel = "stopped by user";
+  markStopped(run, members, target.kind === "all", "stopped by user");
   hardStopMembers(run, names);
   void recordLifecycle(run, "stop-hard", { members: names, by: "user" });
   ctx.ui.notify(`${prefix(run)}stop-hard: terminating ${names.join(", ")}`, "warning");
@@ -372,9 +384,7 @@ export async function requestCleanStop(
   writeStopSentinel(run, all, requested, label);
   await recordLifecycle(run, "stop-clean", { label, members: requested, all, graceMs: grace });
 
-  run.stopped = true;
-  run.userStop = true;
-  run.stopLabel = stopLabelFor(label);
+  markStopped(run, members, all, stopLabelFor(label));
   if (options.postmortem === true) run.postmortemFlag = true;
   run.cleanStopNames = all
     ? run.members.map((m) => m.name)

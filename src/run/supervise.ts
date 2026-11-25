@@ -144,7 +144,7 @@ export function blockingBacklog(run: HordeRun, member: MemberState): string | un
 function resetReasonForExit(launch: RunLaunch, member: MemberState): string | undefined {
   const { state, run } = launch;
   if (state.disposed || run.stopped || run.userStop || run.canary !== "ok") return undefined;
-  if (cleanStopRequestedFor(run.hordeDir, run.id, member.name)) return undefined;
+  if (member.stoppedBy !== undefined || cleanStopRequestedFor(run.hordeDir, run.id, member.name)) return undefined;
   // A pending proposal means the run is about to end, unless it runs until stopped. An unanswered
   // blocking request holds that proposal open, so its recipient still comes back to answer it.
   const windingDown = Boolean(run.solved && !run.untilStop);
@@ -269,7 +269,7 @@ async function performContinue(run: HordeRun, member: MemberState): Promise<bool
   const elapsed = Date.now() - member.startedAt;
   if (elapsed < CONTINUE_COOLDOWN_MS) await sleep(CONTINUE_COOLDOWN_MS - elapsed);
   // A stop during the cooldown leaves the member as it ended: finished, not killed.
-  if (run.stopped) return false;
+  if (run.stopped || member.stoppedBy !== undefined) return false;
   member.continuations = (member.continuations ?? 0) + 1;
   fs.appendFileSync(
     path.join(run.runDir, `${member.name}.log`),
@@ -340,7 +340,7 @@ async function superviseSessions(launch: RunLaunch, member: MemberState, first: 
     } else {
       await performReset(run, member, reason);
     }
-    if (run.stopped || state.disposed) {
+    if (run.stopped || member.stoppedBy !== undefined || state.disposed) {
       // A stop landed during the reset: leave the member down, not "starting".
       member.status = "stopped";
       member.endCause = "killed";

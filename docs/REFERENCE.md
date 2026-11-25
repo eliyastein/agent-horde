@@ -85,6 +85,11 @@ tools.
 
 ### Stopping
 
+A stop aimed at some members (`stop-clean member-2`) ends only those members: they get no reset,
+continuation or repair session, and the rest of the run carries on with its budget, resets and
+outcome unchanged. The run itself counts as stopped when a stop names every member, or when the
+members it leaves out are already down.
+
 `stop-hard` kills now and leaves claimed ideas as they were. `stop-clean` writes a `.stop-clean`
 sentinel, posts a wrap-up notice to BOARD.md, and gives members 90s (`--grace`) before escalating
 to a hard stop. During wind-down the tool refuses `idea`, `claim`, `assert`, and `resource` but

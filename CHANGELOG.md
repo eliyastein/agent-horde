@@ -4,6 +4,14 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Fixed
+
+- A `stop-clean` or `stop-hard` that names some members no longer marks the whole run as
+  stopped. The budget ceiling, resets, `--until-stop` continuations, repair and `tell` keep
+  working for the other members, and the run ends with its own outcome. The run counts as
+  stopped once a stop names every member or the members it leaves out are already down. The
+  report lists each stopped member under the stop that took it down (#78).
+
 ## [0.5.0] - 2026-11-24
 
 ### Added
