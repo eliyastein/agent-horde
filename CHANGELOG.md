@@ -6,6 +6,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- The `--budget` wrap-up reserve grows with the members still running: eight turns for each, at
+  its current session's cost per turn, when that is more than the fixed reserve. A 6-member run
+  on a $0.75 budget ended $0.0046 over the ceiling with the fixed $0.05 (#67).
 - A member that is inside a tool call when a clean stop is requested hears of the stop only when
   the call returns. The deadline is now held once, for at most 60 seconds, so such a member gets
   30 seconds after the return to record its work; a `stop-hold` event names the members (#70).

@@ -1,7 +1,7 @@
 // --budget: the run clean-stops itself once the members' combined spend, counted over every
 // session they have had, comes within the wrap-up reserve of the ceiling, and a continuation the
 // remainder cannot pay for is not started. Doubles as the fake child: every session reports one
-// assistant message costing $0.30 and exits 0.
+// thirty assistant messages of one cent each, $0.30 a session, and exits 0.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -12,17 +12,19 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (process.argv.includes("--mode")) {
   process.stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
-  process.stdout.write(
-    JSON.stringify({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "spent a little" }],
-        usage: { input: 5, output: 1, cacheRead: 7, cacheWrite: 0, cost: { total: 0.3 } },
-        stopReason: "stop",
-      },
-    }) + "\n",
-  );
+  for (let turn = 0; turn < 30; turn++) {
+    process.stdout.write(
+      JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "spent a little" }],
+          usage: { input: 5, output: 1, cacheRead: 7, cacheWrite: 0, cost: { total: 0.01 } },
+          stopReason: "stop",
+        },
+      }) + "\n",
+    );
+  }
   await wait(300);
   process.exit(0);
 } else {
@@ -78,6 +80,22 @@ if (process.argv.includes("--mode")) {
   budget.checkBudget({ state: { disposed: false }, swarm: belowLine, ctx: fakeCtx });
   assert.equal(belowLine.budgetHit, undefined);
 
+  // ---- the reserve grows with the members still running ------------------------------
+  const live = (cost, turns) => Object.assign(slot(cost), { status: "running", turns, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost } });
+  const six = (each) => ({ id: "sw6", budget: 0.75, runs: [{ members: Array.from({ length: 6 }, () => live(each, 70)), stopped: true }] });
+  assert.equal(budget.wrapUpReserve(six(0.112)).toFixed(4), "0.0768", "6 running members x 8 turns x $0.0016 a turn in their current sessions");
+  const early = six(0.113);
+  budget.checkBudget({ state: { disposed: false }, swarm: early, ctx: fakeCtx });
+  assert.equal(early.budgetHit, true, "$0.678 spent is inside the scaled reserve, though under the flat $0.70 line");
+  assert.match(notes.at(-1), /\$0\.68 of \$0\.75, \$0\.08 held for wrap-up/);
+  const roomy = six(0.11);
+  budget.checkBudget({ state: { disposed: false }, swarm: roomy, ctx: fakeCtx });
+  assert.equal(roomy.budgetHit, undefined);
+  const ended = { budget: 0.75, runs: [{ members: Array.from({ length: 6 }, () => Object.assign(live(0.112, 70), { status: "done" })) }] };
+  assert.equal(budget.wrapUpReserve(ended), 0.05, "members that have ended need no wrap-up turns");
+  assert.equal(budget.wrapUpReserve({ budget: 0.2, runs: [{ members: Array.from({ length: 12 }, () => live(0.01, 2)) }] }), 0.1, "never more than half the budget");
+  assert.equal(budget.wrapUpReserve({ runs: [{ members: [live(1, 1)] }] }), 0);
+
   // ---- admission: a session is funded only by what is left above the reserve ---------
   const swarmAt = (spent, sessionCosts, amount = 1) => ({ budget: amount, runs: [{ members: [slot(spent)], sessionCosts }, { members: [], sessionCosts: [] }] });
   assert.equal(budget.sessionEstimate(swarmAt(0.5, [0.2, 0.4])).toFixed(2), "0.30", "the estimate is the average finished session");
@@ -118,7 +136,7 @@ if (process.argv.includes("--mode")) {
   for (let i = 0; i < 100 && !fs.existsSync(reportPath); i++) await wait(200);
   assert.ok(fs.existsSync(reportPath), `the run stopped itself and finalized:\n${notifications.join("\n")}`);
 
-  assert.match(fs.readFileSync(path.join(dir, "TASK.md"), "utf-8"), /^Budget: \$0\.30 \(the run clean-stops when member spend comes within \$0\.05 of it, the reserve kept for wrap-up\)$/m);
+  assert.match(fs.readFileSync(path.join(dir, "TASK.md"), "utf-8"), /^Budget: \$0\.30 \(the run clean-stops when member spend comes within \$0\.05 of it, the reserve kept for wrap-up; the reserve grows when many members are running\)$/m);
   const report = fs.readFileSync(reportPath, "utf-8");
   assert.match(report, /^- outcome: stopped-clean$/m);
   assert.match(fs.readFileSync(path.join(dir, "SUMMARY.md"), "utf-8"), /Run stopped at budget\. Outcome: stopped-clean\./);
@@ -141,10 +159,10 @@ if (process.argv.includes("--mode")) {
   assert.equal(exits.length, 2, "the first messages crossed the reserve line, so no continuation was started");
   assert.ok(!events.some((e) => e.action === "member-continue"), "a member under a clean stop is not continued");
   assert.ok(exits.every((e) => Math.abs(e.payload.cost - 0.3) < 1e-9), "member-exit records the session's own cost");
-  assert.ok(exits.every((e) => e.payload.cacheRead === 7 && e.payload.cacheWrite === 0), "member-exit records the session's cache reads and writes");
+  assert.ok(exits.every((e) => e.payload.cacheRead === 210 && e.payload.cacheWrite === 0), "member-exit records the session's cache reads and writes");
   assert.match(report, /^Usage: \d+ turns, \S+ in \(\S+ cached, \d+% hit\) \/ \S+ out, /m);
 
-  assert.ok(notifications.some((n) => /budget reached \(\$\d+\.\d+ of \$0\.30, \$0\.05 held for wrap-up\); stopping/.test(n)), notifications.join("\n"));
+  assert.ok(notifications.some((n) => /budget reached \(\$\d+\.\d+ of \$0\.30, \$0\.\d\d held for wrap-up\); stopping/.test(n)), notifications.join("\n"));
   assert.ok(notifications.some((n) => /budget: 2 member\(s\) wrapping up/.test(n)), notifications.join("\n"));
   assert.equal(sent.length, 1);
   assert.equal(sent[0].opts.triggerTurn, true, "a budget stop is a clean stop");
