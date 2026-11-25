@@ -405,7 +405,8 @@ stress-test, or deepen the work; these continuations count against no reset cap 
 resets in the report. A session that finished within `PI_HORDE_CONTINUE_COOLDOWN_MS` (default
 60000) of starting waits out the remainder first, so a member that finds nothing to do cannot spin.
 A member whose last `PI_HORDE_PARK_AFTER` (default 3) continuation sessions each recorded no
-finding, fact, review, evidence or artifact is parked: a `member-parked` event and a board post
+new finding, fact, review, evidence or artifact is parked (a finding or fact that only matched an
+existing one does not count): a `member-parked` event and a board post
 record it and it gets no session until another member records a finding or an artifact revision
 (`member-unparked`). When every member is parked or down the run ends on its own with outcome
 `stagnated`, and no clean stop is needed because no member is running.

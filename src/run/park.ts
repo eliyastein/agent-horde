@@ -26,19 +26,27 @@ const UNPARKS = new Set(["finding", "artifact", "amend"]);
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
 
+/** Whether the call matched an existing finding or fact, so the ledger gained no new record. */
+function matchedExistingRecord(event: HordeEvent): boolean {
+  const result = event.payload?.result;
+  return typeof result === "object" && result !== null && (result as { duplicate?: unknown }).duplicate === true;
+}
+
+/** Whether the event is an applied call of one of `actions` that created or changed a record. */
+function recordedWork(event: HordeEvent, actions: Set<string>): boolean {
+  return event.outcome === "applied" && actions.has(event.action) && !matchedExistingRecord(event);
+}
+
 /** Whether the session `attempt` of `member` recorded any work. */
 export function sessionAddedWork(events: HordeEvent[], member: string, attempt: string | undefined): boolean {
-  return events.some(
-    (event) => event.actor === member && event.attempt === attempt && event.outcome === "applied" && ADDS_WORK.has(event.action),
-  );
+  return events.some((event) => event.actor === member && event.attempt === attempt && recordedWork(event, ADDS_WORK));
 }
 
 /** Whether another member recorded new work after event `since`. */
 export function workByOthersSince(events: HordeEvent[], member: string, since: number): boolean {
   return events.some(
     (event) =>
-      event.seq > since && event.actor !== member && event.actor.startsWith("member-") &&
-      event.outcome === "applied" && UNPARKS.has(event.action),
+      event.seq > since && event.actor !== member && event.actor.startsWith("member-") && recordedWork(event, UNPARKS),
   );
 }
 

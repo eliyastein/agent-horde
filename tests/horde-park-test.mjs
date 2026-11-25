@@ -58,6 +58,10 @@ if (process.argv.includes("--mode")) {
   assert.equal(park.workByOthersSince(log, "member-1", 5), false, "only work after the park counts");
   assert.equal(park.workByOthersSince(log, "member-2", 0), false, "a fact or one's own finding does not unpark");
   assert.equal(park.workByOthersSince([ev(9, "parent", "finding")], "member-1", 0), false);
+  const duplicate = (seq, actor, action) => ({ ...ev(seq, actor, action), payload: { result: { duplicate: true } } });
+  assert.equal(park.sessionAddedWork([duplicate(1, "member-1", "fact"), duplicate(2, "member-1", "finding")], "member-1", "a1"), false, "a fact or finding that matched an existing record is not work");
+  assert.equal(park.sessionAddedWork([duplicate(1, "member-1", "fact"), ev(2, "member-1", "fact")], "member-1", "a1"), true, "a new fact beside a duplicate is work");
+  assert.equal(park.workByOthersSince([duplicate(9, "member-2", "finding")], "member-1", 0), false, "a duplicate finding by another member does not unpark");
   console.log("PASS: horde-park-test check");
 
   const commands = new Map();

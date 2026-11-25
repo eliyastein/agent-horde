@@ -7,7 +7,8 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 ### Added
 
 - `--until-stop` parks a member after three continuation sessions in a row that record no
-  finding, fact, review, evidence or artifact (`PI_HORDE_PARK_AFTER`). A parked member gets a
+  new finding, fact, review, evidence or artifact (`PI_HORDE_PARK_AFTER`); a finding or fact that
+  only matched an existing one does not count. A parked member gets a
   fresh session when another member records a finding or an artifact revision. When every
   member is parked the run ends with outcome `stagnated` (#57).
 

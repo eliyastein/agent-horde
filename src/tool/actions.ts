@@ -44,6 +44,8 @@ interface ActionResult {
   id?: number;
   /** True when the call changed nothing, such as a duplicate idea. */
   noop?: boolean;
+  /** True when a finding or fact matched an existing record instead of creating one. */
+  duplicate?: boolean;
   /** For confirm-solved: whether this confirmation validated the proposal or joined an earlier one. */
   confirmation?: "credited" | "additional";
   /** For amend: the revisions the edit moved between, and whether the claim line changed; reattest reads them. */
@@ -220,6 +222,7 @@ async function findingAction(ctx: ActionContext): Promise<ActionResult> {
         : `F${finding.id} already records this: "${finding.title}". ` +
           `Add only a delta with distinct evidence; otherwise pick an open idea`,
       id: finding.id,
+      duplicate: true,
     };
   }
   const advisory = concernAdvisory ? `\nNote: ${concernAdvisory}` : "";
@@ -309,6 +312,7 @@ async function factAction({ hordeDir, member, params }: ActionContext): Promise<
         : `Fact T${fact.id} already recorded: ${fact.text}. ` +
           `Add only a delta with 'delta-of: T${fact.id}' if you have a distinct extension.`,
       id: fact.id,
+      duplicate: true,
     };
   }
   const provisional = fact.provisionalOn
