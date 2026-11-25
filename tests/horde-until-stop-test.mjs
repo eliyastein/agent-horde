@@ -34,6 +34,7 @@ if (process.argv.includes("--mode")) {
   process.env.PI_HORDE_DELIVERABLE = "off";
   process.env.PI_HORDE_CANARY_MS = "2000";
   process.env.PI_HORDE_CONTINUE_COOLDOWN_MS = "200";
+  process.env.PI_HORDE_PARK_AFTER = "0";
   process.env.PI_HORDE_RESET_CAP = "0";
 
   const jiti = createJiti(import.meta.url, {

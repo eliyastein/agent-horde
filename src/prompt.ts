@@ -39,6 +39,7 @@ export interface RunSummaryInput {
   repairSkipped?: string[] | undefined;
   /** Sessions `--budget` could not fund, as `member (continuation|reset)`. */
   budgetSkipped?: string[] | undefined;
+  stagnated?: boolean | undefined;
   /** Members held back from later rounds because their attempt left every thread unchanged. */
   repairStalled?: string[] | undefined;
   /** The REPORT.md outcome, so SUMMARY.md states the same end cause. */
@@ -532,7 +533,10 @@ export function runEndSentence(run: RunSummaryInput): string {
     const wound = run.solvedCommitted ? "the run wound down on it" : "the run did not wind down on it";
     parts.push(`${run.solved.member} proposed the goal solved${at}, ${validated}; ${wound}.`);
   }
-  parts.push(run.stopped ? `Run ${run.stopLabel ?? "was stopped by the user"}.` : "Run ended when every member exited.");
+  const natural = run.stagnated
+    ? "Run stopped: stagnated (every member was parked after continuation sessions that added nothing)."
+    : "Run ended when every member exited.";
+  parts.push(run.stopped ? `Run ${run.stopLabel ?? "was stopped by the user"}.` : natural);
   const attempts = run.members.reduce((n, m) => n + (m.repairs ?? 0), 0);
   const killed = run.members.filter((m) => ["tokens", "turns", "time"].includes(m.repairStopReason ?? ""));
   const skipped = run.repairSkipped ?? [];

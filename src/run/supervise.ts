@@ -13,6 +13,7 @@ import type { MemberState } from "../member.js";
 import { budgetShortfall, checkBudget } from "./budget.js";
 import { hardStopMembers } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
+import { parkIfStagnant } from "./park.js";
 import type { HordeRun, HordeState, Swarm } from "./types.js";
 import { refreshRun, safeNotify } from "./ui.js";
 
@@ -316,6 +317,15 @@ export async function superviseMember(
   member: MemberState,
   first: Promise<void>,
 ): Promise<void> {
+  const { run } = launch;
+  try {
+    await superviseSessions(launch, member, first);
+  } finally {
+    run.settled = (run.settled ?? new Set()).add(member.name);
+  }
+}
+
+async function superviseSessions(launch: RunLaunch, member: MemberState, first: Promise<void>): Promise<void> {
   const { state, run } = launch;
   let exited = first;
   for (;;) {
@@ -323,6 +333,7 @@ export async function superviseMember(
     const reason = resetReasonForExit(launch, member);
     if (!reason && member.endCause === "refused" && !state.disposed && !run.stopped) await standDownRefused(run, member);
     if (!reason || state.disposed) return;
+    if (reason === CONTINUE_REASON && (await parkIfStagnant(state, run, member)) === "down") return;
     if (await skipUnfunded(launch, member, reason)) return;
     if (reason === CONTINUE_REASON) {
       if (!(await performContinue(run, member))) return;

@@ -69,6 +69,10 @@ export interface MemberState {
   resets?: number | undefined;
   /** Fresh sessions an `--until-stop` run gave this member after an earlier one finished. */
   continuations?: number | undefined;
+  /** Consecutive continuation sessions that recorded no work; the member is parked at a threshold. */
+  emptyContinuations?: number | undefined;
+  /** True while an `--until-stop` member is held without a session because its sessions added nothing. */
+  parked?: boolean | undefined;
   /** Set by the parent before it kills a stalled member, so the exit is treated as a reset. */
   resetPending?: string | undefined;
   /** Extra identity line for a replacement session, naming what was reset and why. */
