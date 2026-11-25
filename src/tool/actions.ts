@@ -12,7 +12,7 @@ import {
   findingSummaries, listFindingsForRun, pendingReviewsForMember, verifyFinding,
 } from "../ledger/findings.js";
 import { textOverlap } from "../ledger/text-match.js";
-import { addIdea, claimIdea, dropIdea, finishIdea, listIdeas, ruleOutIdea } from "../ledger/ideas.js";
+import { addIdea, claimIdea, dropIdea, finishIdea, listIdeas, ruleOutIdea, ruleOutUnchecked } from "../ledger/ideas.js";
 import type { Idea } from "../ledger/ideas.js";
 import { claimResource, listResources } from "../ledger/resources.js";
 import {
@@ -274,14 +274,18 @@ async function verifyAction(ctx: ActionContext): Promise<ActionResult> {
 async function amendAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params, runId } = ctx;
   validateFindingResourceCitations(hordeDir, runId, params.text ?? "");
-  const { finding, previous, titleChanged } = await amendFinding(hordeDir, requireRun(ctx), member, {
+  const { finding, previous, titleChanged, ranking } = await amendFinding(hordeDir, requireRun(ctx), member, {
     id: requireId(params),
     text: params.text,
     note: params.note,
+    importance: params.importance,
+    confidence: params.confidence,
+    support: params.support,
   });
   return {
     text:
       `Amended F${finding.id}: ${finding.title}. Revision ${previous.slice(0, 12)} is superseded by the new text; ` +
+      (ranking.length ? `ranking changed: ${ranking.join("; ")}. ` : "") +
       "reviews stay pinned to the revision they checked. " +
       (titleChanged ? "The claim line changed, so reviewers must review again." : "Ask reviewers to reattest if what they checked is unchanged, or to review again."),
     id: finding.id,
@@ -441,9 +445,10 @@ async function claimAction(ctx: ActionContext): Promise<ActionResult> {
 
 async function resourceAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params, runId } = ctx;
-  if ((params.text ?? "").trim() === "") throw new Error("horde: resource needs its name in text (note holds the reuse pointer)");
+  const name = (params.text ?? "").trim() === "" ? params.name : params.text;
+  if ((name ?? "").trim() === "") throw new Error("horde: resource needs its name in text (note holds the reuse pointer)");
   const { resource, reused, ownedByCaller } = await claimResource(hordeDir, member, {
-    name: params.text,
+    name,
     note: params.note,
     cleanup: params.cleanup,
     runId,
@@ -569,7 +574,7 @@ async function doneAction(ctx: ActionContext): Promise<ActionResult> {
   const negative = NEGATIVE_RESULT.exec(note);
   if (negative) {
     throw new Error(
-      `horde: "${negative[0]}" reads as a confirmed negative; close #${requireId(params)} with 'horde rule-out' and the same note so later runs do not retry it. ` +
+      `horde: "${negative[0]}" reads as a confirmed negative; close #${requireId(params)} with 'horde rule-out', the same note and unchecked=<checks not performed> so later runs do not retry it. ` +
         "Use done only for work that produced a result.",
     );
   }
@@ -586,8 +591,32 @@ async function dropAction(ctx: ActionContext): Promise<ActionResult> {
 
 async function ruleOutAction(ctx: ActionContext): Promise<ActionResult> {
   const { hordeDir, member, params } = ctx;
-  const idea = await ruleOutIdea(hordeDir, member, requireId(params), closeNote(params));
+  if (params.unchecked === undefined) {
+    throw new Error(
+      "horde: rule-out needs unchecked: the checks this negative did not perform, empty only when the whole idea was " +
+        "checked, so nobody cites it as coverage of a check that was never made",
+    );
+  }
+  const idea = await ruleOutIdea(hordeDir, member, requireId(params), closeNote(params), params.unchecked);
   return closedIdea(ctx, idea, `Ruled out #${idea.id}: ${idea.note ?? "dead end"}`);
+}
+
+/**
+ * The receipt of a proposal or its validation names the rule-outs the answer cites that declared
+ * unchecked scope, so neither the proposer nor the validator reads them as full coverage.
+ */
+function notingScopedRuleOuts(handler: ActionHandler): ActionHandler {
+  return async (ctx) => {
+    const result = await handler(ctx);
+    const answer = ctx.params.action === "solved" ? ctx.params.text : ctx.runId ? readSolved(path.join(ctx.hordeDir, "runs", ctx.runId))?.text : undefined;
+    if (!answer) return result;
+    const scoped = listIdeas(ctx.hordeDir).flatMap((idea) => {
+      const unchecked = ruleOutUnchecked(idea);
+      return unchecked && new RegExp(`(?<![\\w#])#${idea.id}\\b`).test(answer) ? [`#${idea.id} (not checked: ${unchecked})`] : [];
+    });
+    if (!scoped.length) return result;
+    return { ...result, text: `${result.text}\nNote: the answer cites rule-outs that declared unchecked scope: ${scoped.join("; ")}. They are not coverage of those checks; the answer should say so or leave them out.` };
+  };
 }
 
 const HANDLERS: Partial<Record<HordeToolParams["action"], ActionHandler>> = {
@@ -610,8 +639,8 @@ const HANDLERS: Partial<Record<HordeToolParams["action"], ActionHandler>> = {
   claims: claimsAction,
   resource: resourceAction,
   resources: resourcesAction,
-  solved: solvedAction,
-  "confirm-solved": confirmSolvedAction,
+  solved: notingScopedRuleOuts(solvedAction),
+  "confirm-solved": notingScopedRuleOuts(confirmSolvedAction),
   "contest-solved": contestSolvedAction,
   concerns: concernsAction,
   verify: verifyAction,

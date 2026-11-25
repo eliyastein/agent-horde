@@ -229,13 +229,16 @@ function recordReview(c: CollaborationCommand): EventDraft {
   };
   if (evidenceRecord) refs.push(evidenceRecord.id);
   const limits = p.limits?.trim();
+  const correction = p.correction?.trim();
   // A partial verdict refutes nothing: its unchecked scope is coverage debt that the acceptance
-  // names and a full review settles. Only a refutation is an objection the owner must answer.
+  // names and a full review settles. A refutation is an objection the owner must answer, and so is
+  // a named factual correction: two wrong line citations in a supporting review shipped unchanged.
+  const objection = p.verdict === "refutes" ? text : correction ? `Correction requested in V${seq}: ${correction}` : undefined;
   return { payload: { ...(evidenceRecord ? { evidenceRecord } : {}), review: { id: `V${seq}`, actor: ctx.actor, target, revision: info.revision,
     verdict: p.verdict, support: p.support, checked, unchecked: p.unchecked, ...(limits ? { limits } : {}),
-    text, evidence: refs },
+    ...(correction ? { correction } : {}), text, evidence: refs },
     ...completeAssignedReview(c, target, `V${seq}`, text, refs),
-    ...(p.verdict === "refutes" ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
+    ...(objection ? automaticChallenge(c, target, info, objection, refs) : {}) }, parents: refs.filter((id) => id !== evidenceRecord?.id) };
 }
 
 /**
@@ -289,7 +292,9 @@ function reattestReview(c: CollaborationCommand): EventDraft {
     text: p.evidenceText, ...(p.artifactPath ? retainArtifact(ctx, p.artifactPath) : {}),
   };
   if (evidenceRecord) refs.push(evidenceRecord.id);
-  const review = { ...previous, id: `V${seq}`, revision: info.revision, text, evidence: refs, reattests: previous.id };
+  // The correction belonged to the revision it named; the carried review does not ask for it again.
+  const { correction: _settled, ...carried } = previous;
+  const review = { ...carried, id: `V${seq}`, revision: info.revision, text, evidence: refs, reattests: previous.id };
   return { payload: { ...(evidenceRecord ? { evidenceRecord } : {}), review,
     ...completeAssignedReview(c, target, `V${seq}`, text, refs),
     ...(review.verdict === "refutes" ? automaticChallenge(c, target, info, text, refs) : {}) }, parents: [previous.id, ...refs.filter((id) => id !== evidenceRecord?.id)] };

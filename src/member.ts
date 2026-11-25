@@ -53,6 +53,12 @@ export interface MemberState {
   /** True when the session's error was the provider declining the request, not a failed call. */
   refused?: boolean | undefined;
   paused?: boolean | undefined;
+  /**
+   * Clean stop: true while a tool call that was already running when the stop was requested is
+   * still running, then the time it returned. The member learns of the stop only after that.
+   */
+  stopCallPending?: boolean | undefined;
+  stopCallEndedAt?: number | undefined;
   /** Why the member process ended, for run diagnosis. */
   endCause?: MemberEndCause | undefined;
   /** True when the member ended abnormally after doing measurable work. */
@@ -526,6 +532,10 @@ export function applyEvent(member: MemberState, event: Record<string, unknown>):
     case "tool_execution_end":
       member.currentTool = undefined;
       member.currentArg = undefined;
+      if (member.stopCallPending) {
+        member.stopCallPending = undefined;
+        member.stopCallEndedAt = Date.now();
+      }
       return;
     default:
       return;

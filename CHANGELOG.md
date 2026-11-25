@@ -9,6 +9,19 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 - The `--budget` wrap-up reserve grows with the members still running: eight turns for each, at
   its current session's cost per turn, when that is more than the fixed reserve. A 6-member run
   on a $0.75 budget ended $0.0046 over the ceiling with the fixed $0.05 (#67).
+- A member that is inside a tool call when a clean stop is requested hears of the stop only when
+  the call returns. The deadline is now held once, for at most 60 seconds, so such a member gets
+  30 seconds after the return to record its work; a `stop-hold` event names the members (#70).
+- A `deltaOf`, `supersedes` or collaboration target that names a finding from an earlier run in
+  the same directory is refused with an error that names that run and says to cite the finding
+  in the text of a new one. The errors used to read `not in this run` and `unknown target`, and
+  the member prompt now states the rule (#68).
+- `horde resource` reads the resource name from `name` when `text` is not given; two members of
+  one run were refused for passing `name` (#69).
+- The verifier role names `review` with `evidenceText` as the way to record a check, since a
+  review with no evidence is refused (#69).
+- The board notice for a budget, deadline or solved stop says what happened (`budget reached`)
+  where it used to read `budget requested` (#69).
 - `--budget` requests its clean stop a reserve below the ceiling (5% of the budget, at least
   $0.05, at most half of it), so the members' wrap-up lands at or under the ceiling instead of
   over it. TASK.md, the `run-start` event and REPORT.md's usage line state the reserve (#54).
@@ -42,9 +55,16 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   them. It is recorded as a `tell` event under actor `operator`, inserted into each recipient's
   context at its next turn boundary as its own entry, apart from peer feedback, and shown on the
   collaboration page, in COLLABORATION.md and in the run graph (#58).
+- `amend` changes a finding's `importance`, `confidence` and `support`, with or without new
+  prose; the errata line names the move (#47).
+- `review` takes `correction`: a factual error in the target for the owner to fix. It opens a
+  blocking request to the owner whatever the verdict (#47).
 
 ### Changed
 
+- `rule-out` requires `unchecked`, the checks the negative did not perform, empty when the whole
+  idea was checked. It is kept in the idea's note, and the receipts of `solved` and
+  `confirm-solved` name each rule-out with unchecked scope that the answer cites (#47).
 - A member whose session ends in a provider refusal gets the end cause `refused` and is no
   longer reset into a fresh session that would send the same task. It stays down, its ideas
   return to the pool, and BOARD.md records why. A refused canary stops the run without the

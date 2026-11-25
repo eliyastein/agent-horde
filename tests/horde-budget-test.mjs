@@ -149,6 +149,7 @@ if (process.argv.includes("--mode")) {
   const stops = events.filter((e) => e.action === "stop-clean");
   assert.equal(stops.length, 1, "one clean stop was requested");
   assert.equal(stops[0].payload.label, "budget");
+  assert.match(fs.readFileSync(path.join(hordeDir, "BOARD.md"), "utf-8"), /budget reached: member-1, member-2 wrap up; hard stop in \d+s\./, "the board notice says what happened");
   assert.deepEqual(stops[0].payload.members, ["member-1", "member-2"]);
   const end = events.find((e) => e.action === "run-end");
   assert.ok(end.payload.spent >= 0.3, `run-end records the spend: ${JSON.stringify(end.payload)}`);
