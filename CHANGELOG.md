@@ -6,6 +6,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Changed
 
+- A `deltaOf`, `supersedes` or collaboration target that names a finding from an earlier run in
+  the same directory is refused with an error that names that run and says to cite the finding
+  in the text of a new one. The errors used to read `not in this run` and `unknown target`, and
+  the member prompt now states the rule (#68).
 - `horde resource` reads the resource name from `name` when `text` is not given; two members of
   one run were refused for passing `name` (#69).
 - The verifier role names `review` with `evidenceText` as the way to record a check, since a

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { findingRevision, listFindingsForRun } from "../ledger/findings.js";
+import { earlierRunOfFinding, findingRevision, listFindingsForRun } from "../ledger/findings.js";
 import { listIdeas } from "../ledger/ideas.js";
 import { listResources } from "../ledger/resources.js";
 import { readSolvedState } from "../ledger/run-signals.js";
@@ -39,6 +39,13 @@ export function targetInfo(ctx: EventContext, state: CollaborationState, target:
     const f = listFindingsForRun(ctx.hordeDir, ctx.runId).find((entry) => entry.id === Number(target.slice(1)));
     if (f?.supersededBy !== undefined) throw new Error(`horde: ${target} was superseded by F${f.supersededBy}`);
     if (f) return { owner: f.author, revision: findingRevision(f) };
+    const earlier = earlierRunOfFinding(ctx.hordeDir, ctx.runId, Number(target.slice(1)));
+    if (earlier !== undefined) {
+      throw new Error(
+        `horde: ${target} was filed in earlier run ${earlier} and is closed to evidence, reviews and messages; ` +
+          `file a finding in this run and name ${target} in its text`,
+      );
+    }
   }
   if (/^I\d+$/.test(target)) {
     const i = listIdeas(ctx.hordeDir).find((entry) => entry.id === Number(target.slice(1)));

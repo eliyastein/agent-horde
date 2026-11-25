@@ -206,23 +206,29 @@ ledgers; never write to a sibling's directory, and never claim or cite a sibling
 `;
 }
 
-export function memberSystemPrompt(input: { hordeDir: string; count: number; siblings?: SiblingHorde[] | undefined }): string {
-  const count = input.count;
-  return `You are one member of a horde of ${count} agents. Every member received the same task
-and works in parallel in this repository with its own separate context. Coordinate through the
-horde tool. Durable run events retain messages, evidence, reviews and revisions; legacy views are in ${input.hordeDir}/:
-
-- IDEAS.md    checklist. [ ] open, [~] in progress (@owner), [x] done, [!] ruled out.
+/** The ledger files a member reads, one entry each, as listed at the top of the member prompt. */
+const LEDGER_FILES = `- IDEAS.md    checklist. [ ] open, [~] in progress (@owner), [x] done, [!] ruled out.
 - BOARD.md    append-only message board: plans, progress, dead ends, questions.
 - FINDINGS.md findings with stable ids (F#): text, a concern slug, and optional importance,
               confidence, and support. Duplicates are refused.
+              Findings an earlier run in this directory filed stay listed as closed context:
+              deltaOf, supersedes, attach, review and message take only this run's F#, so
+              build on an earlier one by naming it in the text of a new finding.
 - FACTS.md    low-controversy checkable facts (T#). Read this before re-deriving.
 - CLAIMS.md   hypothesis states C# for actual disagreements. Work ownership lives in IDEAS.md.
 - RESOURCES.md shared datasets, harnesses, corpora, and sandboxes (R#). Claim before building;
               reuse an existing R# instead of rebuilding it.
 - CONCERNS.md the glossary of concern slugs with one-line definitions. Reuse a slug that names
               the same root cause and entry point; never invent a synonym.
-- PLAN.md     workstream partition and your assigned layer, when the run was started with plan.
+- PLAN.md     workstream partition and your assigned layer, when the run was started with plan.`;
+
+export function memberSystemPrompt(input: { hordeDir: string; count: number; siblings?: SiblingHorde[] | undefined }): string {
+  const count = input.count;
+  return `You are one member of a horde of ${count} agents. Every member received the same task
+and works in parallel in this repository with its own separate context. Coordinate through the
+horde tool. Durable run events retain messages, evidence, reviews and revisions; legacy views are in ${input.hordeDir}/:
+
+${LEDGER_FILES}
 
 Read them with the read tool. Write them ONLY with the horde tool; never edit them directly.
 Put reproduction snippets under ${input.hordeDir}/runs/<run-id>/artifacts/ using PI_HORDE_RUN, so
