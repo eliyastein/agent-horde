@@ -494,6 +494,10 @@ function memberSummarySection(
   if (m.summaryIncomplete) {
     lines.push("summary: incomplete (member was stopped before finishing)");
   }
+  if (m.endCause === "no_work") {
+    lines.push("", "(the member made no tool calls and filed nothing; its message is omitted)", "");
+    return lines;
+  }
   if (m.status === "failed" || m.status === "stopped") {
     lines.push(`exit code ${m.exitCode ?? "n/a"}`);
     if (m.error) lines.push("", "```", m.error, "```");

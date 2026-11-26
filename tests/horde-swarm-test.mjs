@@ -70,7 +70,7 @@ if (process.argv.includes("--mode")) {
   });
   assert.match(swarmMod.parsePlannerOutput('[{"workstream":"A"}]', 2).error, /1 workstream\(s\), not 2/);
   assert.match(swarmMod.parsePlannerOutput('[{"workstream":"A"},{"workstream":" a "}]', 2).error, /repeated a workstream/);
-  assert.match(swarmMod.parsePlannerOutput("no json here", 2).error, /no JSON array/);
+  assert.match(swarmMod.parsePlannerOutput("no json here", 2).error, /no workstream plan/);
   assert.match(swarmMod.parsePlannerOutput('[{"workstream":""},{"workstream":"B"}]', 2).error, /empty workstream/);
   console.log("PASS: horde-swarm-test helpers");
 

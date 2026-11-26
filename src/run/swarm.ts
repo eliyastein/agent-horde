@@ -134,7 +134,7 @@ export function sliceText(workstream: string, acceptance: string | undefined): s
 export function parsePlannerOutput(output: string, hordes: number): { slices: string[] } | { error: string } {
   const start = output.indexOf("[");
   const end = output.lastIndexOf("]");
-  if (start === -1 || end <= start) return { error: "the planner printed no JSON array" };
+  if (start === -1 || end <= start) return { error: "the planner returned no workstream plan" };
   let items: unknown;
   try {
     items = JSON.parse(output.slice(start, end + 1));
