@@ -353,6 +353,20 @@ function finishCleanStop(run: HordeRun, members: MemberState[], label: CleanStop
   refreshRun(run);
 }
 
+/**
+ * Called when a member's process has exited. Once every member a clean stop named is down the
+ * stop is over: its deadline is cancelled, so no `stop-hard` is recorded for members that ended
+ * on their own and the run is no longer shown as stopping.
+ */
+export function settleCleanStop(run: HordeRun): void {
+  if (!run.cleanStopTimer) return;
+  if (run.cleanStopNames.some((name) => liveProc(run, name) !== undefined)) return;
+  clearTimeout(run.cleanStopTimer);
+  run.cleanStopTimer = undefined;
+  run.cleanStopUntil = undefined;
+  refreshRun(run);
+}
+
 /** A suspended member cannot wrap up; wake the ones being cleaned up. */
 function wakePaused(run: HordeRun, members: MemberState[]): void {
   if (process.platform === "win32") return;

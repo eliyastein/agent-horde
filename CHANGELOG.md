@@ -18,6 +18,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   working for the other members, and the run ends with its own outcome. The run counts as
   stopped once a stop names every member or the members it leaves out are already down. The
   report lists each stopped member under the stop that took it down (#78).
+- A clean stop ends once every member it named has exited: its deadline is cancelled, so no
+  `stop-hard` event is recorded for members that had already wrapped up, and the widget,
+  `status` and the dashboard stop showing the run as stopping (#82).
 
 ## [0.5.0] - 2026-11-24
 

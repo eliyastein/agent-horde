@@ -11,7 +11,7 @@ import { cleanStopRequestedFor, clearHeartbeat, readHeartbeat } from "../ledger/
 import { resetMemberState, spawnMember } from "../member.js";
 import type { MemberState } from "../member.js";
 import { budgetShortfall, checkBudget } from "./budget.js";
-import { hardStopMembers } from "./controls.js";
+import { hardStopMembers, settleCleanStop } from "./controls.js";
 import { recordLifecycle } from "./lifecycle.js";
 import { parkIfStagnant } from "./park.js";
 import type { HordeRun, HordeState, Swarm } from "./types.js";
@@ -330,6 +330,7 @@ async function superviseSessions(launch: RunLaunch, member: MemberState, first: 
   let exited = first;
   for (;;) {
     await exited;
+    settleCleanStop(run);
     const reason = resetReasonForExit(launch, member);
     if (!reason && member.endCause === "refused" && !state.disposed && !run.stopped) await standDownRefused(run, member);
     if (!reason || state.disposed) return;
