@@ -156,7 +156,7 @@ function resetReasonForExit(launch: RunLaunch, member: MemberState): string | un
       (RESETTABLE_CAUSES.has(member.endCause ?? "") ? member.endCause : undefined) ??
       verificationBacklog(run, member) ??
       backlog;
-  if (!reason) return run.untilStop && member.endCause === "completed" ? CONTINUE_REASON : undefined;
+  if (!reason) return run.untilStop && (member.endCause === "completed" || member.endCause === "no_work") ? CONTINUE_REASON : undefined;
   if ((member.resets ?? 0) >= RESET_CAP) {
     fs.appendFileSync(
       path.join(run.runDir, `${member.name}.log`),
@@ -221,6 +221,23 @@ async function standDownRefused(run: HordeRun, member: MemberState): Promise<voi
     safeNotify(run, `horde ${run.id}: could not release the ideas of ${member.name} (${errorMessage(error)})`, "error");
   }
   safeNotify(run, `horde ${run.id}: ${member.name} was refused by the provider; not reset`, "warning");
+}
+
+/** A member that ended its session having called no tool filed nothing; it stays down, not reset. */
+async function standDownNoWork(run: HordeRun, member: MemberState): Promise<void> {
+  fs.appendFileSync(path.join(run.runDir, `${member.name}.log`), "[horde] ended with no tool calls; not reset\n");
+  try {
+    const { released } = await reconcileOwnedIdeas(run.hordeDir, run.id, [member.name]);
+    await postBoard(
+      run.hordeDir,
+      "parent",
+      `${member.name} stays down: its session ended without calling any tool, so it filed no work. ` +
+        `Released ${released.map((id) => `#${id}`).join(", ") || "none"}; earlier claims by ${member.name} are void.`,
+    );
+  } catch (error) {
+    safeNotify(run, `horde ${run.id}: could not release the ideas of ${member.name} (${errorMessage(error)})`, "error");
+  }
+  safeNotify(run, `horde ${run.id}: ${member.name} ended with no tool calls; not reset`, "warning");
 }
 
 /**
@@ -333,6 +350,7 @@ async function superviseSessions(launch: RunLaunch, member: MemberState, first: 
     settleCleanStop(run);
     const reason = resetReasonForExit(launch, member);
     if (!reason && member.endCause === "refused" && !state.disposed && !run.stopped) await standDownRefused(run, member);
+    if (!reason && member.endCause === "no_work" && !state.disposed && !run.stopped) await standDownNoWork(run, member);
     if (!reason || state.disposed) return;
     if (reason === CONTINUE_REASON && (await parkIfStagnant(state, run, member)) === "down") return;
     if (await skipUnfunded(launch, member, reason)) return;

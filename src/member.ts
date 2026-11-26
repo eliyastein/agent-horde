@@ -12,6 +12,7 @@ export type MemberEndCause =
   | "model_error"
   | "refused"
   | "no_output"
+  | "no_work"
   | "killed"
   | "exit_nonzero"
   | "unknown";
@@ -638,7 +639,7 @@ function finishMember(
   // calls, and no text has nothing worth keeping as a partial result.
   const producedWork =
     member.toolCalls > 0 || member.usage.output > 0 || member.finalText.trim() !== "" || Boolean(member.draftText?.trim());
-  member.partial = member.endCause !== "completed" && producedWork;
+  member.partial = member.endCause !== "completed" && member.endCause !== "no_work" && producedWork;
   member.summaryIncomplete = aborted ? true : undefined;
 }
 
@@ -648,6 +649,7 @@ function computeEndCause(member: MemberState, aborted: boolean): MemberEndCause 
   if (member.error) return "model_error";
   if (member.exitCode !== 0) return "exit_nonzero";
   if (member.usage.input + member.usage.output === 0) return "no_output";
+  if (member.toolCalls === 0) return "no_work";
   return "completed";
 }
 
