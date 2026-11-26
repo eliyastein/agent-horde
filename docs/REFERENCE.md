@@ -1,7 +1,8 @@
 # agent-horde reference
 
-Spawn up to 12 pi sub-agents on the same prompt, each in its own process and context, coordinating
-through markdown ledgers in `.horde/` at the project root. Use it when several independent attempts
+Spawn up to 12 pi sub-agents on the same prompt, or up to 4 such hordes (48 sub-agents) on
+disjoint workstreams of it, each agent in its own process and context, coordinating through
+markdown ledgers in `.horde/` at the project root. Use it when several independent attempts
 at one problem beat a single linear one: research, audits, design exploration, R&D.
 
 ## Usage
