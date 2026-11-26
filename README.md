@@ -16,8 +16,9 @@
 ## Why
 
 The big labs solve big problems by pointing large swarms of agents at them. agent-horde brings
-this to a size one person can run from a terminal: up to twelve pi agents on one task, each in
-its own process, coordinating through markdown files you can read while they work.
+this to a size one person can run from a terminal: a horde of up to twelve pi agents on one
+task, or a swarm of up to four hordes, 48 agents in all. Each agent is its own process, and they
+coordinate through markdown files you can read while they work.
 It is for regular users who want to experiment with small swarms and learn where they go wrong.
 
 ## What it is
@@ -50,9 +51,9 @@ found there as its brief. Unrelated files cost members context and invite them t
 from earlier runs persist in `.horde/` and will steer members; start with a fresh one when the
 task changes.
 
-A horde is at most twelve members. For more hands, run a swarm: `3/12` launches three hordes of
-twelve on disjoint workstreams of one task, each with its own ledgers, and merges their
-deliverables at the end.
+A horde is at most twelve members. For more hands, run a swarm of up to four hordes: `3/12`
+launches three hordes of twelve on disjoint workstreams of one task, each with its own ledgers,
+and merges their deliverables at the end. The largest launch is `4/12`, 48 members.
 
 **Tips.**
 
