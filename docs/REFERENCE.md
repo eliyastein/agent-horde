@@ -125,7 +125,9 @@ Before a continuation or a reset starts a fresh session, the budget left above t
 compared with the average cost of the sessions that have ended in the swarm (the reserve stands
 in until one has). When it is less, the session is not started: the member stays down, its log
 and a `member-continue` or `member-reset` event with `skipped: "budget"` record the remainder
-and the estimate, and SUMMARY.md counts it. Repair attempts are not gated this way.
+and the estimate, and SUMMARY.md counts it. The repair phase makes the same comparison before
+each attempt: when it fails, no further attempt starts and a `repair-skipped` event with reason
+`run-budget` names the members left unserved.
 
 `--context-cap=<tokens>` (opt-in) makes every member compact its own context once it passes that
 many tokens. pi compacts only when the context comes within `compaction.reserveTokens` of the
