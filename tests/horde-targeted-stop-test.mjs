@@ -99,6 +99,22 @@ if (process.argv.includes("--mode")) {
   assert.match(fs.readFileSync(path.join(budgeted.dir, "REPORT.md"), "utf-8"), /stopped by user: member-1/, "the report names the member the user stopped");
   console.log("PASS: horde-targeted-stop-test budget");
 
+  // ---- a stopped member that exits inside the grace period ends the stop --------------------
+  process.env.SPEND_AFTER_MS = "400";
+  const early = await launch("2 targeted stop probe");
+  await early.until(() => spawned(early, "member-2"), "both members started");
+  await early.command("stop-clean member-2 --grace 2");
+  await early.until(() => early.events().some((e) => e.action === "member-exit" && e.payload.member === "member-2"), "member-2 exited on its own");
+  early.notifications.length = 0;
+  await early.command("status");
+  assert.ok(!early.notifications.some((n) => /hard stop in/.test(n)), `the run is not shown as stopping once the stopped member is down:\n${early.notifications.join("\n")}`);
+  await wait(2500);
+  assert.ok(!early.events().some((e) => e.action === "stop-hard"), "no stop-hard is recorded for a member that had already exited");
+  await early.command("stop-hard");
+  await early.until(() => finished(early), "the run ended on the hard stop");
+  assert.deepEqual(early.events().filter((e) => e.action === "stop-hard").map((e) => e.payload.by), ["user"]);
+  console.log("PASS: horde-targeted-stop-test early exit");
+
   // ---- --until-stop still continues the others, and the run ends on its own terms ----------
   process.env.SPEND_AFTER_MS = "300";
   const open = await launch("2 --until-stop targeted stop probe");
