@@ -101,7 +101,7 @@ if (process.argv.includes("--mode")) {
   process.env.PLANNER_MODE = "prose";
   mark = notifications.length;
   await command.handler("2/1 review the parser and the emitter", ctx);
-  assert.ok(since(mark).some((n) => /not started: the planner printed no JSON array/.test(n)), since(mark).join("\n"));
+  assert.ok(since(mark).some((n) => /not started: the planner returned no workstream plan/.test(n)), since(mark).join("\n"));
 
   // ---- a good partition launches one horde per slice ---------------------------
   process.env.PLANNER_MODE = "good";

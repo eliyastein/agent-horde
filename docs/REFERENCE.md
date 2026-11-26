@@ -482,7 +482,7 @@ importance, independent members, and confidence.
 ## REPORT.md
 
 Written at finalize: the outcome and canary result; per-member end cause (`completed`,
-`model_error`, `refused`, `no_output`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
+`model_error`, `refused`, `no_output`, `no_work`, `killed`, `exit_nonzero`, `stopped by user`) with a `partial` marker
 for an abnormal end after measurable work; distinct finding clusters with review coverage,
 superseded findings in their own section, and any resets; claim states; this run's facts split
 from carried context; resources and cleanup results; coverage (released and still-open ideas,

@@ -85,11 +85,12 @@ function queueFor(phase: RepairPhase, member: MemberState): PeerMessage[] {
 
 /**
  * Counts, per thread, the consecutive completed attempts that left it as they found it; a thread
- * the attempt moved starts over. A killed attempt counts nothing: it may have been about to act.
+ * the attempt moved starts over. A killed attempt counts nothing: it may have been about to act;
+ * a clean attempt that called no tool (no_work) acted on nothing and counts like a completed one.
  * Returns the ids this attempt left unchanged.
  */
 function noteUnchanged(phase: RepairPhase, member: MemberState, queue: PeerMessage[]): string[] {
-  if (member.endCause !== "completed") return [];
+  if (member.endCause !== "completed" && member.endCause !== "no_work") return [];
   const after = new Map(inboxFor(memberContext(phase, member)).map((m) => [m.id, threadSignature(m)]));
   const unmoved = phase.stalled.get(member.name) ?? new Map<string, UnmovedThread>();
   const unchanged: string[] = [];

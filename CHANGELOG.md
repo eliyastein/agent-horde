@@ -4,6 +4,16 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Fixed
+
+- A member session that ends cleanly but called no tool filed nothing. It now ends with the
+  cause `no_work` instead of `completed`: it is not reset, in a normal run it stands down
+  rather than starting a fresh session that would repeat the empty turn, and its message is kept
+  out of the work summary. This catches a soft refusal a member states in prose without a prose
+  heuristic. Under `--until-stop` the member still continues, and parking stops it if it keeps
+  adding nothing. The swarm planner reports a run it cannot partition as `the planner returned no
+  workstream plan` rather than `printed no JSON array` (#61).
+
 ### Changed
 
 - The `--budget` admission check also covers repair attempts: when what is left above the
