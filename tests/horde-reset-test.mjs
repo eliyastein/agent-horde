@@ -12,6 +12,10 @@ import * as path from "node:path";
 import { createJiti, DEPS, PI } from "./harness.mjs";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Poll until `done` holds, so the test waits on the event and not on how fast a child starts. */
+const until = async (done, limitMs = 30_000) => {
+  for (let waited = 0; waited < limitMs && !done(); waited += 50) await wait(50);
+};
 
 if (process.argv.includes("--mode")) {
   const name = process.env.PI_HORDE_NAME;
@@ -52,7 +56,7 @@ if (process.argv.includes("--mode")) {
   process.env.PI_HORDE_POSTMORTEM = "off";
   process.env.PI_HORDE_DELIVERABLE = "off";
   process.env.PI_HORDE_CANARY_MS = "2000";
-  process.env.PI_HORDE_STALL_MS = "1500";
+  process.env.PI_HORDE_STALL_MS = "4000";
   process.env.PI_HORDE_RESET_CAP = "2";
   process.env.PI_HORDE_ACTIVE_GRACE_MS = "300";
 
@@ -94,10 +98,12 @@ if (process.argv.includes("--mode")) {
 
   // ---- abnormal exit and stall, both capped ------------------------------------
   await command.handler("2 reset probe", ctx);
-  // Canary (~0.3s) + member-2 sessions (~0.3s each, three of them) + two stall windows
-  // for member-1 (1.5s each, polled every 375ms).
-  await wait(6500);
+  // member-2 dies three times and member-1 sits through two stall windows of 4s each. The window
+  // is wide enough for member-2's child to start, claim and exit on a slow machine before it
+  // would be reset as stalled itself.
   const dir1 = path.join(hordeDir, "runs", runDirs()[0]);
+  const logged = (dir, name) => (fs.existsSync(path.join(dir, `${name}.log`)) ? log(dir, name) : "");
+  await until(() => /reset cap reached/.test(logged(dir1, "member-2")) && count(logged(dir1, "member-1"), /^\[horde\] spawn:/gm) === 3);
   const m2 = log(dir1, "member-2");
   assert.equal(count(m2, /^\[horde\] spawn:/gm), 3, `member-2 is spawned three times:\n${m2}`);
   assert.match(m2, new RegExp(`^\\[horde\\] reset 1: ${CAUSE}$`, "m"));
@@ -122,7 +128,7 @@ if (process.argv.includes("--mode")) {
   assert.ok(!fs.existsSync(path.join(dir1, ".hb-member-1")), "a stalled member never wrote a heartbeat");
 
   await command.handler("stop-hard", ctx);
-  await wait(1500);
+  await until(() => fs.existsSync(path.join(dir1, "REPORT.md")));
   const report = fs.readFileSync(path.join(dir1, "REPORT.md"), "utf-8");
   const resetsLine = report.split("\n").find((l) => l.startsWith("- resets: "));
   assert.ok(resetsLine, "the diagnosis lists the resets");
@@ -146,10 +152,10 @@ if (process.argv.includes("--mode")) {
   fs.mkdirSync(probeDir);
   process.env.PI_HORDE_STALL_MS = "0";
   await command.handler("2 clean probe", ctx);
-  await wait(400);
-  await command.handler("stop-clean --grace 1", ctx);
-  await wait(4000);
   const dir2 = path.join(hordeDir, "runs", runDirs()[1]);
+  await until(() => /^\[horde\] spawn:/m.test(logged(dir2, "member-2")));
+  await command.handler("stop-clean --grace 1", ctx);
+  await until(() => fs.existsSync(path.join(dir2, "REPORT.md")));
   const m2clean = log(dir2, "member-2");
   assert.equal(count(m2clean, /^\[horde\] spawn:/gm), 1, `no respawn during a clean stop:\n${m2clean}`);
   assert.doesNotMatch(m2clean, /^\[horde\] reset/m);

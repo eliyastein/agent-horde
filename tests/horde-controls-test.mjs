@@ -15,6 +15,10 @@ process.env.PI_HORDE_DELIVERABLE = "off";
 import { createJiti, DEPS, PI } from "./harness.mjs";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Poll until `done` holds, so the test waits on the event and not on how fast a child starts. */
+const until = async (done, limitMs = 30_000) => {
+  for (let waited = 0; waited < limitMs && !done(); waited += 50) await wait(50);
+};
 
 if (process.argv.includes("--mode")) {
   const heartbeat = process.env.HB_FILE;
@@ -93,7 +97,7 @@ if (process.argv.includes("--mode")) {
 
   // ---- run 1: pause, resume, stop-hard -------------------------------------
   await command.handler("1 pause probe", ctx);
-  await wait(300);
+  await until(() => beats() > 0);
   assert.ok(beats() > 0, "fake child should be producing heartbeats");
 
   await command.handler("pause member-1", ctx);
@@ -103,7 +107,7 @@ if (process.argv.includes("--mode")) {
   assert.ok(notifications.some((n) => /paused 1 member/.test(n)));
 
   await command.handler("resume member-1", ctx);
-  await wait(300);
+  await until(() => beats() > frozen);
   assert.ok(beats() > frozen, "SIGCONT should resume the child");
   assert.ok(notifications.some((n) => /resumed 1 member/.test(n)));
 
@@ -114,7 +118,7 @@ if (process.argv.includes("--mode")) {
   assert.ok(notifications.some((n) => /^info: horde \d{8}-\d{6}/m.test(n)));
 
   await command.handler("stop-hard", ctx);
-  await wait(600);
+  await until(() => sent.length === 1);
   assert.ok(notifications.some((n) => /stop-hard: terminating member-1/.test(n)));
   assert.equal(sent.length, 1, "stop-hard should produce one report");
   assert.equal(sent[0].opts.triggerTurn, false, "a hard stop must not trigger a parent turn");
@@ -126,8 +130,9 @@ if (process.argv.includes("--mode")) {
   assert.match(report1, /distinct clusters/);
 
   // ---- run 2: stop-clean releases claimed ideas ----------------------------
+  const beatsBefore = beats();
   await command.handler("1 clean probe", ctx);
-  await wait(300);
+  await until(() => beats() !== beatsBefore);
   const runId = runDirs()[runDirs().length - 1];
   const runDir = path.join(hordeDir, "runs", runId);
 
@@ -177,7 +182,7 @@ if (process.argv.includes("--mode")) {
 
   // The fake child never wraps up, so escalate; finalize must still release ideas.
   await command.handler("stop-hard", ctx);
-  await wait(700);
+  await until(() => sent.length === 2);
   const released = ledger.listIdeas(hordeDir).find((i) => i.id === claimed.idea.id);
   assert.equal(released.mark, " ", "stop-clean should return the idea to the open pool");
   assert.equal(released.owner, undefined);

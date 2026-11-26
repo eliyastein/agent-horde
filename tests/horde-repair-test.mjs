@@ -108,7 +108,7 @@ if (process.argv.includes("--mode")) {
       const caseRun = { ...run, id: caseId, runDir: caseDir, members: caseMembers, count: 6, verifier: "member-6", repairTokens: 0, controller: new AbortController(), controllers: new Map(), procs: new Map() };
       process.env.PI_HORDE_FIXTURE_REPAIR = scenario;
       process.env.PI_HORDE_REPAIR_TOKENS = stop === "tokens" ? "300" : "50000";
-      process.env.PI_HORDE_REPAIR_MS = scenario === "hang" ? "4000" : "20000";
+      process.env.PI_HORDE_REPAIR_MS = scenario === "hang" ? "40000" : "20000";
       process.env.PI_HORDE_REPAIR_ROUNDS = scenario === "hang" ? "1" : "2";
       process.env.PI_HORDE_REPAIR_MIN_TOKENS = "1";
       process.env.PI_HORDE_REPAIR_MIN_MS = "1";
