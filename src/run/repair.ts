@@ -9,6 +9,7 @@ import { recordPhase } from "./lifecycle.js";
 import { envNumber } from "../format.js";
 import { resetMemberState, USAGE_KEYS } from "../member.js";
 import type { MemberState } from "../member.js";
+import { budgetShortfall } from "./budget.js";
 import { hardStopMembers } from "./controls.js";
 import { scheduleCollaboration, stopReason } from "./schedule.js";
 import { spawnOne } from "./supervise.js";
@@ -199,7 +200,7 @@ export function repairBudget(demands: number[], floors: RepairFloors, rounds: nu
   };
 }
 
-type SkipReason = "insufficient-budget" | "insufficient-time";
+type SkipReason = "insufficient-budget" | "insufficient-time" | "run-budget";
 
 async function recordSkipped(phase: RepairPhase, pending: MemberState[], reason: SkipReason, detail: Record<string, number>): Promise<void> {
   const { run } = phase.launch;
@@ -209,6 +210,19 @@ async function recordSkipped(phase: RepairPhase, pending: MemberState[], reason:
   if (!members.length) return;
   run.repairSkipped = [...new Set([...(run.repairSkipped ?? []), ...members.map((entry) => entry.member)])];
   await recordEvent(ctx, "repair-skipped", { payload: { reason, ...detail, members } });
+}
+
+/**
+ * `--budget` admission: when what is left above the wrap-up reserve cannot pay for one more
+ * session, no further repair attempt starts. Returns true when the members were refused.
+ */
+async function refuseUnfunded(phase: RepairPhase, unserved: MemberState[]): Promise<boolean> {
+  const { run, swarm } = phase.launch;
+  const short = budgetShortfall(swarm);
+  if (!short) return false;
+  run.budgetSkipped = [...(run.budgetSkipped ?? []), ...unserved.map((member) => `${member.name} (repair)`)];
+  await recordSkipped(phase, unserved, "run-budget", { remaining: short.remaining, estimate: short.estimate });
+  return true;
 }
 
 interface RepairLimits {
@@ -369,6 +383,10 @@ async function runRepairRounds(launch: RunLaunch, begin: (budget: RepairBudget) 
       const pendingUnits = pending.reduce((sum, entry) => sum + repairDemand(entry.queue), 0);
       const units = repairDemand(next.queue);
       const unserved = pending.map((entry) => entry.member);
+      if (await refuseUnfunded(phase, unserved)) {
+        await begin(budget);
+        return;
+      }
       const remaining = budget.tokens - (run.repairTokens ?? 0);
       const laterRounds = rounds - round - 1;
       const tokens = repairAllowance(repairShare(remaining, pendingUnits, laterRounds, units), remaining, phase.floors.tokens);

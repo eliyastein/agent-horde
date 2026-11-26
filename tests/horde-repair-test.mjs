@@ -335,6 +335,17 @@ if (process.argv.includes("--mode")) {
 
   // Hard stops never schedule repair sessions, even with work pending.
   await runCollaborationAction({ hordeDir, runId: id, actor: "member-2" }, { action: "message", target: artifact.id, kind: "challenge", text: "new unresolved issue" });
+  // --budget admission: with nothing left above the wrap-up reserve, no repair attempt starts.
+  const spent = Object.assign(newMemberState(9), { lifetime: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.99 } });
+  await drainRepairs({ ...launch, swarm: { id, budget: 1, runs: [run, { members: [spent] }] } });
+  assert.equal(members[0].repairs, 1, "a spent budget starts no repair attempt");
+  const unfunded = readEvents(hordeDir, id).filter((e) => e.action === "repair-skipped" && e.payload.reason === "run-budget");
+  assert.equal(unfunded.length, 1, "the refusal is recorded once for the round");
+  assert.equal(unfunded[0].payload.remaining, 0);
+  assert.equal(unfunded[0].payload.estimate, 0.05, "with no finished session the reserve is the estimate");
+  assert.ok(unfunded[0].payload.members.some((entry) => entry.member === "member-1"), "the members left unserved are named");
+  assert.ok(run.budgetSkipped.includes("member-1 (repair)"), "the summary learns which repair sessions the budget refused");
+
   run.stopped = true;
   await drainRepairs(launch);
   assert.equal(members[0].repairs, 1);

@@ -4,6 +4,13 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+### Changed
+
+- The `--budget` admission check also covers repair attempts: when what is left above the
+  wrap-up reserve is less than a session has cost on average, the repair phase starts no further
+  attempt and records `repair-skipped` with reason `run-budget` for the members left unserved.
+  SUMMARY.md counts them with the other sessions the budget refused (#54).
+
 ### Fixed
 
 - A `stop-clean` or `stop-hard` that names some members no longer marks the whole run as
