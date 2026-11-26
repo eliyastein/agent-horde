@@ -292,7 +292,7 @@ const ctxStub = { ui: { notify: () => {} }, hasUI: false };
   const run = fakeRun(runId, runDir, { verifier: "member-3", scopedReviews: state(runId).reviews, findings: findings.listFindingsForRun(hordeDir, runId), ideas: ideas.listIdeas(hordeDir) });
   for (const member of run.members) { member.status = "done"; member.endCause = "completed"; member.finalText = "All work is verified."; }
   const summary = prompt.summaryMarkdown(run);
-  assert.match(summary, /## member-3: done\n\n[^\n]*\n0 findings filed, 2 independently reviewed \(scoped: 1 full, 1 with unchecked scope\)/);
+  assert.match(summary, /## member-3: done\n\n[^\n]*\n0 findings filed, reviewed 2 findings by others \(scoped: 1 full, 1 with unchecked scope\)/);
   assert.match(summary, /verifier coverage from review records: 2 of 2 other members' current findings reviewed, 1 at full scope\n/);
   const later = await fileFinding(runId, "member-2", "Figure 12 caption names the wrong artist\nchecked the credits", { importance: "critical" });
   const member3 = run.members[2];

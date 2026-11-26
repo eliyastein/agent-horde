@@ -6,6 +6,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- SUMMARY.md's per-member line says `reviewed N findings by others` where it said `N
+  independently reviewed`. The count is of reviews the member gave, and the old wording read
+  as a count of the member's own findings that had been reviewed (#89).
 - A member session that ends cleanly but called no tool filed nothing. It now ends with the
   cause `no_work` instead of `completed`: it is not reset, in a normal run it stands down
   rather than starting a fresh session that would repeat the empty turn, and its message is kept
