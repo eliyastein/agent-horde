@@ -186,6 +186,14 @@ export function blockingMessages(state: CollaborationState): PeerMessage[] {
   return state.messages.filter((m) => m.blocking && m.state !== "resolved");
 }
 
+/**
+ * True when no recipient's session ever received the message. A blocker raised just before a
+ * stop is still an objection, but nobody could have answered it, and the acceptance says so.
+ */
+export function neverDelivered(message: PeerMessage): boolean {
+  return Object.keys(message.deliveries).length === 0;
+}
+
 /** Each non-owner's latest review of the artifact's current revision. */
 export function latestArtifactReviews(state: CollaborationState, artifact: ArtifactRecord): ReviewRecord[] {
   const latest = new Map<string, ReviewRecord>();
