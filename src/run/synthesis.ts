@@ -141,7 +141,7 @@ function postmortemTask(run: HordeRun): string {
   ].join("\n");
 }
 
-function deliverableTask(run: HordeRun): string {
+export function deliverableTask(run: HordeRun): string {
   return [
     `Produce the single deliverable for horde run ${run.id}.`,
     ``,
@@ -178,7 +178,11 @@ function deliverableTask(run: HordeRun): string {
     `conclusion across sections. Use the importance and support labels when they help a reader`,
     `weigh a claim, and omit them when they add nothing. Preserve the distinction between`,
     `reproduction and reasoning: do not present a design, model, or source reading as a`,
-    `measurement. Verify that every cited R# and run-artifact path exists. Do not restate`,
+    `measurement. State that something was not run, does not exist or does not work only when a`,
+    `finding, fact or review records an attempt at it. With no recorded attempt, write "not`,
+    `attempted in this run" and do not list the item as a defect. When a recorded attempt failed`,
+    `because the environment lacked a prerequisite, name the prerequisite as an environment note.`,
+    `Verify that every cited R# and run-artifact path exists. Do not restate`,
     `per-member work or describe the horde process. Output only markdown.`,
   ].join("\n");
 }

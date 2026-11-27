@@ -6,6 +6,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- The deliverable instructions require a recorded attempt behind a statement that something was
+  not run, does not exist or does not work. With no attempt on record the deliverable says `not
+  attempted in this run` and does not list the item as a defect; an attempt that failed for a
+  missing prerequisite is reported as an environment note (#97).
 - SUMMARY.md's per-member line says `reviewed N findings by others` where it said `N
   independently reviewed`. The count is of reviews the member gave, and the old wording read
   as a count of the member's own findings that had been reviewed (#89).
