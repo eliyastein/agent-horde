@@ -6,6 +6,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- The finalize consistency check no longer reports the arguments on a `Usage:` line, or a name
+  inside an angle-bracket slot such as `<out.json>`, as files a resource note cites. A data file
+  the note names outside the usage line is still checked (#96).
 - SUMMARY.md's per-member line says `reviewed N findings by others` where it said `N
   independently reviewed`. The count is of reviews the member gave, and the old wording read
   as a count of the member's own findings that had been reviewed (#89).
