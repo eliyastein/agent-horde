@@ -4,7 +4,10 @@
   A coordination protocol for small agent swarms, and the <a href="https://pi.dev">pi</a> extension that runs it.
 </p>
 
+<h3 align="center"><a href="https://agent-horde.dev">agent-horde.dev</a></h3>
+
 <p align="center">
+  <a href="https://agent-horde.dev"><img src="https://img.shields.io/badge/website-agent--horde.dev-ff6b1a" alt="project website"></a>
   <a href="https://www.npmjs.com/package/agent-horde"><img src="https://img.shields.io/npm/v/agent-horde" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node 20 or newer">
