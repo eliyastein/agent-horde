@@ -55,7 +55,16 @@ const issuesFor = (runId, id) => report.loadCollaborationReport(hordeDir, runId)
   await review(runId, "member-2", doc.id, doc.hash, { verdict: "supports", unchecked: "", evidenceText: "every citation resolves" });
   assert.deepEqual(issuesFor(runId, doc.id), [], "a full-scope non-owner review accepts the document");
   const objection = (await command(runId, "member-3", { action: "message", target: doc.id, kind: "challenge", text: "section 4 misreads the RDAP record" })).message;
-  assert.deepEqual(issuesFor(runId, doc.id), [`${doc.id}@${doc.hash}: blocked by ${objection.id} (pending blocking challenge from member-3); exclude from recommended document outputs`]);
+  // Nobody's session has received the challenge yet, and the acceptance says so (#88).
+  assert.deepEqual(issuesFor(runId, doc.id), [`${doc.id}@${doc.hash}: blocked by ${objection.id} (pending blocking challenge from member-3, never delivered); exclude from recommended document outputs`]);
+  assert.ok(report.loadCollaborationReport(hordeDir, runId).issues.includes(`${objection.id} ${doc.id}: pending blocking challenge (never delivered)`));
+  const ledgerEvents = await jiti.import("../src/ledger/events.ts");
+  const recipient = [objection.to].flat()[0];
+  await ledgerEvents.recordEvent({ hordeDir, runId, actor: recipient, attempt: `${recipient}-a1`, requestId: `delivery:${objection.id}:k1` }, "inbox-delivered", {
+    payload: { transition: { id: objection.id, state: "delivered", attempt: "k1" }, sessionEntry: "abcd1234" }, parents: [objection.id],
+  });
+  assert.equal(collab.neverDelivered(collab.collaborationState(hordeDir, runId).messages.find((m) => m.id === objection.id)), false);
+  assert.match(issuesFor(runId, doc.id)[0], new RegExp(`blocked by ${objection.id} \\(\\w+ blocking challenge from member-3\\); exclude`), "a delivered blocker carries no marker");
   assert.ok(!report.loadCollaborationReport(hordeDir, runId).issues.some((issue) => issue.includes("needs a full independent review")), "the review that exists is not asked for again");
 }
 
