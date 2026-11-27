@@ -9,6 +9,9 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 - SUMMARY.md's per-member line says `reviewed N findings by others` where it said `N
   independently reviewed`. The count is of reviews the member gave, and the old wording read
   as a count of the member's own findings that had been reviewed (#89).
+- A blocking request that no recipient's session ever received is marked `never delivered` in
+  the acceptance issues, ANSWER.md and REPORT.md. It still counts against acceptance, since the
+  objection stands, but it no longer reads like a blocker a member saw and left open (#88).
 - A member session that ends cleanly but called no tool filed nothing. It now ends with the
   cause `no_work` instead of `completed`: it is not reset, in a normal run it stands down
   rather than starting a fresh session that would repeat the empty turn, and its message is kept

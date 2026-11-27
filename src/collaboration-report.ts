@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { artifactAccepted, artifactLimits, blockingMessages, collaborationState, openMessages, partialArtifactReviews } from "./ledger/collaboration.js";
+import { artifactAccepted, artifactLimits, blockingMessages, collaborationState, neverDelivered, openMessages, partialArtifactReviews } from "./ledger/collaboration.js";
 import type { ArtifactRecord, CollaborationState, OperatorMessage, PeerMessage } from "./ledger/collaboration.js";
 import { readEvents } from "./ledger/events.js";
 import { findingReviewState, findingRevision, listFindingsForRun } from "./ledger/findings.js";
@@ -56,7 +56,7 @@ function artifactProblem(hordeDir: string, runId: string, state: CollaborationSt
   // A blocker is named as such: the acceptance text is read by members and the deliverable, and
   // "needs a review" sent them after a review that already existed.
   const blocker = blockingMessages(state).find((m) => m.target === artifact.id);
-  if (blocker) return `blocked by ${blocker.id} (${blocker.state} blocking ${blocker.kind} from ${blocker.sender})`;
+  if (blocker) return `blocked by ${blocker.id} (${blocker.state} blocking ${blocker.kind} from ${blocker.sender}${neverDelivered(blocker) ? ", never delivered" : ""})`;
   if (artifactAccepted(state, artifact)) return undefined;
   // A partial review is coverage debt, not an objection: the acceptance names what it left
   // unchecked so a full review, or one covering that scope, can settle it.
@@ -70,7 +70,7 @@ function artifactProblem(hordeDir: string, runId: string, state: CollaborationSt
 export function loadCollaborationReport(hordeDir: string, runId: string): CollaborationReport {
   const events = readEvents(hordeDir, runId);
   const state = collaborationState(hordeDir, runId);
-  const issues = blockingMessages(state).map((m) => `${m.id} ${m.target}: ${m.state} blocking ${m.kind}`);
+  const issues = blockingMessages(state).map((m) => `${m.id} ${m.target}: ${m.state} blocking ${m.kind}${neverDelivered(m) ? " (never delivered)" : ""}`);
   const acceptedArtifacts: string[] = [];
   const limits: string[] = [];
   for (const artifact of state.artifacts) {
