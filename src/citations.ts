@@ -39,6 +39,14 @@ const RUN_ROOT = /^(?:\.horde|\.tmp|runs|artifacts)(?:[/-]|$)/;
  */
 const PATH_TEMPLATE = /(?:^|[^A-Za-z])(?:YYYY|YYYYMMDD|yyyy|yyyymmdd)(?:[^A-Za-z]|$)|<[^<>]+>|%[YmdHMS]/;
 
+/**
+ * An angle-bracket slot (`<handles.txt>`) and the command after `Usage:` name arguments a script
+ * takes, not files anyone claims to have written. The command runs to the end of its backtick
+ * span, or to the end of the line when it is not quoted.
+ */
+const ARGUMENT_SLOT = /<[^<>\n]+>/g;
+const USAGE_LINE = /\busage:\s*(?:`[^`\n]*`|[^\n]*)/gi;
+
 /** Host-anchored references such as docs.example.com/page are URLs, not local paths. */
 const HOST_PATH = /^(?:[a-z0-9-]+\.)+[a-z]{2,}\//i;
 
@@ -54,7 +62,8 @@ const HOST_PATH = /^(?:[a-z0-9-]+\.)+[a-z]{2,}\//i;
  * (`docs.example.com/x`), and `owner/repo` slugs are skipped, because they made
  * the warning block mostly false positives.
  */
-export function citedDataFiles(text: string): string[] {
+export function citedDataFiles(source: string): string[] {
+  const text = source.replace(USAGE_LINE, " ").replace(ARGUMENT_SLOT, " ");
   const out = new Set<string>();
   const consider = (raw: string, followedBy = ""): void => {
     // A brace expansion (`member-{1..6}/`) or a shell variable (`$RUN`) is not a
