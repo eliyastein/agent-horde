@@ -51,6 +51,18 @@ assert.ok(refs.includes("artifacts-m1/jev_envelope/traps_output.json"), "an arti
 assert.ok(refs.includes("SUMMARY.md"), "a bare data filename is checked");
 assert.ok(refs.includes("artifacts-m3/red"), "a path rooted at a run artifact dir is checked");
 
+// A usage line names the arguments a script takes; a file the note claims to hold is still checked.
+const usage = citations.citedDataFiles(
+  "Probe script. Usage: `node probe.mjs handles.txt out.json`; results are kept in `kept.json`.\n" +
+    "usage: node sweep.mjs seeds.csv report.md\n" +
+    "Slots: node probe.mjs <list.txt> <result.json>, written to `out/<id>.json` and `final.tsv`.",
+);
+for (const arg of ["handles.txt", "out.json", "seeds.csv", "report.md", "list.txt", "result.json"]) {
+  assert.ok(!usage.includes(arg), `usage argument "${arg}" must not count as a cited file`);
+}
+assert.ok(!usage.some((ref) => ref.startsWith("out/")), "a path with a slot is a pattern, not a file");
+assert.deepEqual(usage.sort(), ["final.tsv", "kept.json"], "files named outside the usage line are checked");
+
 // Remote/target paths, globs, and placeholders are not local artifacts to check.
 const noise = citations.citedDataFiles(
   "the target ships `installed.php` and `content/plugins/ruya-artists/ruya-artists.php`; " +
