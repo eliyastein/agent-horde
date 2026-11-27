@@ -472,7 +472,7 @@ function memberSummarySection(
   lines.push(`${m.turns} turns, ${m.toolCalls} tool calls, ${tokens}, ${memberElapsed(m, now)}`);
   if (stats) {
     lines.push(
-      `${stats.findings} findings filed, ${stats.reviewed} independently reviewed (scoped: ${stats.fullScope} full, ` +
+      `${stats.findings} findings filed, reviewed ${stats.reviewed} findings by others (scoped: ${stats.fullScope} full, ` +
         `${stats.reviewed - stats.fullScope} with unchecked scope), ${stats.verified} legacy verification labels, ` +
         `${stats.ideasClosed} claimed idea(s) closed`,
     );
