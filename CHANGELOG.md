@@ -6,6 +6,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- The deliverable instructions require a recorded attempt behind a statement that something was
+  not run, does not exist or does not work. With no attempt on record the deliverable says `not
+  attempted in this run` and does not list the item as a defect; an attempt that failed for a
+  missing prerequisite is reported as an environment note (#97).
 - The finalize consistency check no longer reports the arguments on a `Usage:` line, or a name
   inside an angle-bracket slot such as `<out.json>`, as files a resource note cites. A data file
   the note names outside the usage line is still checked (#96).
