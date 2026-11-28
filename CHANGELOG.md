@@ -12,6 +12,10 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   stop. The later findings are now surfaced once on the board for the proposer to fold in or exclude,
   and a proposal whose cited finding was amended or whose cited artifact was republished is still
   withdrawn, because the evidence it rests on changed (#100).
+- The deliverable instructions require a recorded attempt behind a statement that something was
+  not run, does not exist or does not work. With no attempt on record the deliverable says `not
+  attempted in this run` and does not list the item as a defect; an attempt that failed for a
+  missing prerequisite is reported as an environment note (#97).
 - The finalize consistency check no longer reports the arguments on a `Usage:` line, or a name
   inside an angle-bracket slot such as `<out.json>`, as files a resource note cites. A data file
   the note names outside the usage line is still checked (#96).
