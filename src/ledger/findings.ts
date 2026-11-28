@@ -693,6 +693,32 @@ export function answerObjectionFor(
   return answerObjection([...stale, ...alsoStale], omittedFindings(findings, answer.text, answer.findingsMark));
 }
 
+/**
+ * The part of `answerObjectionFor` that withdraws a proposal: its cited evidence changed. A finding
+ * filed after the proposal (an omitted later finding) is not included, because the proposer could
+ * not have named it and a confirmed answer should not be discarded for it; `answerOmittedFor`
+ * surfaces those separately. Undefined when the cited evidence still stands.
+ */
+export function answerStaleFor(
+  hordeDir: string,
+  runId: string,
+  answer: { text: string; cites?: Record<string, string> | undefined; findingsMark?: number | undefined },
+  alsoStale: string[] = [],
+): string | undefined {
+  const findings = listFindingsForRun(hordeDir, runId);
+  const stale = staleAnswerCitations(findings, answer.text, answer.cites, collaborationState(hordeDir, runId).artifacts);
+  return answerObjection([...stale, ...alsoStale], []);
+}
+
+/** Live findings filed after the answer was first proposed that its text does not name. */
+export function answerOmittedFor(
+  hordeDir: string,
+  runId: string,
+  answer: { text: string; findingsMark?: number | undefined },
+): string[] {
+  return omittedFindings(listFindingsForRun(hordeDir, runId), answer.text, answer.findingsMark);
+}
+
 /** A body line that reads as a verification note would move the subject boundary the revision hashes. */
 function neutralizeNotes(text: string): string {
   return text.replace(/^((?:Verified|Reviewed) by )/gm, "\\$1");

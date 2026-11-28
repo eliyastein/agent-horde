@@ -6,6 +6,12 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- A finding filed after an answer was first proposed no longer withdraws the answer or discards a
+  peer confirmation. Earlier, under `--until-stop`, each new finding above the proposal mark reset a
+  validated answer, so a run could reach its goal and never hand it over, ending only on an operator
+  stop. The later findings are now surfaced once on the board for the proposer to fold in or exclude,
+  and a proposal whose cited finding was amended or whose cited artifact was republished is still
+  withdrawn, because the evidence it rests on changed (#100).
 - The finalize consistency check no longer reports the arguments on a `Usage:` line, or a name
   inside an angle-bracket slot such as `<out.json>`, as files a resource note cites. A data file
   the note names outside the usage line is still checked (#96).

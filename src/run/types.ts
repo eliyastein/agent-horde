@@ -87,6 +87,8 @@ export interface HordeRun extends MemberRunInfo {
   solvedContest?: { proposal: SolvedSignal; blockers: number[] } | undefined;
   /** The last proposal another member confirmed; the same text and citations keep that confirmation. */
   solvedConfirmation?: { proposal: SolvedSignal; validator: string } | undefined;
+  /** The omitted-finding set last surfaced to the board, so the note is posted once per change, not every poll. */
+  solvedOmittedNoted?: string | undefined;
   /** Blocking requests already answered with a fresh session of their recipient, as `member:Q#`. */
   backlogServed?: string[] | undefined;
   /** True once the parent has warned that a validated solve still has unverified findings. */

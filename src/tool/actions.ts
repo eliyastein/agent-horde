@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { CLUSTER_THRESHOLD } from "../ledger/clusters.js";
 import { collaborationState, openMessages } from "../ledger/collaboration.js";
 import {
-  addFinding, amendFinding, answerCitations, answerObjectionFor, findingReviewState, findingRevision, findingsHighWater,
+  addFinding, amendFinding, answerCitations, answerStaleFor, findingReviewState, findingRevision, findingsHighWater,
   findingSummaries, listFindingsForRun, pendingReviewsForMember, verifyFinding,
 } from "../ledger/findings.js";
 import { textOverlap } from "../ledger/text-match.js";
@@ -499,7 +499,7 @@ function resourcesAction({ hordeDir, siblings }: ActionContext): ActionResult {
  * text instead; a validator is refused until the proposer re-proposes.
  */
 function staleAnswer(ctx: ActionContext, answer: { text: string; cites?: Record<string, string>; findingsMark?: number }): string | undefined {
-  return answerObjectionFor(ctx.hordeDir, requireRun(ctx), answer);
+  return answerStaleFor(ctx.hordeDir, requireRun(ctx), answer);
 }
 
 /** The same text, contested twice with no idea to wait on, is not proposed a third time unchanged. */
