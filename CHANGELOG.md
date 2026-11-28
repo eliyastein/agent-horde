@@ -4,6 +4,15 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-27
+
+### Changed
+
+- The `--budget` admission check also covers repair attempts: when what is left above the
+  wrap-up reserve is less than a session has cost on average, the repair phase starts no further
+  attempt and records `repair-skipped` with reason `run-budget` for the members left unserved.
+  SUMMARY.md counts them with the other sessions the budget refused (#54).
+
 ### Fixed
 
 - A finding filed after an answer was first proposed no longer withdraws the answer or discards a
@@ -32,16 +41,6 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
   heuristic. Under `--until-stop` the member still continues, and parking stops it if it keeps
   adding nothing. The swarm planner reports a run it cannot partition as `the planner returned no
   workstream plan` rather than `printed no JSON array` (#61).
-
-### Changed
-
-- The `--budget` admission check also covers repair attempts: when what is left above the
-  wrap-up reserve is less than a session has cost on average, the repair phase starts no further
-  attempt and records `repair-skipped` with reason `run-budget` for the members left unserved.
-  SUMMARY.md counts them with the other sessions the budget refused (#54).
-
-### Fixed
-
 - A `stop-clean` or `stop-hard` that names some members no longer marks the whole run as
   stopped. The budget ceiling, resets, `--until-stop` continuations, repair and `tell` keep
   working for the other members, and the run ends with its own outcome. The run counts as
