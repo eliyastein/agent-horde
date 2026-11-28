@@ -6,6 +6,12 @@ Notable changes to agent-horde. The format follows Keep a Changelog; versions fo
 
 ### Fixed
 
+- A finding filed after an answer was first proposed no longer withdraws the answer or discards a
+  peer confirmation. Earlier, under `--until-stop`, each new finding above the proposal mark reset a
+  validated answer, so a run could reach its goal and never hand it over, ending only on an operator
+  stop. The later findings are now surfaced once on the board for the proposer to fold in or exclude,
+  and a proposal whose cited finding was amended or whose cited artifact was republished is still
+  withdrawn, because the evidence it rests on changed (#100).
 - The deliverable instructions require a recorded attempt behind a statement that something was
   not run, does not exist or does not work. With no attempt on record the deliverable says `not
   attempted in this run` and does not list the item as a defect; an attempt that failed for a

@@ -58,7 +58,7 @@ const openIdea = async (owner, text) => {
   return idea;
 };
 
-// ---- A. a finding filed after the proposal must be named ------------------------------------------
+// ---- A. a finding filed after the proposal is surfaced, not grounds to withdraw it ----------------
 {
   const runId = "20261119-120001";
   const runDir = await makeRun(runId);
@@ -71,25 +71,32 @@ const openIdea = async (owner, text) => {
   solved.checkSolved(run, ctxStub);
   assert.equal(run.solved?.member, "member-1");
 
+  // A finding filed after the proposal does not block validation or withdraw the answer.
   const f3 = await fileFinding(runId, "member-4", "The allow-list verdict ignores the deny rule\nread from the source");
-  const omits = `omits F${f3.id}, filed after the answer was first proposed`;
-  await assert.rejects(act(runId, "member-2", { action: "confirm-solved", text: "agreed" }), new RegExp(`the pending answer ${omits}`));
+  await act(runId, "member-2", { action: "confirm-solved", text: "agreed" });
   solved.checkSolved(run, ctxStub);
-  assert.equal(run.solved, undefined, "the proposal that omits the later finding was withdrawn");
-  assert.match(answerStatus(runDir), new RegExp(`^withdrawn: it ${omits}`));
-  assert.match(boardText(), new RegExp(`SOLVED proposal by member-1 withdrawn: it ${omits}`));
-
-  // The same text proposed again inherits the first proposal's mark, so the omission still shows.
-  await assert.rejects(act(runId, "member-1", { action: "solved", text }), new RegExp(`the answer ${omits}`));
-  await act(runId, "member-2", { action: "solved", text: `${text}. F${f3.id} is excluded: the deny rule is unreachable in this build` });
-  assert.equal(signals.readSolved(runDir).findingsMark, f2.id, "a later proposal keeps the first mark");
+  assert.equal(run.solved?.member, "member-1", "the proposal stands though a later finding is unnamed");
+  assert.equal(run.solvedValidatedBy, "member-2", "and its confirmation carries over");
+  assert.match(
+    boardText(),
+    new RegExp(`SOLVED proposal by member-1 stands; F${f3.id} was filed after it`),
+    "the omitted finding is surfaced once for the proposer to fold in or exclude",
+  );
+  // The note is posted once, not on every poll.
+  const noteCount = () => (boardText().match(new RegExp(`stands; F${f3.id} was filed after it`, "g")) ?? []).length;
   solved.checkSolved(run, ctxStub);
-  assert.equal(run.solved?.member, "member-2", "naming the finding, even to exclude it, satisfies the gate");
+  assert.equal(noteCount(), 1, "the same omitted-finding set is not re-posted each poll");
 
-  // A finding that supersedes a cited one is reported once, as the stale citation.
+  // A finding that supersedes a cited one changes the evidence the answer rests on, so it still withdraws.
   const f4 = (await findings.addFinding(hordeDir, runId, "member-3", "The retry middleware replays bodies only under 1 MiB\nmeasured", { supersedes: f2.id })).finding;
+  const staleReason = `cites superseded F${f2.id} \\(now F${f4.id}\\)`;
+  solved.checkSolved(run, ctxStub);
+  assert.equal(run.solved, undefined, "a proposal citing an amended finding is withdrawn");
+  assert.match(answerStatus(runDir), new RegExp(`^withdrawn: it ${staleReason}`));
+  assert.match(boardText(), new RegExp(`SOLVED proposal by member-1 withdrawn: it ${staleReason}`));
+
+  // The pure omitted-finding check is unchanged; only its effect on the proposal is.
   const all = findings.listFindingsForRun(hordeDir, runId);
-  assert.deepEqual(findings.omittedFindings(all, run.solved.text, f2.id), []);
   assert.deepEqual(findings.omittedFindings(all, "nothing named", f2.id), [`F${f3.id}`, `F${f4.id}`]);
   assert.deepEqual(findings.omittedFindings(all, "nothing named", undefined), [], "a proposal without a mark is not checked");
   assert.equal(findings.answerObjection([], []), undefined);
@@ -212,11 +219,11 @@ const openIdea = async (owner, text) => {
   await act(runId, "member-3", { action: "solved", text });
   solved.checkSolved(run, ctxStub);
   assert.equal(signals.readSolvedState(runDir).confirm, undefined, "the proposer cannot carry its own confirmation");
-  // A finding filed now withdraws the proposal and the confirmation with it.
-  await fileFinding(runId, "member-4", "The DNS-01 solver caches the expired key too\nread from the source");
+  // A finding filed now does not withdraw the proposal; it is surfaced instead.
+  const late = await fileFinding(runId, "member-4", "The DNS-01 solver caches the expired key too\nread from the source");
   solved.checkSolved(run, ctxStub);
-  assert.equal(run.solved, undefined);
-  assert.equal(run.solvedConfirmation, undefined, "a withdrawal discards the confirmation");
+  assert.equal(run.solved?.member, "member-3", "a finding filed after the proposal does not withdraw it");
+  assert.match(boardText(), new RegExp(`SOLVED proposal by member-3 stands; F${late.id} was filed after it`));
 }
 
 // ---- E. blocking requests unanswered at close reset their recipient once -------------------------

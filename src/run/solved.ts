@@ -4,7 +4,7 @@ import { loadCollaborationReport } from "../collaboration-report.js";
 import { openMessages } from "../ledger/collaboration.js";
 import { postBoard } from "../ledger/board.js";
 import { unsettledFactCitations } from "../ledger/facts.js";
-import { answerObjectionFor, unverifiedFindings } from "../ledger/findings.js";
+import { answerOmittedFor, answerStaleFor, unverifiedFindings } from "../ledger/findings.js";
 import { listIdeas } from "../ledger/ideas.js";
 import {
   archiveSolved, carryConfirmation, clearCleanStop, clearSolved, contestBlockers, readSolvedState, reopenSolved,
@@ -61,6 +61,7 @@ function adoptProposal(run: HordeRun, proposal: SolvedSignal): void {
   run.solvedCommitted = false;
   run.solvedContested = false;
   run.solvedVerificationNotice = undefined;
+  run.solvedOmittedNoted = undefined;
   void recordLifecycle(run, "solved-proposed", { member: proposal.member, text: oneLine(proposal.text, 200) });
   safeNotify(run, `horde ${run.id}: ${proposal.member} proposed the goal solved`, "info");
   const carried = carriedConfirmation(run, proposal);
@@ -94,6 +95,7 @@ function clearProposal(run: HordeRun, blockers: number[] = []): void {
   run.solvedCommitted = false;
   run.solvedCoverageNotice = undefined;
   run.solvedVerificationNotice = undefined;
+  run.solvedOmittedNoted = undefined;
 }
 
 /**
@@ -161,6 +163,25 @@ function withdrawStale(run: HordeRun, proposal: SolvedSignal, reason: string): v
 }
 
 /**
+ * A finding filed after the answer was first proposed does not withdraw it; the proposer could not
+ * have named it and a confirmation stands. The members are told once per change so the proposer can
+ * fold it into the answer or exclude it; until then the finalize caveat still names it.
+ */
+function noteOmittedFindings(run: HordeRun, proposal: SolvedSignal): void {
+  const omitted = answerOmittedFor(run.hordeDir, run.id, proposal);
+  const key = omitted.join(",");
+  if (key === (run.solvedOmittedNoted ?? "")) return;
+  run.solvedOmittedNoted = key;
+  if (!omitted.length) return;
+  void postBoard(
+    run.hordeDir,
+    "parent",
+    `SOLVED proposal by ${proposal.member} stands; ${omitted.join(", ")} ${omitted.length === 1 ? "was" : "were"} filed after it. ` +
+      `${proposal.member}: fold ${omitted.length === 1 ? "it" : "them"} into the answer or state why excluded. The answer is not withdrawn for this.`,
+  );
+}
+
+/**
  * A contest that named open ideas as what was missing is answered by their closing: nothing else
  * reopens the vote, so the run ended `solved-contested` with the closed negatives unapplied. The
  * reopened proposal has the same text and citations, so a confirmation it held carries over.
@@ -175,7 +196,7 @@ function reopenContested(run: HordeRun): void {
   // The proposal returns with the citations it pinned when it was made; what went stale or
   // unsettled meanwhile makes it a re-proposal for its author, not a reopening.
   const provisional = unsettledFactCitations(run.hordeDir, contest.proposal.text).map((citation) => `provisional ${citation}`);
-  const why = answerObjectionFor(run.hordeDir, run.id, contest.proposal, provisional);
+  const why = answerStaleFor(run.hordeDir, run.id, contest.proposal, provisional);
   run.solvedContest = undefined;
   if (why) {
     recordWithdrawn(run, contest.proposal, why);
@@ -328,11 +349,12 @@ export function checkSolved(run: HordeRun, ctx: ExtensionCommandContext): void {
     dropContested(run, solved, state.contest);
     return;
   }
-  const objection = answerObjectionFor(run.hordeDir, run.id, solved);
-  if (objection && !run.solvedCommitted) {
-    withdrawStale(run, solved, objection);
+  const stale = answerStaleFor(run.hordeDir, run.id, solved);
+  if (stale && !run.solvedCommitted) {
+    withdrawStale(run, solved, stale);
     return;
   }
+  noteOmittedFindings(run, solved);
   const validator =
     state.confirm && state.confirm.member !== solved.member ? state.confirm.member : undefined;
   // Peer confirmation is evidence even when coverage or acceptance still blocks completion.
